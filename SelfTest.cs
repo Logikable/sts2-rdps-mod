@@ -83,6 +83,7 @@ internal static class SelfTest
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
         all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
+        all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
         return all;
@@ -207,6 +208,30 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// Two appliers stack Doom 20:10 onto the enemy, whose HP is set to 15. Doom is not damage - it instakills - so
+    /// the removed HP (15) is credited as the appliers' own damage, split by stacks: 10 to NetId 2, 5 to NetId 3.
+    /// Run last, because it kills the target.
+    /// </summary>
+    private static async Task<bool> DoomScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        await Prep(dealer, enemy);
+
+        await PowerCmd.Apply<DoomPower>(ctx, enemy, 20m, applier2, null);
+        await PowerCmd.Apply<DoomPower>(ctx, enemy, 10m, applier3, null);
+        await CreatureCmd.SetCurrentHp(enemy, 15m);
+
+        DoomPower? doom = enemy.GetPower<DoomPower>();
+        LogShares("Doom", doom);
+        await DoomPower.DoomKill(new[] { enemy });
+
+        CombatLedger l = CombatLedger.Instance;
+        return Report("Doom",
+            Expect("2 aDPS Doom", l.DealtWith(2uL, "Doom"), 10m),
+            Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m));
+    }
+
+    /// <summary>
     /// Resets the ledger and returns the enemy to a clean, full-health state: strips Artifact (which would eat the
     /// first debuff) and any effect a prior scenario left behind, then heals to full so the hit lands unblocked and
     /// pre-block shares scale onto settled damage 1:1.
@@ -244,6 +269,11 @@ internal static class SelfTest
         if (dealer.GetPower<AccelerantPower>() != null)
         {
             await PowerCmd.Remove<AccelerantPower>(dealer);
+        }
+
+        if (enemy.GetPower<DoomPower>() != null)
+        {
+            await PowerCmd.Remove<DoomPower>(enemy);
         }
 
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);
