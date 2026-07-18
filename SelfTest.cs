@@ -81,6 +81,8 @@ internal static class SelfTest
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
+        all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
+        all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
         return all;
@@ -154,6 +156,57 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// Two appliers stack Poison 3:2 onto the enemy, then the enemy's poison ticks. Poison has no dealer, so the
+    /// whole effective tick (5) is the appliers' own damage, split pro-rata by stacks: 3 to NetId 2, 2 to NetId 3.
+    /// </summary>
+    private static async Task<bool> PoisonScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        await Prep(dealer, enemy);
+
+        await PowerCmd.Apply<PoisonPower>(ctx, enemy, 3m, applier2, null);
+        await PowerCmd.Apply<PoisonPower>(ctx, enemy, 2m, applier3, null);
+
+        PoisonPower? poison = enemy.GetPower<PoisonPower>();
+        LogShares("Poison", poison);
+        if (poison != null)
+        {
+            await poison.AfterSideTurnStart(enemy.Side, new[] { enemy }, enemy.CombatState!);
+        }
+
+        CombatLedger l = CombatLedger.Instance;
+        return Report("Poison pro-rata",
+            Expect("2 aDPS Poison", l.DealtWith(2uL, "Poison"), 3m),
+            Expect("3 aDPS Poison", l.DealtWith(3uL, "Poison"), 2m));
+    }
+
+    /// <summary>
+    /// A teammate poisons the enemy for 4 while the dealer holds Accelerant 1, so poison ticks twice: the natural
+    /// tick (4) belongs to the poison applier, the Accelerant-forced extra tick (3, after the decrement) belongs to
+    /// the Accelerant holder.
+    /// </summary>
+    private static async Task<bool> PoisonAccelerantScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<PoisonPower>(ctx, enemy, 4m, applier2, null);
+        await PowerCmd.Apply<AccelerantPower>(ctx, dealer, 1m, dealer, null);
+
+        PoisonPower? poison = enemy.GetPower<PoisonPower>();
+        if (poison != null)
+        {
+            await poison.AfterSideTurnStart(enemy.Side, new[] { enemy }, enemy.CombatState!);
+        }
+
+        CombatLedger l = CombatLedger.Instance;
+        return Report("Poison + Accelerant",
+            Expect("2 aDPS (base tick)", l.DealtWith(2uL, "Poison"), 4m),
+            Expect("you aDPS (accel tick)", l.DealtWith(you, "Poison"), 3m));
+    }
+
+    /// <summary>
     /// Resets the ledger and returns the enemy to a clean, full-health state: strips Artifact (which would eat the
     /// first debuff) and any effect a prior scenario left behind, then heals to full so the hit lands unblocked and
     /// pre-block shares scale onto settled damage 1:1.
@@ -181,6 +234,16 @@ internal static class SelfTest
         if (dealer.GetPower<StrengthPower>() != null)
         {
             await PowerCmd.Remove<StrengthPower>(dealer);
+        }
+
+        if (enemy.GetPower<PoisonPower>() != null)
+        {
+            await PowerCmd.Remove<PoisonPower>(enemy);
+        }
+
+        if (dealer.GetPower<AccelerantPower>() != null)
+        {
+            await PowerCmd.Remove<AccelerantPower>(dealer);
         }
 
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);

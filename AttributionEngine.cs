@@ -224,7 +224,7 @@ internal static class AttributionEngine
     /// contributions; falls back to the single Applier the game records when the power was applied before the mod
     /// saw it. Null when no player is responsible (a monster-applied power, e.g. a self-buff).
     /// </summary>
-    private static IReadOnlyDictionary<ulong, decimal>? OwnershipShares(PowerModel power)
+    internal static IReadOnlyDictionary<ulong, decimal>? OwnershipShares(PowerModel power)
     {
         IReadOnlyDictionary<ulong, decimal>? tracked = PowerOwnership.Instance.Shares(power);
         if (tracked != null)

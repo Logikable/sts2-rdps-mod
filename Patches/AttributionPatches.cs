@@ -99,6 +99,8 @@ internal static class AttributionPatches
     [HarmonyPrefix]
     private static void AfterDamageGivenPrefix(Creature target, DamageResult results)
     {
+        // Drain the queued (dealer-less) calc for this tick first so the queue never leaks, then decide how to book
+        // it. A poison tick's calc has no dealer and would be discarded by ApplyHit anyway; the poison path owns it.
         HitAttribution? attribution = null;
         lock (PendingLock)
         {
@@ -110,6 +112,17 @@ internal static class AttributionPatches
                     Pending.Remove(target);
                 }
             }
+        }
+
+        if (PoisonAttribution.TryConsume(target, out IReadOnlyDictionary<ulong, decimal> shares))
+        {
+            foreach (ulong netId in shares.Keys)
+            {
+                CombatLedger.Instance.RecordName(netId, PlayerIdentity.Name(netId));
+            }
+
+            CombatLedger.Instance.ApplyDot("Poison", shares, results.UnblockedDamage);
+            return;
         }
 
         if (attribution != null)
@@ -124,5 +137,7 @@ internal static class AttributionPatches
         {
             Pending.Clear();
         }
+
+        PoisonAttribution.Clear();
     }
 }

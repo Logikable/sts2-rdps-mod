@@ -126,6 +126,30 @@ internal sealed class CombatLedger
         }
     }
 
+    /// <summary>
+    /// Folds one damage-over-time tick into the tallies. Unlike a struck hit, a DoT has no separate dealer - the
+    /// players who applied it (or, for Accelerant-driven extra ticks, who forced it) are the source, so the effective
+    /// HP loss counts as their own aDPS split by <paramref name="shares"/>. There is no given/received: nobody is
+    /// crediting anyone else's swing. <paramref name="effectiveDamage"/> is the actual HP removed, so an overkilling
+    /// tick only distributes the HP that was there.
+    /// </summary>
+    public void ApplyDot(string effect, IReadOnlyDictionary<ulong, decimal> shares, int effectiveDamage)
+    {
+        if (effectiveDamage <= 0 || shares.Count == 0)
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            foreach ((ulong netId, decimal fraction) in shares)
+            {
+                PlayerLedger l = Ledger(netId);
+                l.DealtByCard[effect] = l.DealtByCard.GetValueOrDefault(effect) + effectiveDamage * fraction;
+            }
+        }
+    }
+
     public void RecordName(ulong netId, string name)
     {
         lock (_lock)
