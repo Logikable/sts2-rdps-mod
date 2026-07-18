@@ -17,6 +17,7 @@ internal static class CombatLifecyclePatches
     {
         AttributionPatches.ClearPending();
         CombatLedger.Instance.Reset();
+        SelfTest.Install();
     }
 
     [HarmonyPatch(nameof(CombatManager.EndCombatInternal))]
