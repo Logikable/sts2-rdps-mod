@@ -11,6 +11,11 @@ public static class Mod
     {
         ApplyPatches();
         GD.Print("[RdpsMeter] Initialized");
+
+        if (AutoHarness.Armed())
+        {
+            AutoHarness.Install();
+        }
     }
 
     /// <summary>
