@@ -76,17 +76,29 @@ internal sealed partial class SelfTestNode : Node
             return;
         }
 
-        // A detached second player: never added to combat, it exists only to be the debuff's applier with a NetId
-        // distinct from the real dealer. NetId 2 will never collide with a real SteamID64.
-        Player fakePlayer = Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 2uL);
-        var fakeCreature = new Creature(fakePlayer, 1, 1);
+        // Two detached fake players, never added to combat, exist only to be the debuff's appliers with NetIds
+        // distinct from the real dealer. They contribute unequal stacks (2 and 1) so the pro-rata split is visible:
+        // both credited via one merged Vulnerable, whose bonus should divide 2/3 to NetId 2 and 1/3 to NetId 3.
+        var applier2 = new Creature(Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 2uL), 1, 1);
+        var applier3 = new Creature(Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 3uL), 1, 1);
 
         var context = new NoOpChoiceContext();
 
-        GD.Print($"[RdpsMeter] Self-test: applying Vulnerable (applier NetId {fakePlayer.NetId}) to {enemy.LogName}, "
-            + $"then {dealer.Player.NetId} attacks for 6 - expect ~3 credited to {fakePlayer.NetId}");
+        GD.Print($"[RdpsMeter] Self-test: Vulnerable to {enemy.LogName} - 2 stacks by NetId 2, 1 stack by NetId 3, "
+            + $"then {dealer.Player.NetId} attacks for 6 - expect the +3 bonus split 2:1 between NetId 2 and 3");
 
-        await PowerCmd.Apply<VulnerablePower>(context, enemy, 2m, fakeCreature, null);
+        VulnerablePower? vulnerable = await PowerCmd.Apply<VulnerablePower>(context, enemy, 2m, applier2, null);
+        await PowerCmd.Apply<VulnerablePower>(context, enemy, 1m, applier3, null);
+
+        if (vulnerable != null)
+        {
+            IReadOnlyDictionary<ulong, decimal>? shares = PowerOwnership.Instance.Shares(vulnerable);
+            string rendered = shares == null
+                ? "none"
+                : string.Join(", ", shares.Select(kv => $"{kv.Key}:{kv.Value:0.00}"));
+            GD.Print($"[RdpsMeter] Self-test: recorded ownership = {rendered}");
+        }
+
         await CreatureCmd.Damage(context, new[] { enemy }, 6m, DamageProps.card, dealer, null);
 
         GD.Print("[RdpsMeter] Self-test: done");
