@@ -26,6 +26,24 @@ internal sealed class PlayerLedger
     public decimal Rdps => ADps + Given - Received;
 }
 
+/// <summary>
+/// One player's rendered rDPS line: totals plus the itemized sources, names already resolved, sorted biggest-first.
+/// A frozen copy the overlay can read without touching the live ledger or holding its lock.
+/// </summary>
+internal sealed class RdpsRow
+{
+    public required ulong NetId { get; init; }
+    public required string Name { get; init; }
+    public required decimal ADps { get; init; }
+    public required decimal Given { get; init; }
+    public required decimal Received { get; init; }
+    public required IReadOnlyList<(string Card, decimal Amount)> Dealt { get; init; }
+    public required IReadOnlyList<(string Effect, ulong Other, decimal Amount)> GivenBy { get; init; }
+    public required IReadOnlyList<(string Effect, ulong Other, decimal Amount)> ReceivedBy { get; init; }
+
+    public decimal Rdps => ADps + Given - Received;
+}
+
 internal sealed class CombatLedger
 {
     public static CombatLedger Instance { get; } = new();
@@ -150,6 +168,33 @@ internal sealed class CombatLedger
         }
     }
 
+    /// <summary>
+    /// A frozen, name-resolved snapshot of every player's line, sorted by rDPS descending, for live rendering.
+    /// </summary>
+    public IReadOnlyList<RdpsRow> Snapshot()
+    {
+        lock (_lock)
+        {
+            return _ledgers
+                .Select(kv => new RdpsRow
+                {
+                    NetId = kv.Key,
+                    Name = NameOf(kv.Key),
+                    ADps = kv.Value.ADps,
+                    Given = kv.Value.Given,
+                    Received = kv.Value.Received,
+                    Dealt = kv.Value.DealtByCard
+                        .Select(d => (d.Key, d.Value)).OrderByDescending(d => d.Value).ToList(),
+                    GivenBy = kv.Value.GivenBySource
+                        .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
+                    ReceivedBy = kv.Value.ReceivedBySource
+                        .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
+                })
+                .OrderByDescending(r => r.Rdps)
+                .ToList();
+        }
+    }
+
     public void RecordName(ulong netId, string name)
     {
         lock (_lock)
@@ -192,7 +237,7 @@ internal sealed class CombatLedger
         }
     }
 
-    private string NameOf(ulong netId)
+    public string NameOf(ulong netId)
     {
         return _names.GetValueOrDefault(netId, netId.ToString());
     }

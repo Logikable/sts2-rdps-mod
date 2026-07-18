@@ -16,6 +16,10 @@ public static class Mod
         {
             AutoHarness.Install();
         }
+        else
+        {
+            RdpsOverlay.Install();
+        }
     }
 
     /// <summary>
