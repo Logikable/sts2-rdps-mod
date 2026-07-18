@@ -39,6 +39,13 @@ public static class Mod
                 continue;
             }
 
+            // Diagnostic-only patches (per-hit logging, drift checks) must never hook a shipped build; skip them
+            // entirely so release carries no per-hit cost.
+            if (Attribute.IsDefined(type, typeof(DevOnlyPatchAttribute)) && !DevMode.Enabled)
+            {
+                continue;
+            }
+
             try
             {
                 harmony.CreateClassProcessor(type).Patch();

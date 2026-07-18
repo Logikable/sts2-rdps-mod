@@ -9,8 +9,10 @@ using MegaCrit.Sts2.Core.ValueProps;
 namespace RdpsMeter.Patches;
 
 /// <summary>
-/// Phase-1 scaffolding: logs every resolved damage event and every real (non-preview) damage calculation so the
-/// attribution surface can be validated in-game before the rDPS engine is built on top of it.
+/// Developer-only diagnostics (see <see cref="DevOnlyPatchAttribute"/>): logs every resolved damage event and every
+/// real (non-preview) damage calculation, and re-derives each calc from its modifier list to catch attribution
+/// drift. This runs on the hot damage funnel and is pure noise in a player's log, so it is applied only in dev
+/// builds; the ledger-feeding attribution lives in separate always-on patches.
 ///
 /// Two hooks, matching the two halves of the game's damage flow (both called from CreatureCmd.Damage, the funnel
 /// every damage instance goes through):
@@ -22,6 +24,7 @@ namespace RdpsMeter.Patches;
 /// - Hook.AfterDamageGiven fires once per hit after block, with the settled DamageResult (UnblockedDamage is the HP
 ///   actually lost) plus dealer, target, and source card in one place.
 /// </summary>
+[DevOnlyPatch]
 [HarmonyPatch(typeof(Hook))]
 internal static class DamageLogPatches
 {

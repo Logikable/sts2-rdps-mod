@@ -19,3 +19,13 @@ internal static class DevMode
         return dir != null && File.Exists(Path.Combine(dir, "autotest.marker"));
     }
 }
+
+/// <summary>
+/// Marks a Harmony patch class as a developer-only diagnostic - e.g. the per-hit damage log - that a shipped build
+/// must not apply at all. Mod.ApplyPatches skips these entirely unless <see cref="DevMode.Enabled"/>, so in release
+/// they add no hook and no per-hit cost.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class)]
+internal sealed class DevOnlyPatchAttribute : Attribute
+{
+}
