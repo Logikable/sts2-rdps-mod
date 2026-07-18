@@ -58,20 +58,23 @@ internal static class AttributionEngine
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
         string dealerCard = cardSource?.Id.ToString() ?? "(none)";
 
-        var externals = new List<(AbstractModel Mod, ulong Applier, string Effect)>();
+        // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
+        // comes from PowerOwnership (per-player stack contributions), falling back to the single Applier the game
+        // records when the mod never saw the power applied.
+        var externalPowers = new List<(AbstractModel Mod, string Effect, IReadOnlyDictionary<ulong, decimal> Shares)>();
         foreach (AbstractModel modifier in modifiers)
         {
             if (modifier is PowerModel power)
             {
-                ulong? applier = power.Applier?.Player?.NetId;
-                if (applier.HasValue && applier != dealerNetId)
+                IReadOnlyDictionary<ulong, decimal>? shares = OwnershipShares(power);
+                if (shares != null && shares.Keys.Any(netId => netId != dealerNetId))
                 {
-                    externals.Add((modifier, applier.Value, EffectName(modifier)));
+                    externalPowers.Add((modifier, EffectName(modifier), shares));
                 }
             }
         }
 
-        if (externals.Count == 0)
+        if (externalPowers.Count == 0)
         {
             return new HitAttribution
             {
@@ -85,32 +88,47 @@ internal static class AttributionEngine
         }
 
         decimal total = finalResult;
-        var externalSet = new HashSet<AbstractModel>(externals.Select(e => e.Mod));
+        var externalSet = new HashSet<AbstractModel>(externalPowers.Select(e => e.Mod));
         decimal withoutAllExternals =
             Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, externalSet);
-        decimal totalExternalGain = total - withoutAllExternals;
+        decimal combinedExternalGain = total - withoutAllExternals;
 
-        // Raw counterfactual gain per (applier, effect), so two effects from one player stay itemized.
-        var rawGains = new Dictionary<(ulong Applier, string Effect), decimal>();
+        // Normalize each power's raw counterfactual gain against the combined gain, so overlapping multipliers
+        // conserve the total, then split each power's conserved contribution across its owners by share. A co-owner
+        // who is the dealer keeps their fraction (it never leaves the dealer); only the other players' fractions
+        // become credited contributions.
+        var rawGainByPower = new Dictionary<AbstractModel, decimal>();
         decimal sumRawGains = 0m;
-        foreach ((AbstractModel mod, ulong applier, string effect) in externals)
+        foreach ((AbstractModel mod, string _, IReadOnlyDictionary<ulong, decimal> _) in externalPowers)
         {
-            decimal without = Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, Single(mod));
-            decimal gain = total - without;
-            var key = (applier, effect);
-            rawGains[key] = rawGains.GetValueOrDefault(key) + gain;
+            decimal gain = total - Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, Single(mod));
+            rawGainByPower[mod] = gain;
             sumRawGains += gain;
         }
 
-        decimal factor = sumRawGains != 0m ? totalExternalGain / sumRawGains : 0m;
-        var contributions = new List<ExternalContribution>(rawGains.Count);
+        decimal factor = sumRawGains != 0m ? combinedExternalGain / sumRawGains : 0m;
+        var creditByKey = new Dictionary<(ulong NetId, string Effect), decimal>();
         decimal attributedSum = 0m;
-        foreach (((ulong applier, string effect), decimal gain) in rawGains)
+        foreach ((AbstractModel mod, string effect, IReadOnlyDictionary<ulong, decimal> shares) in externalPowers)
         {
-            decimal share = gain * factor;
-            contributions.Add(new ExternalContribution(applier, effect, share));
-            attributedSum += share;
+            decimal conserved = rawGainByPower[mod] * factor;
+            foreach ((ulong netId, decimal fraction) in shares)
+            {
+                if (netId == dealerNetId)
+                {
+                    continue;
+                }
+
+                var key = (netId, effect);
+                decimal portion = conserved * fraction;
+                creditByKey[key] = creditByKey.GetValueOrDefault(key) + portion;
+                attributedSum += portion;
+            }
         }
+
+        var contributions = creditByKey
+            .Select(kv => new ExternalContribution(kv.Key.NetId, kv.Key.Effect, kv.Value))
+            .ToList();
 
         return new HitAttribution
         {
@@ -199,6 +217,25 @@ internal static class AttributionEngine
         }
 
         return Math.Max(0m, num);
+    }
+
+    /// <summary>
+    /// Per-player ownership shares (netId -> fraction summing to 1) for a power. Prefers the tracked per-player stack
+    /// contributions; falls back to the single Applier the game records when the power was applied before the mod
+    /// saw it. Null when no player is responsible (a monster-applied power, e.g. a self-buff).
+    /// </summary>
+    private static IReadOnlyDictionary<ulong, decimal>? OwnershipShares(PowerModel power)
+    {
+        IReadOnlyDictionary<ulong, decimal>? tracked = PowerOwnership.Instance.Shares(power);
+        if (tracked != null)
+        {
+            return tracked;
+        }
+
+        ulong? applier = power.Applier?.Player?.NetId;
+        return applier.HasValue
+            ? new Dictionary<ulong, decimal> { [applier.Value] = 1m }
+            : null;
     }
 
     /// <summary>

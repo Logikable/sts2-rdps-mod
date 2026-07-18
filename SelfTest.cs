@@ -12,15 +12,15 @@ using MegaCrit.Sts2.Core.ValueProps;
 namespace RdpsMeter;
 
 /// <summary>
-/// A solo, keybind-driven reproduction of the cross-player attribution path so the mod can be validated without a
-/// second networked player. The multiplayer bug it targets only appears when the creature that applied a debuff has
-/// a different NetId than the creature dealing the damage - impossible in real single-player, where you only ever
-/// benefit from your own debuffs.
+/// A solo reproduction of the cross-player attribution path so the mod can be validated without a second networked
+/// player. The multiplayer behaviour it targets only appears when the creature that applied a debuff has a different
+/// NetId than the creature dealing the damage - impossible in real single-player, where you only ever benefit from
+/// your own debuffs.
 ///
-/// On F9, inside a live combat, it mints a throwaway second player (NetId 2), applies Vulnerable to the first enemy
-/// with that fake player as the applier, then deals a normal powered attack from the real player. That drives the
-/// full funnel - Hook.ModifyDamage, the AfterModifyingDamageAmount promotion, AfterDamageGiven - exactly as a real
-/// co-op hit would, so the DBG detect/consume logs and the end-of-combat summary reflect real behavior.
+/// It mints two throwaway players (NetIds 2 and 3), stacks Vulnerable on the first enemy from both of them in unequal
+/// amounts, then deals a normal powered attack from the real player. That drives the full funnel - Hook.ModifyDamage,
+/// the AfterModifyingDamageAmount promotion, AfterDamageGiven, and the stack-ownership hooks - exactly as a real co-op
+/// hit would. It runs on F9 (see <see cref="SelfTestNode"/>) or from the headless auto-harness.
 /// </summary>
 internal static class SelfTest
 {
@@ -38,28 +38,12 @@ internal static class SelfTest
             return;
         }
 
-        tree.Root.AddChild(new SelfTestNode());
+        tree.Root.CallDeferred(Node.MethodName.AddChild, new SelfTestNode());
         _installed = true;
         GD.Print("[RdpsMeter] Self-test armed - press F9 in combat to inject a cross-player Vulnerable hit");
     }
-}
 
-internal sealed partial class SelfTestNode : Node
-{
-    private bool _keyWasDown;
-
-    public override void _Process(double delta)
-    {
-        bool keyIsDown = Input.IsPhysicalKeyPressed(Key.F9);
-        if (keyIsDown && !_keyWasDown)
-        {
-            _ = TaskHelper.RunSafely(RunAsync());
-        }
-
-        _keyWasDown = keyIsDown;
-    }
-
-    private static async Task RunAsync()
+    public static async Task RunAsync()
     {
         CombatState? state = CombatManager.Instance?.DebugOnlyGetState();
         if (state == null || !CombatManager.Instance!.IsInProgress)
@@ -84,24 +68,50 @@ internal sealed partial class SelfTestNode : Node
 
         var context = new NoOpChoiceContext();
 
+        // Some enemies carry Artifact, which negates the first debuffs applied to them and would swallow a test
+        // Vulnerable. Strip it so both applications land.
+        for (int guard = 0; enemy.GetPower<ArtifactPower>() != null && guard < 10; guard++)
+        {
+            await PowerCmd.Remove<ArtifactPower>(enemy);
+        }
+
         GD.Print($"[RdpsMeter] Self-test: Vulnerable to {enemy.LogName} - 2 stacks by NetId 2, 1 stack by NetId 3, "
             + $"then {dealer.Player.NetId} attacks for 6 - expect the +3 bonus split 2:1 between NetId 2 and 3");
 
-        VulnerablePower? vulnerable = await PowerCmd.Apply<VulnerablePower>(context, enemy, 2m, applier2, null);
+        await PowerCmd.Apply<VulnerablePower>(context, enemy, 2m, applier2, null);
         await PowerCmd.Apply<VulnerablePower>(context, enemy, 1m, applier3, null);
 
-        if (vulnerable != null)
+        // Read the enemy's actual merged instance - the return of the first Apply can be an orphan if the merge went
+        // through a different path.
+        VulnerablePower? merged = enemy.GetPower<VulnerablePower>();
+        if (merged != null)
         {
-            IReadOnlyDictionary<ulong, decimal>? shares = PowerOwnership.Instance.Shares(vulnerable);
+            IReadOnlyDictionary<ulong, decimal>? shares = PowerOwnership.Instance.Shares(merged);
             string rendered = shares == null
                 ? "none"
                 : string.Join(", ", shares.Select(kv => $"{kv.Key}:{kv.Value:0.00}"));
-            GD.Print($"[RdpsMeter] Self-test: recorded ownership = {rendered}");
+            GD.Print($"[RdpsMeter] Self-test: recorded ownership = {rendered} (amount={merged.Amount})");
         }
 
         await CreatureCmd.Damage(context, new[] { enemy }, 6m, DamageProps.card, dealer, null);
 
         GD.Print("[RdpsMeter] Self-test: done");
+    }
+}
+
+internal sealed partial class SelfTestNode : Node
+{
+    private bool _keyWasDown;
+
+    public override void _Process(double delta)
+    {
+        bool keyIsDown = Input.IsPhysicalKeyPressed(Key.F9);
+        if (keyIsDown && !_keyWasDown)
+        {
+            _ = TaskHelper.RunSafely(SelfTest.RunAsync());
+        }
+
+        _keyWasDown = keyIsDown;
     }
 }
 
