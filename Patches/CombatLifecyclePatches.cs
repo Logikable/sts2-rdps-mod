@@ -17,7 +17,12 @@ internal static class CombatLifecyclePatches
     {
         AttributionPatches.ClearPending();
         CombatLedger.Instance.Reset();
-        SelfTest.Install();
+
+        // The F9 self-test drives live combat with fake players; only arm it for developer builds, never for players.
+        if (DevMode.Enabled)
+        {
+            SelfTest.Install();
+        }
     }
 
     [HarmonyPatch(nameof(CombatManager.EndCombatInternal))]

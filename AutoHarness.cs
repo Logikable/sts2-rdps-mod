@@ -28,12 +28,6 @@ internal static class AutoHarness
     private const string CompleteSentinel = "[RdpsMeter] === HARNESS COMPLETE ===";
     private const string FailedSentinel = "[RdpsMeter] === HARNESS FAILED ===";
 
-    public static bool Armed()
-    {
-        string? dir = Path.GetDirectoryName(typeof(AutoHarness).Assembly.Location);
-        return dir != null && File.Exists(Path.Combine(dir, "autotest.marker"));
-    }
-
     public static void Install()
     {
         if (Engine.GetMainLoop() is SceneTree { Root: not null } tree)
