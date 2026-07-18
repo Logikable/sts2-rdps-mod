@@ -1,6 +1,7 @@
 using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
@@ -84,6 +85,7 @@ internal static class SelfTest
         all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
         all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
         all &= await DemiseScenario(context, dealer, enemy, applier2);
+        all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
@@ -232,6 +234,49 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// A teammate strangles the enemy for 7, then plays one of their own cards. Strangle deals dealer-less
+    /// unblockable damage to the enemy after that card resolves, which must be booked as the applier's own aDPS.
+    /// Driven by invoking the power's card-played hooks with a card owned by the applier, exactly as a real play does.
+    /// </summary>
+    private static async Task<bool> StrangleScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+
+        await PowerCmd.Apply<StranglePower>(ctx, enemy, 7m, applier2, null);
+
+        StranglePower? strangle = enemy.GetPower<StranglePower>();
+        LogShares("Strangle", strangle);
+        if (strangle != null)
+        {
+            // A detached fake player's deck cards start unowned; Strangle only fires on a card owned by its applier,
+            // so stamp ownership first.
+            CardModel card = applier2.Player!.Deck.Cards.First();
+            if (card.Owner != applier2.Player)
+            {
+                card.Owner = applier2.Player;
+            }
+
+            var cardPlay = new CardPlay
+            {
+                Card = card,
+                Target = enemy,
+                ResultPile = PileType.Discard,
+                Resources = default,
+                IsAutoPlay = false,
+                PlayIndex = 0,
+                PlayCount = 1,
+            };
+            await strangle.BeforeCardPlayed(cardPlay);
+            await strangle.AfterCardPlayed(ctx, cardPlay);
+        }
+
+        CombatLedger l = CombatLedger.Instance;
+        return Report("Strangle",
+            Expect("2 aDPS Strangle", l.DealtWith(2uL, "Strangle"), 7m));
+    }
+
+    /// <summary>
     /// Two appliers stack Doom 20:10 onto the enemy, whose HP is set to 15. Doom is not damage - it instakills - so
     /// the removed HP (15) is credited as the appliers' own damage, split by stacks: 10 to NetId 2, 5 to NetId 3.
     /// Run last, because it kills the target.
@@ -303,6 +348,11 @@ internal static class SelfTest
         if (enemy.GetPower<DemisePower>() != null)
         {
             await PowerCmd.Remove<DemisePower>(enemy);
+        }
+
+        if (enemy.GetPower<StranglePower>() != null)
+        {
+            await PowerCmd.Remove<StranglePower>(enemy);
         }
 
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);

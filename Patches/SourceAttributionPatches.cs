@@ -1,6 +1,8 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace RdpsMeter.Patches;
@@ -38,6 +40,53 @@ internal static class SourceAttributionPatches
         if (shares != null)
         {
             SourceAttribution.Register(__instance.Owner, "Demise", shares);
+        }
+    }
+
+    // Cards a Strangle instance will damage on: the game arms a card in BeforeCardPlayed and fires in AfterCardPlayed,
+    // so mirroring that set here means we register exactly when it will deal damage - and never on the card that
+    // applied the Strangle itself, which was never armed.
+    private static readonly HashSet<(StranglePower Power, CardModel Card)> ArmedStrangles = new();
+    private static readonly object StrangleLock = new();
+
+    /// <summary>
+    /// Strangle arms a card played by its applier, then deals unblockable dealer-less damage to the strangled enemy
+    /// after that card resolves. Arm the same cards the game does so the after-hook knows a hit is coming.
+    /// </summary>
+    [HarmonyPatch(typeof(StranglePower), nameof(StranglePower.BeforeCardPlayed))]
+    [HarmonyPrefix]
+    private static void StrangleBeforeCardPlayedPrefix(StranglePower __instance, CardPlay cardPlay)
+    {
+        if (__instance.Applier?.Player == null || cardPlay.Card.Owner != __instance.Applier.Player)
+        {
+            return;
+        }
+
+        lock (StrangleLock)
+        {
+            ArmedStrangles.Add((__instance, cardPlay.Card));
+        }
+    }
+
+    [HarmonyPatch(typeof(StranglePower), nameof(StranglePower.AfterCardPlayed))]
+    [HarmonyPrefix]
+    private static void StrangleAfterCardPlayedPrefix(StranglePower __instance, CardPlay cardPlay)
+    {
+        bool armed;
+        lock (StrangleLock)
+        {
+            armed = ArmedStrangles.Remove((__instance, cardPlay.Card));
+        }
+
+        if (!armed)
+        {
+            return;
+        }
+
+        IReadOnlyDictionary<ulong, decimal>? shares = AttributionEngine.OwnershipShares(__instance);
+        if (shares != null)
+        {
+            SourceAttribution.Register(__instance.Owner, "Strangle", shares);
         }
     }
 }
