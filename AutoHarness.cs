@@ -54,9 +54,9 @@ internal static class AutoHarness
         try
         {
             await EnterDebugCombat();
-            await SelfTest.RunAsync();
+            bool passed = await SelfTest.RunAsync();
             CombatLedger.Instance.PrintSummary();
-            GD.Print(CompleteSentinel);
+            GD.Print(passed ? CompleteSentinel : FailedSentinel);
         }
         catch (Exception ex)
         {

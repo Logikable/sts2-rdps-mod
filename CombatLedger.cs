@@ -86,6 +86,46 @@ internal sealed class CombatLedger
         }
     }
 
+    /// <summary>
+    /// Damage <paramref name="netId"/> received on their own hits from <paramref name="effect"/> applied by
+    /// <paramref name="other"/>. Zero if there is no such entry. For the self-test harness to assert attribution.
+    /// </summary>
+    public decimal ReceivedFrom(ulong netId, string effect, ulong other)
+    {
+        lock (_lock)
+        {
+            return _ledgers.TryGetValue(netId, out PlayerLedger? l)
+                ? l.ReceivedBySource.GetValueOrDefault((effect, other))
+                : 0m;
+        }
+    }
+
+    /// <summary>
+    /// Damage <paramref name="netId"/> gave to <paramref name="other"/> via <paramref name="effect"/>. Zero if absent.
+    /// </summary>
+    public decimal GivenTo(ulong netId, string effect, ulong other)
+    {
+        lock (_lock)
+        {
+            return _ledgers.TryGetValue(netId, out PlayerLedger? l)
+                ? l.GivenBySource.GetValueOrDefault((effect, other))
+                : 0m;
+        }
+    }
+
+    /// <summary>
+    /// Raw damage <paramref name="netId"/> dealt themselves through <paramref name="card"/> (aDPS). Zero if absent.
+    /// </summary>
+    public decimal DealtWith(ulong netId, string card)
+    {
+        lock (_lock)
+        {
+            return _ledgers.TryGetValue(netId, out PlayerLedger? l)
+                ? l.DealtByCard.GetValueOrDefault(card)
+                : 0m;
+        }
+    }
+
     public void RecordName(ulong netId, string name)
     {
         lock (_lock)
