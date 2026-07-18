@@ -125,6 +125,17 @@ internal static class AttributionPatches
             return;
         }
 
+        if (SourceAttribution.TryConsume(target, out string sourceEffect, out IReadOnlyDictionary<ulong, decimal> sourceShares))
+        {
+            foreach (ulong netId in sourceShares.Keys)
+            {
+                CombatLedger.Instance.RecordName(netId, PlayerIdentity.Name(netId));
+            }
+
+            CombatLedger.Instance.ApplyDot(sourceEffect, sourceShares, results.UnblockedDamage);
+            return;
+        }
+
         if (attribution != null)
         {
             CombatLedger.Instance.ApplyHit(attribution, results);
@@ -139,5 +150,6 @@ internal static class AttributionPatches
         }
 
         PoisonAttribution.Clear();
+        SourceAttribution.Clear();
     }
 }

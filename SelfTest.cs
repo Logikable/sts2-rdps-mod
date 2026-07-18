@@ -83,6 +83,7 @@ internal static class SelfTest
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
         all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
+        all &= await DemiseScenario(context, dealer, enemy, applier2);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
@@ -208,6 +209,29 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// A teammate throws Powdered Demise at the enemy for 9. Demise deals dealer-less unblockable damage at side-turn
+    /// end, which the game cannot attribute; the removed HP must be booked as the applier's own aDPS.
+    /// </summary>
+    private static async Task<bool> DemiseScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+
+        await PowerCmd.Apply<DemisePower>(ctx, enemy, 9m, applier2, null);
+
+        DemisePower? demise = enemy.GetPower<DemisePower>();
+        LogShares("Demise", demise);
+        if (demise != null)
+        {
+            await demise.AfterSideTurnEnd(ctx, enemy.Side, new[] { enemy });
+        }
+
+        CombatLedger l = CombatLedger.Instance;
+        return Report("Demise",
+            Expect("2 aDPS Demise", l.DealtWith(2uL, "Demise"), 9m));
+    }
+
+    /// <summary>
     /// Two appliers stack Doom 20:10 onto the enemy, whose HP is set to 15. Doom is not damage - it instakills - so
     /// the removed HP (15) is credited as the appliers' own damage, split by stacks: 10 to NetId 2, 5 to NetId 3.
     /// Run last, because it kills the target.
@@ -274,6 +298,11 @@ internal static class SelfTest
         if (enemy.GetPower<DoomPower>() != null)
         {
             await PowerCmd.Remove<DoomPower>(enemy);
+        }
+
+        if (enemy.GetPower<DemisePower>() != null)
+        {
+            await PowerCmd.Remove<DemisePower>(enemy);
         }
 
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);
