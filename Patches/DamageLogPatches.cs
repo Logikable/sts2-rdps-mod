@@ -4,6 +4,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.ValueProps;
 
 namespace RdpsMeter.Patches;
 
@@ -30,6 +31,8 @@ internal static class DamageLogPatches
         Creature? target,
         Creature? dealer,
         decimal damage,
+        ValueProp props,
+        CardModel? cardSource,
         ModifyDamageHookType modifyDamageHookType,
         CardPreviewMode previewMode,
         IEnumerable<AbstractModel> modifiers,
@@ -40,9 +43,22 @@ internal static class DamageLogPatches
             return;
         }
 
-        string modifierList = string.Join(", ", modifiers.Select(Describe));
-        GD.Print($"[RdpsMeter] calc: {LogName(dealer)} -> {LogName(target)} {damage} => {__result}"
-            + (modifierList.Length > 0 ? $" [{modifierList}]" : ""));
+        // Only the hits an actual power touched are interesting; unmodified recalcs (dominated by enemy-intent
+        // redraws) would otherwise bury the log.
+        IReadOnlyList<AbstractModel> modifierList = modifiers as IReadOnlyList<AbstractModel> ?? modifiers.ToList();
+        if (modifierList.Count == 0)
+        {
+            return;
+        }
+
+        // Reconstructing the same number from the modifier list alone confirms the counterfactual engine mirrors the
+        // game's pipeline; a mismatch means our replay has drifted from Hook.ModifyDamage and attribution is suspect.
+        decimal replay = AttributionEngine.Recompute(
+            damage, props, target, dealer, cardSource, modifyDamageHookType, modifierList, EmptyExclusion);
+        string drift = Math.Abs(replay - __result) > 0.01m ? $" !! replay={replay}" : "";
+
+        string described = string.Join(", ", modifierList.Select(Describe));
+        GD.Print($"[RdpsMeter] calc: {LogName(dealer)} -> {LogName(target)} {damage} => {__result} [{described}]{drift}");
     }
 
     [HarmonyPatch(nameof(Hook.AfterDamageGiven))]
@@ -85,4 +101,6 @@ internal static class DamageLogPatches
     {
         return creature?.LogName ?? "none";
     }
+
+    private static readonly HashSet<AbstractModel> EmptyExclusion = new();
 }
