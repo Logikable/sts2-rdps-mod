@@ -1,4 +1,5 @@
 using Godot;
+using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
@@ -8,6 +9,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.ValueProps;
 
@@ -86,6 +88,7 @@ internal static class SelfTest
         all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
         all &= await DemiseScenario(context, dealer, enemy, applier2);
         all &= await StrangleScenario(context, dealer, enemy, applier2);
+        all &= await HauntScenario(context, dealer, enemy);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
@@ -277,6 +280,40 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// The dealer holds Haunt 6 and plays a Soul, which deals dealer-less unblockable damage to a random enemy. It is
+    /// the dealer's own damage, so it must be booked as their aDPS regardless of which enemy the roll picks.
+    /// </summary>
+    private static async Task<bool> HauntScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<HauntPower>(ctx, dealer, 6m, dealer, null);
+
+        HauntPower? haunt = dealer.GetPower<HauntPower>();
+        LogShares("Haunt", haunt);
+        if (haunt != null)
+        {
+            CardModel soul = enemy.CombatState!.CreateCard(ModelDb.Card<Soul>(), dealer.Player!);
+            var cardPlay = new CardPlay
+            {
+                Card = soul,
+                Target = enemy,
+                ResultPile = PileType.Discard,
+                Resources = default,
+                IsAutoPlay = false,
+                PlayIndex = 0,
+                PlayCount = 1,
+            };
+            await haunt.AfterCardPlayed(ctx, cardPlay);
+        }
+
+        CombatLedger l = CombatLedger.Instance;
+        return Report("Haunt",
+            Expect("you aDPS Haunt", l.DealtWith(you, "Haunt"), 6m));
+    }
+
+    /// <summary>
     /// Two appliers stack Doom 20:10 onto the enemy, whose HP is set to 15. Doom is not damage - it instakills - so
     /// the removed HP (15) is credited as the appliers' own damage, split by stacks: 10 to NetId 2, 5 to NetId 3.
     /// Run last, because it kills the target.
@@ -338,6 +375,11 @@ internal static class SelfTest
         if (dealer.GetPower<AccelerantPower>() != null)
         {
             await PowerCmd.Remove<AccelerantPower>(dealer);
+        }
+
+        if (dealer.GetPower<HauntPower>() != null)
+        {
+            await PowerCmd.Remove<HauntPower>(dealer);
         }
 
         if (enemy.GetPower<DoomPower>() != null)

@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace RdpsMeter.Patches;
@@ -88,5 +89,26 @@ internal static class SourceAttributionPatches
         {
             SourceAttribution.Register(__instance.Owner, "Strangle", shares);
         }
+    }
+
+    /// <summary>
+    /// Haunt deals unblockable dealer-less damage to a random enemy whenever its owner plays a Soul. It is the owner's
+    /// own damage; register it against the owner. The target is rolled inside the method, so this uses the
+    /// target-agnostic path. Gated on the same three conditions the game uses so a hit is always coming.
+    /// </summary>
+    [HarmonyPatch(typeof(HauntPower), nameof(HauntPower.AfterCardPlayed))]
+    [HarmonyPrefix]
+    private static void HauntAfterCardPlayedPrefix(HauntPower __instance, CardPlay cardPlay)
+    {
+        if (cardPlay.Card is not Soul
+            || cardPlay.Card.Owner.Creature != __instance.Owner
+            || __instance.CombatState.HittableEnemies.Count == 0
+            || __instance.Owner.Player is not { } player)
+        {
+            return;
+        }
+
+        var shares = new Dictionary<ulong, decimal> { [player.NetId] = 1m };
+        SourceAttribution.RegisterAnywhere("Haunt", shares);
     }
 }

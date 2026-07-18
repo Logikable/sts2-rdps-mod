@@ -18,6 +18,13 @@ internal static class SourceAttribution
     private sealed record Entry(string Effect, IReadOnlyDictionary<ulong, decimal> Shares);
 
     private static readonly Dictionary<Creature, Queue<Entry>> Pending = new();
+
+    // For effects that pick their target inside the triggering method (Haunt rolls a random enemy), the patch can't
+    // name the target in advance. These entries match the next dealer-less hit regardless of target, consulted only
+    // after a per-target miss so they never steal a Poison/Demise/Strangle hit. Safe because the effect deals its
+    // damage synchronously right after registering, before any other source hit can intervene.
+    private static readonly Queue<Entry> Anywhere = new();
+
     private static readonly object Lock = new();
     private static readonly IReadOnlyDictionary<ulong, decimal> NoShares = new Dictionary<ulong, decimal>();
 
@@ -32,6 +39,14 @@ internal static class SourceAttribution
             }
 
             queue.Enqueue(new Entry(effect, shares));
+        }
+    }
+
+    public static void RegisterAnywhere(string effect, IReadOnlyDictionary<ulong, decimal> shares)
+    {
+        lock (Lock)
+        {
+            Anywhere.Enqueue(new Entry(effect, shares));
         }
     }
 
@@ -51,6 +66,14 @@ internal static class SourceAttribution
                 shares = entry.Shares;
                 return true;
             }
+
+            if (Anywhere.Count > 0)
+            {
+                Entry entry = Anywhere.Dequeue();
+                effect = entry.Effect;
+                shares = entry.Shares;
+                return true;
+            }
         }
 
         effect = string.Empty;
@@ -63,6 +86,7 @@ internal static class SourceAttribution
         lock (Lock)
         {
             Pending.Clear();
+            Anywhere.Clear();
         }
     }
 }
