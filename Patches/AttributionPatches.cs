@@ -61,20 +61,14 @@ internal static class AttributionPatches
         HitAttribution attribution = AttributionEngine.Attribute(
             damage, props, target, dealer, cardSource, modifyDamageHookType, modifierList, __result);
 
-        if (attribution.ExternalPreBlock.Count > 0)
-        {
-            string shares = string.Join(", ", attribution.ExternalPreBlock.Select(kv => $"{kv.Key}:{kv.Value}"));
-            Godot.GD.Print($"[RdpsMeter] DBG detect: dealer={attribution.DealerNetId} total={attribution.Total} dealerShare={attribution.DealerPreBlock} ext=[{shares}]");
-        }
-
         if (attribution.DealerNetId is ulong dealerNetId && dealer?.Player != null)
         {
             CombatLedger.Instance.RecordName(dealerNetId, PlayerIdentity.Name(dealer.Player));
         }
 
-        foreach (ulong applier in attribution.ExternalPreBlock.Keys)
+        foreach (ExternalContribution contribution in attribution.Externals)
         {
-            CombatLedger.Instance.RecordName(applier, PlayerIdentity.Name(applier));
+            CombatLedger.Instance.RecordName(contribution.ApplierNetId, PlayerIdentity.Name(contribution.ApplierNetId));
         }
 
         Calcs.AddOrUpdate(modifiers, attribution);
@@ -120,16 +114,7 @@ internal static class AttributionPatches
 
         if (attribution != null)
         {
-            if (attribution.ExternalPreBlock.Count > 0)
-            {
-                Godot.GD.Print($"[RdpsMeter] DBG consume: target={target.LogName} dealer={attribution.DealerNetId} unblocked={results.UnblockedDamage} extCount={attribution.ExternalPreBlock.Count}");
-            }
-
             CombatLedger.Instance.ApplyHit(attribution, results);
-        }
-        else
-        {
-            Godot.GD.Print($"[RdpsMeter] DBG consume-miss: no queued attribution for target={target.LogName}");
         }
     }
 

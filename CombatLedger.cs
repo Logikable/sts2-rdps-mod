@@ -4,16 +4,26 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 namespace RdpsMeter;
 
 /// <summary>
-/// Per-combat damage tallies for every player. <see cref="Raw"/> is the classic damage-meter number - the whole
-/// unblocked amount of each hit credited to whoever dealt it. <see cref="Rdps"/> redistributes that same total by
-/// attribution: a hit's dealer keeps only their own share and the rest flows to the teammates whose buffs boosted
-/// it. Across all players both columns sum to the same total damage; the difference between a player's two columns is
-/// their net support contribution.
+/// Per-player rDPS accounting for one combat, decomposed the way an rDPS tooltip reads:
+///
+///   rDPS = aDPS + given - received
+///
+/// where aDPS is the raw unblocked damage the player actually dealt (itemized by card), given is the damage their
+/// buffs/debuffs enabled on teammates' hits (itemized by effect and beneficiary), and received is the damage
+/// teammates' buffs enabled on this player's own hits (itemized by effect and applier). Every given entry has a
+/// matching received entry on the other player, so across the table given and received cancel and total rDPS equals
+/// total damage dealt.
 /// </summary>
-internal sealed class PlayerTotals
+internal sealed class PlayerLedger
 {
-    public decimal Raw { get; set; }
-    public decimal Rdps { get; set; }
+    public Dictionary<string, decimal> DealtByCard { get; } = new();
+    public Dictionary<(string Effect, ulong Other), decimal> GivenBySource { get; } = new();
+    public Dictionary<(string Effect, ulong Other), decimal> ReceivedBySource { get; } = new();
+
+    public decimal ADps => DealtByCard.Values.Sum();
+    public decimal Given => GivenBySource.Values.Sum();
+    public decimal Received => ReceivedBySource.Values.Sum();
+    public decimal Rdps => ADps + Given - Received;
 }
 
 internal sealed class CombatLedger
@@ -21,7 +31,7 @@ internal sealed class CombatLedger
     public static CombatLedger Instance { get; } = new();
 
     private readonly object _lock = new();
-    private readonly Dictionary<ulong, PlayerTotals> _totals = new();
+    private readonly Dictionary<ulong, PlayerLedger> _ledgers = new();
     private readonly Dictionary<ulong, string> _names = new();
 
     private CombatLedger()
@@ -32,15 +42,15 @@ internal sealed class CombatLedger
     {
         lock (_lock)
         {
-            _totals.Clear();
+            _ledgers.Clear();
         }
     }
 
     /// <summary>
     /// Folds one settled hit into the tallies. The attribution carries pre-block shares; here they are rescaled onto
-    /// the actual unblocked HP loss so block reduces every share by the same proportion. Fully-blocked or
-    /// zero-damage hits contribute nothing. Monster-dealt hits (no dealer player) are ignored - this is a meter of
-    /// player damage output.
+    /// the actual unblocked HP loss so block reduces every share by the same proportion. The dealer's full unblocked
+    /// damage counts as aDPS; each teammate contribution is booked as received (on the dealer) and given (on the
+    /// applier). Monster-dealt and fully-blocked hits contribute nothing.
     /// </summary>
     public void ApplyHit(HitAttribution attribution, DamageResult result)
     {
@@ -57,13 +67,21 @@ internal sealed class CombatLedger
 
         lock (_lock)
         {
-            ulong dealer = attribution.DealerNetId!.Value;
-            Totals(dealer).Raw += unblocked;
-            Totals(dealer).Rdps += unblocked * attribution.DealerPreBlock / attribution.Total;
+            ulong dealerNetId = attribution.DealerNetId!.Value;
+            PlayerLedger dealer = Ledger(dealerNetId);
+            dealer.DealtByCard[attribution.DealerCard] =
+                dealer.DealtByCard.GetValueOrDefault(attribution.DealerCard) + unblocked;
 
-            foreach ((ulong applier, decimal preBlock) in attribution.ExternalPreBlock)
+            foreach (ExternalContribution contribution in attribution.Externals)
             {
-                Totals(applier).Rdps += unblocked * preBlock / attribution.Total;
+                decimal amount = unblocked * contribution.PreBlock / attribution.Total;
+
+                var received = (contribution.Effect, contribution.ApplierNetId);
+                dealer.ReceivedBySource[received] = dealer.ReceivedBySource.GetValueOrDefault(received) + amount;
+
+                PlayerLedger applier = Ledger(contribution.ApplierNetId);
+                var given = (contribution.Effect, dealerNetId);
+                applier.GivenBySource[given] = applier.GivenBySource.GetValueOrDefault(given) + amount;
             }
         }
     }
@@ -76,49 +94,58 @@ internal sealed class CombatLedger
         }
     }
 
-    /// <summary>
-    /// Snapshot of the current tallies, sorted by rDPS descending, with display names resolved.
-    /// </summary>
-    public IReadOnlyList<(ulong NetId, string Name, decimal Raw, decimal Rdps)> Snapshot()
+    public void PrintSummary()
     {
         lock (_lock)
         {
-            return _totals
-                .Select(kv => (
-                    kv.Key,
-                    _names.GetValueOrDefault(kv.Key, kv.Key.ToString()),
-                    kv.Value.Raw,
-                    kv.Value.Rdps))
-                .OrderByDescending(row => row.Rdps)
-                .ToList();
+            if (_ledgers.Count == 0)
+            {
+                return;
+            }
+
+            GD.Print("[RdpsMeter] === combat summary ===");
+            foreach ((ulong netId, PlayerLedger ledger) in _ledgers.OrderByDescending(kv => kv.Value.Rdps))
+            {
+                GD.Print($"[RdpsMeter] {NameOf(netId),-20} "
+                    + $"aDPS {Round(ledger.ADps),5} + given {Round(ledger.Given),4} - recv {Round(ledger.Received),4} "
+                    + $"= rDPS {Round(ledger.Rdps),5}");
+
+                foreach ((string card, decimal amount) in ledger.DealtByCard.OrderByDescending(kv => kv.Value))
+                {
+                    GD.Print($"[RdpsMeter]     dealt  {card} {Round(amount)}");
+                }
+
+                foreach (((string effect, ulong other), decimal amount) in ledger.GivenBySource.OrderByDescending(kv => kv.Value))
+                {
+                    GD.Print($"[RdpsMeter]     given  {effect} -> {NameOf(other)} {Round(amount)}");
+                }
+
+                foreach (((string effect, ulong other), decimal amount) in ledger.ReceivedBySource.OrderByDescending(kv => kv.Value))
+                {
+                    GD.Print($"[RdpsMeter]     recv   {effect} <- {NameOf(other)} {Round(amount)}");
+                }
+            }
         }
     }
 
-    public void PrintSummary()
+    private string NameOf(ulong netId)
     {
-        IReadOnlyList<(ulong NetId, string Name, decimal Raw, decimal Rdps)> rows = Snapshot();
-        if (rows.Count == 0)
-        {
-            return;
-        }
-
-        GD.Print("[RdpsMeter] === combat summary (raw damage -> rDPS) ===");
-        foreach ((ulong _, string name, decimal raw, decimal rdps) in rows)
-        {
-            decimal delta = rdps - raw;
-            string sign = delta >= 0m ? "+" : "";
-            GD.Print($"[RdpsMeter]   {name,-20} raw {Math.Round(raw),5} | rDPS {Math.Round(rdps),5} ({sign}{Math.Round(delta)})");
-        }
+        return _names.GetValueOrDefault(netId, netId.ToString());
     }
 
-    private PlayerTotals Totals(ulong netId)
+    private PlayerLedger Ledger(ulong netId)
     {
-        if (!_totals.TryGetValue(netId, out PlayerTotals? totals))
+        if (!_ledgers.TryGetValue(netId, out PlayerLedger? ledger))
         {
-            totals = new PlayerTotals();
-            _totals[netId] = totals;
+            ledger = new PlayerLedger();
+            _ledgers[netId] = ledger;
         }
 
-        return totals;
+        return ledger;
+    }
+
+    private static decimal Round(decimal value)
+    {
+        return Math.Round(value, MidpointRounding.AwayFromZero);
     }
 }

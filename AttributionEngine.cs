@@ -7,18 +7,25 @@ using MegaCrit.Sts2.Core.ValueProps;
 namespace RdpsMeter;
 
 /// <summary>
-/// The attributed decomposition of a single hit's pre-block damage: how much of the final number belongs to the
-/// dealer versus to teammates whose buffs/debuffs boosted it. Amounts are in the pre-block damage space (the value
-/// Hook.ModifyDamage returned); the ledger rescales them onto the settled unblocked HP loss so block reduces every
-/// share proportionally. All shares sum to <see cref="Total"/>.
+/// One teammate's contribution to a single hit: how much of the damage a given effect they applied was responsible
+/// for, in pre-block space. Carries the effect name and applier so the meter can itemize "Vulnerable from clcy: 9"
+/// the way an rDPS tooltip does.
+/// </summary>
+internal readonly record struct ExternalContribution(ulong ApplierNetId, string Effect, decimal PreBlock);
+
+/// <summary>
+/// The attributed decomposition of a single hit's pre-block damage: the dealer's own share plus each teammate's
+/// buff/debuff contribution. Amounts are pre-block (the value Hook.ModifyDamage returned); the ledger rescales them
+/// onto settled unblocked HP loss. Dealer share plus all contributions sum to <see cref="Total"/>.
 /// </summary>
 internal sealed class HitAttribution
 {
     public required Creature? Target { get; init; }
     public required decimal Total { get; init; }
     public required ulong? DealerNetId { get; init; }
+    public required string DealerCard { get; init; }
     public required decimal DealerPreBlock { get; init; }
-    public required IReadOnlyDictionary<ulong, decimal> ExternalPreBlock { get; init; }
+    public required IReadOnlyList<ExternalContribution> Externals { get; init; }
 
     public bool HasDealer => DealerNetId.HasValue;
 }
@@ -26,16 +33,15 @@ internal sealed class HitAttribution
 /// <summary>
 /// Counterfactual rDPS attribution. When a hit resolves, every modifier that changed its damage and was applied by a
 /// *different* player is a candidate for credit. For each such modifier we recompute the damage as if that one
-/// modifier were absent; the shortfall is the damage it was responsible for. Because multiplicative modifiers stack
-/// (removing either of two 1.5x debuffs individually understates neither's true share), the raw per-modifier gains
-/// can sum to more than the total gain from all external modifiers together, so we scale them proportionally to
-/// conserve the total. The dealer keeps whatever remains - exactly the damage they would have dealt with no
-/// teammate help.
+/// modifier were absent; the shortfall is the damage it was responsible for. Because multiplicative modifiers stack,
+/// the raw per-modifier gains can sum to more than the total gain from all external modifiers together, so we scale
+/// them proportionally to conserve the total. The dealer keeps whatever remains - exactly the damage they would have
+/// dealt with no teammate help.
 ///
 /// The recomputation mirrors Hook.ModifyDamage's pipeline (enchantment, then additive, then multiplicative, then
 /// cap) restricted to the participating modifier list. Non-participating listeners are identity operations, so the
 /// restricted pipeline reproduces the game's result exactly - see <see cref="Recompute"/>, whose no-exclusion output
-/// equals the final damage and is asserted at the call site during validation.
+/// equals the final damage.
 /// </summary>
 internal static class AttributionEngine
 {
@@ -50,8 +56,9 @@ internal static class AttributionEngine
         decimal finalResult)
     {
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
+        string dealerCard = cardSource?.Id.ToString() ?? "(none)";
 
-        var externals = new List<(AbstractModel Mod, ulong Applier)>();
+        var externals = new List<(AbstractModel Mod, ulong Applier, string Effect)>();
         foreach (AbstractModel modifier in modifiers)
         {
             if (modifier is PowerModel power)
@@ -59,7 +66,7 @@ internal static class AttributionEngine
                 ulong? applier = power.Applier?.Player?.NetId;
                 if (applier.HasValue && applier != dealerNetId)
                 {
-                    externals.Add((modifier, applier.Value));
+                    externals.Add((modifier, applier.Value, EffectName(modifier)));
                 }
             }
         }
@@ -71,8 +78,9 @@ internal static class AttributionEngine
                 Target = target,
                 Total = finalResult,
                 DealerNetId = dealerNetId,
+                DealerCard = dealerCard,
                 DealerPreBlock = finalResult,
-                ExternalPreBlock = EmptyShares,
+                Externals = Array.Empty<ExternalContribution>(),
             };
         }
 
@@ -82,27 +90,25 @@ internal static class AttributionEngine
             Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, externalSet);
         decimal totalExternalGain = total - withoutAllExternals;
 
-        // Raw counterfactual gain per applier (an applier with two contributing powers accumulates both).
-        var rawGains = new Dictionary<ulong, decimal>();
+        // Raw counterfactual gain per (applier, effect), so two effects from one player stay itemized.
+        var rawGains = new Dictionary<(ulong Applier, string Effect), decimal>();
         decimal sumRawGains = 0m;
-        foreach ((AbstractModel mod, ulong applier) in externals)
+        foreach ((AbstractModel mod, ulong applier, string effect) in externals)
         {
             decimal without = Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, Single(mod));
             decimal gain = total - without;
-            rawGains[applier] = rawGains.GetValueOrDefault(applier) + gain;
+            var key = (applier, effect);
+            rawGains[key] = rawGains.GetValueOrDefault(key) + gain;
             sumRawGains += gain;
         }
 
-        // Normalize so the per-applier gains sum to the true total external gain, then hand the remainder to the
-        // dealer. When gains are purely additive the factor is 1 and nothing changes; the scaling only bites when
-        // overlapping multipliers inflate the raw sum.
         decimal factor = sumRawGains != 0m ? totalExternalGain / sumRawGains : 0m;
-        var attributed = new Dictionary<ulong, decimal>(rawGains.Count);
+        var contributions = new List<ExternalContribution>(rawGains.Count);
         decimal attributedSum = 0m;
-        foreach ((ulong applier, decimal gain) in rawGains)
+        foreach (((ulong applier, string effect), decimal gain) in rawGains)
         {
             decimal share = gain * factor;
-            attributed[applier] = share;
+            contributions.Add(new ExternalContribution(applier, effect, share));
             attributedSum += share;
         }
 
@@ -111,8 +117,9 @@ internal static class AttributionEngine
             Target = target,
             Total = total,
             DealerNetId = dealerNetId,
+            DealerCard = dealerCard,
             DealerPreBlock = total - attributedSum,
-            ExternalPreBlock = attributed,
+            Externals = contributions,
         };
     }
 
@@ -194,8 +201,14 @@ internal static class AttributionEngine
         return Math.Max(0m, num);
     }
 
-    private static readonly IReadOnlyDictionary<ulong, decimal> EmptyShares =
-        new Dictionary<ulong, decimal>();
+    /// <summary>
+    /// Display name for a power: the class name with the "Power" suffix dropped (VulnerablePower -> Vulnerable).
+    /// </summary>
+    private static string EffectName(AbstractModel modifier)
+    {
+        string name = modifier.GetType().Name;
+        return name.EndsWith("Power", StringComparison.Ordinal) ? name[..^"Power".Length] : name;
+    }
 
     private static HashSet<AbstractModel> Single(AbstractModel modifier)
     {
