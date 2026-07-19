@@ -264,19 +264,25 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        List<(string Card, decimal Amount, decimal Buff)> dealt = row.Dealt.Where(d => Round(d.Amount) != 0m).ToList();
-        if (dealt.Count > 0)
-        {
-            decimal max = Math.Max(1m, dealt.Max(d => d.Amount));
-            _tooltipList.AddChild(SectionHeader("Damage Breakdown"));
-            foreach ((string card, decimal amount, decimal buff) in dealt)
-            {
-                _tooltipList.AddChild(SplitRow(card, amount, buff, max, color));
-            }
-        }
-
+        AddDamageSection(row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color);
         AddEffectSection("Given", Combine(row.GivenBy), "+", color);
         AddEffectSection("Received", Combine(row.ReceivedBy), "-", color);
+    }
+
+    private void AddDamageSection(List<(string Card, decimal Amount, decimal Buff)> items, Color color)
+    {
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        decimal max = Math.Max(1m, items.Max(i => i.Amount));
+        decimal total = items.Sum(i => i.Amount);
+        _tooltipList.AddChild(SectionHeader("Damage Breakdown"));
+        foreach ((string card, decimal amount, decimal buff) in items)
+        {
+            _tooltipList.AddChild(BarRow(card, Round(amount).ToString(), Percent(amount, total), SplitBackground(amount - buff, amount, max, color)));
+        }
     }
 
     // Sum an effect list across the players it went to / came from, so the breakdown shows one bar per effect rather
@@ -299,11 +305,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         decimal max = Math.Max(1m, items.Max(i => i.Amount));
+        decimal total = items.Sum(i => i.Amount);
         _tooltipList.AddChild(SectionHeader(title));
         foreach ((string effect, decimal amount) in items)
         {
-            _tooltipList.AddChild(BreakdownRow(effect, sign + Round(amount), (double)Math.Clamp(amount / max, 0m, 1m), color));
+            _tooltipList.AddChild(BarRow(effect, sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
         }
+    }
+
+    private static string Percent(decimal amount, decimal total)
+    {
+        return total > 0m ? $"{Round(amount / total * 100m)}%" : "0%";
     }
 
     private string Signature(ulong netId, RdpsRow? row)
@@ -449,37 +461,66 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         panel.Position = position;
     }
 
-    private static HBoxContainer BreakdownRow(string label, string valueText, double fraction, Color color)
+    // A breakdown row in the same layered style as the main overlay: the given background bar spans the row with the
+    // label (left), value (right) and its share of the section (right) drawn over it.
+    private static Control BarRow(string label, string valueText, string percentText, Control background)
     {
-        ProgressBar bar = MakeBar(color, new Vector2(96f, 12f));
-        bar.Value = fraction;
-        return Row3(RowLabel(label, expand: true), bar, RowLabel(valueText, expand: false));
+        var container = new Control { CustomMinimumSize = new Vector2(0f, 20f), MouseFilter = Control.MouseFilterEnum.Ignore };
+        container.AddChild(background);
+        background.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        Label text = OverlayLabel(label);
+        text.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        text.ClipText = true;
+
+        Label value = OverlayLabel(valueText);
+        value.CustomMinimumSize = new Vector2(48f, 0f);
+        value.HorizontalAlignment = HorizontalAlignment.Right;
+
+        Label percent = OverlayLabel(percentText);
+        percent.CustomMinimumSize = new Vector2(40f, 0f);
+        percent.HorizontalAlignment = HorizontalAlignment.Right;
+        percent.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.7f));
+
+        var line = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        line.AddThemeConstantOverride("separation", 6);
+        line.AddChild(text);
+        line.AddChild(value);
+        line.AddChild(percent);
+
+        var overlay = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        overlay.AddThemeConstantOverride("margin_left", 6);
+        overlay.AddThemeConstantOverride("margin_right", 6);
+        overlay.AddChild(line);
+        container.AddChild(overlay);
+        overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        return container;
     }
 
-    // A Damage Breakdown row whose bar is split: a solid segment for the card's own damage and a fainter segment for
+    private static ProgressBar EffectBackground(decimal amount, decimal max, Color color)
+    {
+        var bar = new ProgressBar { MinValue = 0d, MaxValue = 1d, ShowPercentage = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        bar.AddThemeStyleboxOverride("fill", RowBarStyle(new Color(color.R, color.G, color.B, 0.55f)));
+        bar.AddThemeStyleboxOverride("background", RowBarStyle(new Color(1f, 1f, 1f, 0.05f)));
+        bar.Value = (double)Math.Clamp(amount / max, 0m, 1m);
+        return bar;
+    }
+
+    // The Damage Breakdown bar, split: a solid segment for the card's own damage and a fainter same-colour segment for
     // the part teammates' buffs added, together spanning the card's total (scaled to the section's biggest card).
-    private static HBoxContainer SplitRow(string label, decimal total, decimal buff, decimal max, Color color)
+    private static Control SplitBackground(decimal own, decimal total, decimal max, Color color)
     {
-        return Row3(RowLabel(label, expand: true), SplitBar(total - buff, total, max, color), RowLabel(Round(total).ToString(), expand: false));
-    }
+        var holder = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
 
-    private static Control SplitBar(decimal own, decimal total, decimal max, Color color)
-    {
-        var holder = new Control
-        {
-            CustomMinimumSize = new Vector2(96f, 12f),
-            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-
-        // Back: neutral track with a faint fill up to the card's whole contribution.
-        ProgressBar back = MakeBar(new Color(color.R, color.G, color.B, 0.35f), Vector2.Zero);
+        var back = new ProgressBar { MinValue = 0d, MaxValue = 1d, ShowPercentage = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        back.AddThemeStyleboxOverride("fill", RowBarStyle(new Color(color.R, color.G, color.B, 0.28f)));
+        back.AddThemeStyleboxOverride("background", RowBarStyle(new Color(1f, 1f, 1f, 0.05f)));
         back.Value = (double)Math.Clamp(total / max, 0m, 1m);
         holder.AddChild(back);
         back.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
-        // Front: no track, a solid fill up to the card's own damage, overlaying the left of the faint segment.
-        ProgressBar front = MakeBar(color, Vector2.Zero);
+        var front = new ProgressBar { MinValue = 0d, MaxValue = 1d, ShowPercentage = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        front.AddThemeStyleboxOverride("fill", RowBarStyle(new Color(color.R, color.G, color.B, 0.55f)));
         front.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0f) });
         front.Value = (double)Math.Clamp(own / max, 0m, 1m);
         holder.AddChild(front);
@@ -488,57 +529,29 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return holder;
     }
 
-    private static Label RowLabel(string text, bool expand)
+    // A section title styled like the window header: a tinted strip with a centered, larger label.
+    private static Control SectionHeader(string title)
     {
-        var label = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
-        label.AddThemeColorOverride("font_color", Colors.White);
-        label.Text = text;
-        if (expand)
+        var strip = new Panel { CustomMinimumSize = new Vector2(0f, 22f), MouseFilter = Control.MouseFilterEnum.Ignore };
+        strip.AddThemeStyleboxOverride("panel", new StyleBoxFlat
         {
-            label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-            label.ClipText = true;
-        }
-        else
+            BgColor = new Color(1f, 1f, 1f, 0.08f),
+            BorderColor = new Color(1f, 1f, 1f, 0.14f),
+            BorderWidthBottom = 1,
+        });
+
+        var label = new Label
         {
-            label.CustomMinimumSize = new Vector2(52f, 0f);
-            label.HorizontalAlignment = HorizontalAlignment.Right;
-        }
-
-        return label;
-    }
-
-    private static HBoxContainer Row3(Control left, Control middle, Control right)
-    {
-        var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        row.AddThemeConstantOverride("separation", 8);
-        row.AddChild(left);
-        row.AddChild(middle);
-        row.AddChild(right);
-        return row;
-    }
-
-    private static Label SectionHeader(string title)
-    {
-        var header = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
-        header.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.55f));
-        header.Text = title;
-        return header;
-    }
-
-    private static ProgressBar MakeBar(Color fill, Vector2 minSize)
-    {
-        var bar = new ProgressBar
-        {
-            MinValue = 0d,
-            MaxValue = 1d,
-            ShowPercentage = false,
-            CustomMinimumSize = minSize,
-            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            Text = title,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = fill });
-        bar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(1f, 1f, 1f, 0.12f) });
-        return bar;
+        label.AddThemeFontSizeOverride("font_size", 16);
+        label.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        strip.AddChild(label);
+        label.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        return strip;
     }
 
     private static StyleBoxFlat WindowStyle(bool contentMargin = false)
