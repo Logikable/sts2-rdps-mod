@@ -1,16 +1,17 @@
 using Godot;
 using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Entities.Players;
 
 namespace RdpsMeter;
 
 /// <summary>
 /// The live in-combat rDPS meter. A self-owned CanvasLayer parented to the scene root (rather than the game's own UI
-/// tree) so it draws on top of everything without inheriting the game's layout or theme, the same approach the
-/// existing STS2 damage meters take. It polls <see cref="CombatLedger"/> each frame and shows one compact row per
-/// player - name, an rDPS bar scaled to the current leader, and the rDPS number - hidden whenever a combat is not in
-/// progress. The panel is a bordered window that starts in the top-right corner and can be dragged by its header; only
-/// that header takes the mouse, so the rest of the panel never intercepts a click meant for the game underneath. The
-/// per-source breakdown is a follow-up (hover).
+/// tree) so it draws on top of everything without inheriting the game's layout or theme. It shows one row per player in
+/// the combat - every player from the start, at zero, so the window's width is fixed and its height depends only on the
+/// party size - with the player's name, a bar tinted to their class colour, and their rDPS. The panel is a bordered
+/// window that starts near the top-left and can be dragged by its header; only the header (drag) and the rows (hover)
+/// take the mouse, so the rest never intercepts a click meant for the game underneath. Hovering a row pops an instant
+/// styled breakdown of that player's damage. Hidden whenever a combat is not in progress.
 /// </summary>
 internal static class RdpsOverlay
 {
@@ -38,6 +39,9 @@ internal static class RdpsOverlay
 
 internal sealed partial class RdpsOverlayNode : CanvasLayer
 {
+    // Fixed window width so it never reflows as names or numbers change; only the row count drives height.
+    private const float Width = 300f;
+
     private sealed class Row
     {
         public required HBoxContainer Container { get; init; }
@@ -49,39 +53,31 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private readonly Dictionary<ulong, Row> _rows = new();
     private PanelContainer _panel = null!;
     private VBoxContainer _list = null!;
+    private PanelContainer _tooltip = null!;
+    private Label _tooltipLabel = null!;
+    private IReadOnlyDictionary<ulong, RdpsRow> _snapshot = new Dictionary<ulong, RdpsRow>();
+    private ulong? _hovered;
 
     public override void _Ready()
     {
         Layer = 128;
 
-        // Anchor to the top-right corner and grow left/down so the window hugs the corner at any size. Dragging the
-        // header detaches it to free positioning (see DragHandle). The panel ignores the mouse so clicks fall through
-        // to the game; only the header (drag) and the rows (hover) take input.
+        // Anchor to the top-left, dropped down past the build/version text and a little in off the edge. Dragging the
+        // header detaches it to free positioning. The panel ignores the mouse so clicks fall through to the game.
         _panel = new PanelContainer
         {
-            AnchorLeft = 1f,
+            AnchorLeft = 0f,
             AnchorTop = 0f,
-            AnchorRight = 1f,
+            AnchorRight = 0f,
             AnchorBottom = 0f,
-            GrowHorizontal = Control.GrowDirection.Begin,
+            GrowHorizontal = Control.GrowDirection.End,
             GrowVertical = Control.GrowDirection.End,
-            OffsetTop = 12f,
-            OffsetRight = -12f,
+            OffsetLeft = 40f,
+            OffsetTop = 72f,
+            CustomMinimumSize = new Vector2(Width, 0f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        _panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(0.05f, 0.05f, 0.06f, 0.82f),
-            BorderColor = new Color(1f, 1f, 1f, 0.22f),
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 5,
-            CornerRadiusTopRight = 5,
-            CornerRadiusBottomLeft = 5,
-            CornerRadiusBottomRight = 5,
-        });
+        _panel.AddThemeStyleboxOverride("panel", WindowStyle());
 
         var root = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         root.AddThemeConstantOverride("separation", 0);
@@ -104,12 +100,21 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         body.AddThemeConstantOverride("margin_bottom", 6);
 
         _list = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _list.AddThemeConstantOverride("separation", 4);
         body.AddChild(_list);
 
         root.AddChild(header);
         root.AddChild(body);
         _panel.AddChild(root);
         AddChild(_panel);
+
+        // The hover breakdown: a matching floating window, positioned by hand and shown only while a row is hovered.
+        _tooltip = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false };
+        _tooltip.AddThemeStyleboxOverride("panel", WindowStyle(contentMargin: true));
+        _tooltipLabel = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _tooltipLabel.AddThemeColorOverride("font_color", Colors.White);
+        _tooltip.AddChild(_tooltipLabel);
+        AddChild(_tooltip);
     }
 
     public override void _Process(double delta)
@@ -118,22 +123,36 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _panel.Visible = inCombat;
         if (!inCombat)
         {
+            _tooltip.Visible = false;
             return;
         }
 
-        IReadOnlyList<RdpsRow> snapshot = CombatLedger.Instance.Snapshot();
-        decimal max = snapshot.Count > 0 ? Math.Max(snapshot.Max(r => r.Rdps), 1m) : 1m;
+        _snapshot = CombatLedger.Instance.Snapshot().ToDictionary(r => r.NetId);
+
+        IReadOnlyList<Player> players = CombatManager.Instance?.DebugOnlyGetState()?.Players ?? Array.Empty<Player>();
+        List<Player> ordered = players
+            .OrderByDescending(p => _snapshot.TryGetValue(p.NetId, out RdpsRow? r) ? r.Rdps : 0m)
+            .ThenBy(p => p.NetId)
+            .ToList();
+
+        decimal max = 1m;
+        foreach (Player player in ordered)
+        {
+            if (_snapshot.TryGetValue(player.NetId, out RdpsRow? r) && r.Rdps > max)
+            {
+                max = r.Rdps;
+            }
+        }
 
         var seen = new HashSet<ulong>();
         int index = 0;
-        foreach (RdpsRow row in snapshot)
+        foreach (Player player in ordered)
         {
-            seen.Add(row.NetId);
-            Row widget = Ensure(row.NetId);
-            widget.Name.Text = row.Name;
-            widget.Rdps.Text = Round(row.Rdps).ToString();
-            widget.Bar.Value = (double)Math.Clamp(row.Rdps / max, 0m, 1m);
-            widget.Container.TooltipText = Breakdown(row);
+            seen.Add(player.NetId);
+            Row widget = Ensure(player);
+            decimal rdps = _snapshot.TryGetValue(player.NetId, out RdpsRow? row) ? row.Rdps : 0m;
+            widget.Rdps.Text = Round(rdps).ToString();
+            widget.Bar.Value = (double)Math.Clamp(rdps / max, 0m, 1m);
             _list.MoveChild(widget.Container, index++);
         }
 
@@ -142,10 +161,36 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             _rows[netId].Container.QueueFree();
             _rows.Remove(netId);
         }
+
+        UpdateTooltip();
     }
 
-    private Row Ensure(ulong netId)
+    private void UpdateTooltip()
     {
+        if (_hovered is not { } netId || !_rows.TryGetValue(netId, out Row? row))
+        {
+            _tooltip.Visible = false;
+            return;
+        }
+
+        _tooltipLabel.Text = Breakdown(row.Name.Text, _snapshot.GetValueOrDefault(netId));
+        _tooltip.Visible = true;
+
+        // Sit to the right of the main window, level with the hovered row, flipping to the left if there is no room.
+        Vector2 viewport = _panel.GetViewportRect().Size;
+        float x = _panel.GlobalPosition.X + _panel.Size.X + 6f;
+        if (x + _tooltip.Size.X > viewport.X)
+        {
+            x = _panel.GlobalPosition.X - _tooltip.Size.X - 6f;
+        }
+
+        float y = Mathf.Clamp(row.Container.GlobalPosition.Y, 0f, Mathf.Max(0f, viewport.Y - _tooltip.Size.Y));
+        _tooltip.Position = new Vector2(Mathf.Max(0f, x), y);
+    }
+
+    private Row Ensure(Player player)
+    {
+        ulong netId = player.NetId;
         if (_rows.TryGetValue(netId, out Row? existing))
         {
             return existing;
@@ -153,10 +198,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         var name = new Label
         {
-            CustomMinimumSize = new Vector2(96f, 0f),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            ClipText = true,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         name.AddThemeColorOverride("font_color", Colors.White);
+        name.Text = PlayerIdentity.Name(player);
 
         var bar = new ProgressBar
         {
@@ -167,24 +214,32 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = new Color("e0b341") });
+        bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = player.Character.NameColor });
         bar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(1f, 1f, 1f, 0.12f) });
 
         var rdps = new Label
         {
-            CustomMinimumSize = new Vector2(44f, 0f),
+            CustomMinimumSize = new Vector2(56f, 0f),
             HorizontalAlignment = HorizontalAlignment.Right,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         rdps.AddThemeColorOverride("font_color", Colors.White);
 
-        // The row takes the mouse so hovering it shows the per-source breakdown as a tooltip; its children ignore the
-        // mouse so the whole row is one hover target.
+        // The row takes the mouse so hovering it drives the breakdown; its children ignore it so the whole row is one
+        // hover target.
         var container = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Stop };
         container.AddThemeConstantOverride("separation", 8);
         container.AddChild(name);
         container.AddChild(bar);
         container.AddChild(rdps);
+        container.MouseEntered += () => _hovered = netId;
+        container.MouseExited += () =>
+        {
+            if (_hovered == netId)
+            {
+                _hovered = null;
+            }
+        };
         _list.AddChild(container);
 
         var widget = new Row { Container = container, Name = name, Bar = bar, Rdps = rdps };
@@ -192,22 +247,52 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return widget;
     }
 
+    private static StyleBoxFlat WindowStyle(bool contentMargin = false)
+    {
+        var style = new StyleBoxFlat
+        {
+            BgColor = new Color(0.05f, 0.05f, 0.06f, 0.9f),
+            BorderColor = new Color(1f, 1f, 1f, 0.22f),
+            BorderWidthLeft = 1,
+            BorderWidthTop = 1,
+            BorderWidthRight = 1,
+            BorderWidthBottom = 1,
+            CornerRadiusTopLeft = 5,
+            CornerRadiusTopRight = 5,
+            CornerRadiusBottomLeft = 5,
+            CornerRadiusBottomRight = 5,
+        };
+
+        if (contentMargin)
+        {
+            style.ContentMarginLeft = 8f;
+            style.ContentMarginRight = 8f;
+            style.ContentMarginTop = 6f;
+            style.ContentMarginBottom = 6f;
+        }
+
+        return style;
+    }
+
     private static decimal Round(decimal value)
     {
         return Math.Round(value, MidpointRounding.AwayFromZero);
     }
 
-    // The itemized rDPS the hover tooltip shows, read the way the summary reads: raw damage dealt by card, then the
-    // damage this player's buffs gave to each teammate, then the damage teammates' buffs gave to this player's hits.
-    private static string Breakdown(RdpsRow row)
+    // The hover breakdown, FFXIV-style: this player's raw damage by card, then the buffs they gave other players, then
+    // the buffs other players gave them. Card names and effects are already human-readable; the three sections do not
+    // sum to rDPS (received is shown, not subtracted), which is intended.
+    private static string Breakdown(string playerName, RdpsRow? row)
     {
         var text = new System.Text.StringBuilder();
-        text.Append(row.Name).Append("   aDPS ").Append(Round(row.ADps))
-            .Append("  +given ").Append(Round(row.Given))
-            .Append("  -recv ").Append(Round(row.Received))
-            .Append("  =  rDPS ").Append(Round(row.Rdps));
+        text.Append(playerName);
+        if (row == null)
+        {
+            return text.Append("\n\nNo damage yet.").ToString();
+        }
 
-        Section(text, "Dealt", row.Dealt.Select(d => ($"{d.Card}", d.Amount)));
+        text.Append("   rDPS ").Append(Round(row.Rdps));
+        Section(text, "Raw Damage", row.Dealt.Select(d => (d.Card, d.Amount)));
         Section(text, "Given", row.GivenBy.Select(g => ($"{g.Effect} → {CombatLedger.Instance.NameOf(g.Other)}", g.Amount)));
         Section(text, "Received", row.ReceivedBy.Select(r => ($"{r.Effect} ← {CombatLedger.Instance.NameOf(r.Other)}", r.Amount)));
         return text.ToString();
@@ -215,24 +300,24 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     private static void Section(System.Text.StringBuilder text, string title, IEnumerable<(string Label, decimal Amount)> rows)
     {
-        var list = rows.Where(r => Round(r.Amount) != 0m).ToList();
+        List<(string Label, decimal Amount)> list = rows.Where(r => Round(r.Amount) != 0m).ToList();
         if (list.Count == 0)
         {
             return;
         }
 
-        text.Append('\n').Append(title).Append(':');
+        text.Append("\n\n").Append(title);
         foreach ((string label, decimal amount) in list)
         {
-            text.Append("\n  ").Append(label).Append(' ').Append(Round(amount));
+            text.Append("\n  ").Append(label).Append("   ").Append(Round(amount));
         }
     }
 }
 
 /// <summary>
-/// The overlay's title bar: an empty strip that grabs the mouse and drags the whole panel while the left button is
-/// held, clamped so the window can't be dragged off-screen. Kept separate from the panel so it is the one and only
-/// part of the overlay that intercepts input.
+/// The overlay's title bar: an empty strip that grabs the mouse and drags the whole window while the left button is
+/// held, clamped so it can't be dragged off-screen. Kept separate from the panel so it is the one and only part of the
+/// overlay that intercepts input.
 /// </summary>
 internal sealed partial class DragHandle : Panel
 {
@@ -271,8 +356,8 @@ internal sealed partial class DragHandle : Panel
         }
     }
 
-    // On the first drag, freeze the window's current corner-anchored spot and switch to free positioning, so drags
-    // move it by Position instead of fighting the anchors.
+    // On the first drag, freeze the window's current anchored spot and switch to free positioning, so drags move it by
+    // Position instead of fighting the anchors.
     private void Detach()
     {
         if (_detached)

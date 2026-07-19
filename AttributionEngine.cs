@@ -57,7 +57,8 @@ internal static class AttributionEngine
         decimal finalResult)
     {
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
-        string dealerCard = cardSource?.Id.ToString() ?? "(none)";
+        // The card's human-readable title (not its enum id) so the meter can show "Twin Strike", not "TWIN_STRIKE".
+        string dealerCard = cardSource?.Title ?? "(none)";
 
         // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
         // comes from PowerOwnership (per-player stack contributions), falling back to the single Applier the game
