@@ -49,21 +49,24 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private readonly Dictionary<ulong, Row> _rows = new();
     private PanelContainer _panel = null!;
     private VBoxContainer _list = null!;
-    private bool _positioned;
 
     public override void _Ready()
     {
         Layer = 128;
 
-        // Anchor at the top-left and drive Position by hand: the panel is a free-floating window, parked top-right on
-        // first layout (see _Process) and thereafter wherever the user drags it. Ignore the mouse so clicks fall
-        // through to the game; only the header grabs.
+        // Anchor to the top-right corner and grow left/down so the window hugs the corner at any size. Dragging the
+        // header detaches it to free positioning (see DragHandle). The panel ignores the mouse so clicks fall through
+        // to the game; only the header (drag) and the rows (hover) take input.
         _panel = new PanelContainer
         {
-            AnchorLeft = 0f,
+            AnchorLeft = 1f,
             AnchorTop = 0f,
-            AnchorRight = 0f,
+            AnchorRight = 1f,
             AnchorBottom = 0f,
+            GrowHorizontal = Control.GrowDirection.Begin,
+            GrowVertical = Control.GrowDirection.End,
+            OffsetTop = 12f,
+            OffsetRight = -12f,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
         _panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
@@ -118,14 +121,6 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        // Park at the top-right corner once the panel has a measured size, then leave it wherever the user drags it.
-        if (!_positioned && _panel.Size.X > 0f)
-        {
-            Vector2 viewport = _panel.GetViewportRect().Size;
-            _panel.Position = new Vector2(Mathf.Max(0f, viewport.X - _panel.Size.X - 12f), 12f);
-            _positioned = true;
-        }
-
         IReadOnlyList<RdpsRow> snapshot = CombatLedger.Instance.Snapshot();
         decimal max = snapshot.Count > 0 ? Math.Max(snapshot.Max(r => r.Rdps), 1m) : 1m;
 
@@ -138,6 +133,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             widget.Name.Text = row.Name;
             widget.Rdps.Text = Round(row.Rdps).ToString();
             widget.Bar.Value = (double)Math.Clamp(row.Rdps / max, 0m, 1m);
+            widget.Container.TooltipText = Breakdown(row);
             _list.MoveChild(widget.Container, index++);
         }
 
@@ -182,7 +178,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         };
         rdps.AddThemeColorOverride("font_color", Colors.White);
 
-        var container = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        // The row takes the mouse so hovering it shows the per-source breakdown as a tooltip; its children ignore the
+        // mouse so the whole row is one hover target.
+        var container = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Stop };
         container.AddThemeConstantOverride("separation", 8);
         container.AddChild(name);
         container.AddChild(bar);
@@ -198,6 +196,37 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     {
         return Math.Round(value, MidpointRounding.AwayFromZero);
     }
+
+    // The itemized rDPS the hover tooltip shows, read the way the summary reads: raw damage dealt by card, then the
+    // damage this player's buffs gave to each teammate, then the damage teammates' buffs gave to this player's hits.
+    private static string Breakdown(RdpsRow row)
+    {
+        var text = new System.Text.StringBuilder();
+        text.Append(row.Name).Append("   aDPS ").Append(Round(row.ADps))
+            .Append("  +given ").Append(Round(row.Given))
+            .Append("  -recv ").Append(Round(row.Received))
+            .Append("  =  rDPS ").Append(Round(row.Rdps));
+
+        Section(text, "Dealt", row.Dealt.Select(d => ($"{d.Card}", d.Amount)));
+        Section(text, "Given", row.GivenBy.Select(g => ($"{g.Effect} → {CombatLedger.Instance.NameOf(g.Other)}", g.Amount)));
+        Section(text, "Received", row.ReceivedBy.Select(r => ($"{r.Effect} ← {CombatLedger.Instance.NameOf(r.Other)}", r.Amount)));
+        return text.ToString();
+    }
+
+    private static void Section(System.Text.StringBuilder text, string title, IEnumerable<(string Label, decimal Amount)> rows)
+    {
+        var list = rows.Where(r => Round(r.Amount) != 0m).ToList();
+        if (list.Count == 0)
+        {
+            return;
+        }
+
+        text.Append('\n').Append(title).Append(':');
+        foreach ((string label, decimal amount) in list)
+        {
+            text.Append("\n  ").Append(label).Append(' ').Append(Round(amount));
+        }
+    }
 }
 
 /// <summary>
@@ -209,6 +238,7 @@ internal sealed partial class DragHandle : Panel
 {
     private Control _target = null!;
     private bool _dragging;
+    private bool _detached;
     private Vector2 _grabOffset;
 
     public void Init(Control target)
@@ -224,6 +254,7 @@ internal sealed partial class DragHandle : Panel
             _dragging = button.Pressed;
             if (button.Pressed)
             {
+                Detach();
                 _grabOffset = GetGlobalMousePosition() - _target.Position;
             }
 
@@ -238,5 +269,25 @@ internal sealed partial class DragHandle : Panel
             _target.Position = position;
             AcceptEvent();
         }
+    }
+
+    // On the first drag, freeze the window's current corner-anchored spot and switch to free positioning, so drags
+    // move it by Position instead of fighting the anchors.
+    private void Detach()
+    {
+        if (_detached)
+        {
+            return;
+        }
+
+        Vector2 position = _target.GlobalPosition;
+        _target.AnchorLeft = 0f;
+        _target.AnchorTop = 0f;
+        _target.AnchorRight = 0f;
+        _target.AnchorBottom = 0f;
+        _target.GrowHorizontal = GrowDirection.End;
+        _target.GrowVertical = GrowDirection.End;
+        _target.Position = position;
+        _detached = true;
     }
 }
