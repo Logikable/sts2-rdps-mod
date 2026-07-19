@@ -36,6 +36,7 @@ internal static class DamageLogPatches
         decimal damage,
         ValueProp props,
         CardModel? cardSource,
+        CardPlay? cardPlay,
         ModifyDamageHookType modifyDamageHookType,
         CardPreviewMode previewMode,
         IEnumerable<AbstractModel> modifiers,
@@ -57,7 +58,7 @@ internal static class DamageLogPatches
         // Reconstructing the same number from the modifier list alone confirms the counterfactual engine mirrors the
         // game's pipeline; a mismatch means our replay has drifted from Hook.ModifyDamage and attribution is suspect.
         decimal replay = AttributionEngine.Recompute(
-            damage, props, target, dealer, cardSource, modifyDamageHookType, modifierList, EmptyExclusion);
+            damage, props, target, dealer, cardSource, cardPlay, modifyDamageHookType, modifierList, EmptyExclusion);
         string drift = Math.Abs(replay - __result) > 0.01m ? $" !! replay={replay}" : "";
 
         string described = string.Join(", ", modifierList.Select(Describe));

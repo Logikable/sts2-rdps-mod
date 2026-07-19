@@ -111,7 +111,7 @@ internal static class SelfTest
         VulnerablePower? merged = enemy.GetPower<VulnerablePower>();
         LogShares("Vulnerable", merged);
 
-        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null);
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
         CombatLedger l = CombatLedger.Instance;
         return Report("Vulnerable pro-rata",
@@ -133,7 +133,7 @@ internal static class SelfTest
         ulong you = dealer.Player!.NetId;
 
         await PowerCmd.Apply<FlankingPower>(ctx, enemy, 2m, applier2, null);
-        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null);
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
         CombatLedger l = CombatLedger.Instance;
         return Report("Flanking",
@@ -153,7 +153,7 @@ internal static class SelfTest
         ulong you = dealer.Player!.NetId;
 
         await PowerCmd.Apply<StrengthPower>(ctx, dealer, 3m, applier2, null);
-        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null);
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
         CombatLedger l = CombatLedger.Instance;
         return Report("Strength (teammate-gifted)",
@@ -263,6 +263,7 @@ internal static class SelfTest
             var cardPlay = new CardPlay
             {
                 Card = card,
+                Player = applier2.Player!,
                 Target = enemy,
                 ResultPile = PileType.Discard,
                 Resources = default,
@@ -298,6 +299,7 @@ internal static class SelfTest
             var cardPlay = new CardPlay
             {
                 Card = soul,
+                Player = dealer.Player!,
                 Target = enemy,
                 ResultPile = PileType.Discard,
                 Resources = default,
@@ -455,7 +457,10 @@ internal sealed partial class SelfTestNode : Node
 /// </summary>
 internal sealed class NoOpChoiceContext : PlayerChoiceContext
 {
-    public override Task SignalPlayerChoiceBegun(PlayerChoiceOptions options)
+    // No player owns these synthetic harness actions, and none of them read the owner back.
+    public override ulong? OwnerId => null;
+
+    public override Task SignalPlayerChoiceBegun(Player chooser, PlayerChoiceOptions options)
     {
         return Task.CompletedTask;
     }

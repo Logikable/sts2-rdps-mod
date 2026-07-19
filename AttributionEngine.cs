@@ -51,6 +51,7 @@ internal static class AttributionEngine
         Creature? target,
         Creature? dealer,
         CardModel? cardSource,
+        CardPlay? cardPlay,
         ModifyDamageHookType flags,
         IReadOnlyList<AbstractModel> modifiers,
         decimal finalResult)
@@ -90,7 +91,7 @@ internal static class AttributionEngine
         decimal total = finalResult;
         var externalSet = new HashSet<AbstractModel>(externalPowers.Select(e => e.Mod));
         decimal withoutAllExternals =
-            Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, externalSet);
+            Recompute(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, externalSet);
         decimal combinedExternalGain = total - withoutAllExternals;
 
         // Normalize each power's raw counterfactual gain against the combined gain, so overlapping multipliers
@@ -101,7 +102,7 @@ internal static class AttributionEngine
         decimal sumRawGains = 0m;
         foreach ((AbstractModel mod, string _, IReadOnlyDictionary<ulong, decimal> _) in externalPowers)
         {
-            decimal gain = total - Recompute(baseAmount, props, target, dealer, cardSource, flags, modifiers, Single(mod));
+            decimal gain = total - Recompute(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, Single(mod));
             rawGainByPower[mod] = gain;
             sumRawGains += gain;
         }
@@ -151,6 +152,7 @@ internal static class AttributionEngine
         Creature? target,
         Creature? dealer,
         CardModel? cardSource,
+        CardPlay? cardPlay,
         ModifyDamageHookType flags,
         IReadOnlyList<AbstractModel> modifiers,
         ISet<AbstractModel> exclude)
@@ -178,7 +180,7 @@ internal static class AttributionEngine
             {
                 if (!exclude.Contains(modifier))
                 {
-                    num += modifier.ModifyDamageAdditive(target, num, props, dealer, cardSource);
+                    num += modifier.ModifyDamageAdditive(target, num, props, dealer, cardSource, cardPlay);
                 }
             }
         }
@@ -189,7 +191,7 @@ internal static class AttributionEngine
             {
                 if (!exclude.Contains(modifier))
                 {
-                    num *= modifier.ModifyDamageMultiplicative(target, num, props, dealer, cardSource);
+                    num *= modifier.ModifyDamageMultiplicative(target, num, props, dealer, cardSource, cardPlay);
                 }
             }
         }
@@ -204,7 +206,7 @@ internal static class AttributionEngine
                     continue;
                 }
 
-                decimal candidate = modifier.ModifyDamageCap(target, props, dealer, cardSource);
+                decimal candidate = modifier.ModifyDamageCap(target, props, dealer, cardSource, cardPlay);
                 if (candidate < cap)
                 {
                     cap = candidate;

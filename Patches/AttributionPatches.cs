@@ -42,6 +42,7 @@ internal static class AttributionPatches
         decimal damage,
         ValueProp props,
         CardModel? cardSource,
+        CardPlay? cardPlay,
         ModifyDamageHookType modifyDamageHookType,
         CardPreviewMode previewMode,
         IEnumerable<AbstractModel> modifiers,
@@ -59,7 +60,7 @@ internal static class AttributionPatches
 
         IReadOnlyList<AbstractModel> modifierList = modifiers as IReadOnlyList<AbstractModel> ?? modifiers.ToList();
         HitAttribution attribution = AttributionEngine.Attribute(
-            damage, props, target, dealer, cardSource, modifyDamageHookType, modifierList, __result);
+            damage, props, target, dealer, cardSource, cardPlay, modifyDamageHookType, modifierList, __result);
 
         if (attribution.DealerNetId is ulong dealerNetId && dealer?.Player != null)
         {
