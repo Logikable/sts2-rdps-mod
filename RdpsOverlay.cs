@@ -9,9 +9,9 @@ namespace RdpsMeter;
 /// tree) so it draws on top of everything without inheriting the game's layout or theme. It shows one row per player in
 /// the combat - every player from the start, at zero, so the window's width is fixed and its height depends only on the
 /// party size - with the player's name, a bar tinted to their class colour, and their rDPS. The panel is a bordered
-/// window that starts near the top-left and can be dragged by its header; only the header (drag) and the rows (hover)
+/// window that starts near the top-right and can be dragged by its header; only the header (drag) and the rows (hover)
 /// take the mouse, so the rest never intercepts a click meant for the game underneath. Hovering a row pops an instant
-/// styled breakdown of that player's damage. Hidden whenever a combat is not in progress.
+/// styled breakdown of that player's damage - the same table-with-bars look. Hidden whenever a combat is not running.
 /// </summary>
 internal static class RdpsOverlay
 {
@@ -39,8 +39,9 @@ internal static class RdpsOverlay
 
 internal sealed partial class RdpsOverlayNode : CanvasLayer
 {
-    // Fixed window width so it never reflows as names or numbers change; only the row count drives height.
+    // Fixed widths so neither window reflows as names or numbers change; only the row count drives height.
     private const float Width = 300f;
+    private const float TooltipWidth = 320f;
 
     private sealed class Row
     {
@@ -48,32 +49,34 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         public required Label Name { get; init; }
         public required ProgressBar Bar { get; init; }
         public required Label Rdps { get; init; }
+        public required Color Color { get; init; }
     }
 
     private readonly Dictionary<ulong, Row> _rows = new();
     private PanelContainer _panel = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
-    private Label _tooltipLabel = null!;
+    private VBoxContainer _tooltipList = null!;
     private IReadOnlyDictionary<ulong, RdpsRow> _snapshot = new Dictionary<ulong, RdpsRow>();
     private ulong? _hovered;
+    private string? _tooltipSignature;
 
     public override void _Ready()
     {
         Layer = 128;
 
-        // Anchor to the top-left, dropped down past the build/version text and a little in off the edge. Dragging the
+        // Anchor to the top-right, dropped down past the build/version text and a little in off the edge. Dragging the
         // header detaches it to free positioning. The panel ignores the mouse so clicks fall through to the game.
         _panel = new PanelContainer
         {
-            AnchorLeft = 0f,
+            AnchorLeft = 1f,
             AnchorTop = 0f,
-            AnchorRight = 0f,
+            AnchorRight = 1f,
             AnchorBottom = 0f,
-            GrowHorizontal = Control.GrowDirection.End,
+            GrowHorizontal = Control.GrowDirection.Begin,
             GrowVertical = Control.GrowDirection.End,
-            OffsetLeft = 40f,
             OffsetTop = 72f,
+            OffsetRight = -40f,
             CustomMinimumSize = new Vector2(Width, 0f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
@@ -108,12 +111,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _panel.AddChild(root);
         AddChild(_panel);
 
-        // The hover breakdown: a matching floating window, positioned by hand and shown only while a row is hovered.
-        _tooltip = new PanelContainer { MouseFilter = Control.MouseFilterEnum.Ignore, Visible = false };
+        // The hover breakdown: a matching floating window of the same table-with-bars rows, positioned by hand and
+        // shown only while a row is hovered.
+        _tooltip = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(TooltipWidth, 0f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            Visible = false,
+        };
         _tooltip.AddThemeStyleboxOverride("panel", WindowStyle(contentMargin: true));
-        _tooltipLabel = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
-        _tooltipLabel.AddThemeColorOverride("font_color", Colors.White);
-        _tooltip.AddChild(_tooltipLabel);
+        _tooltipList = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _tooltipList.AddThemeConstantOverride("separation", 4);
+        _tooltip.AddChild(_tooltipList);
         AddChild(_tooltip);
     }
 
@@ -167,13 +176,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     private void UpdateTooltip()
     {
-        if (_hovered is not { } netId || !_rows.TryGetValue(netId, out Row? row))
+        if (_hovered is not { } netId || !_rows.TryGetValue(netId, out Row? widget))
         {
             _tooltip.Visible = false;
+            _tooltipSignature = null;
             return;
         }
 
-        _tooltipLabel.Text = Breakdown(row.Name.Text, _snapshot.GetValueOrDefault(netId));
+        RdpsRow? row = _snapshot.GetValueOrDefault(netId);
+
+        // Rebuild the breakdown rows only when the content actually changes, so a still hover costs nothing.
+        string signature = Signature(netId, row);
+        if (signature != _tooltipSignature)
+        {
+            RebuildTooltip(row, widget.Color);
+            _tooltipSignature = signature;
+        }
+
         _tooltip.Visible = true;
 
         // Sit to the right of the main window, level with the hovered row, flipping to the left if there is no room.
@@ -184,8 +203,74 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             x = _panel.GlobalPosition.X - _tooltip.Size.X - 6f;
         }
 
-        float y = Mathf.Clamp(row.Container.GlobalPosition.Y, 0f, Mathf.Max(0f, viewport.Y - _tooltip.Size.Y));
+        float y = Mathf.Clamp(widget.Container.GlobalPosition.Y, 0f, Mathf.Max(0f, viewport.Y - _tooltip.Size.Y));
         _tooltip.Position = new Vector2(Mathf.Max(0f, x), y);
+    }
+
+    // The hover breakdown, FFXIV-style but as a table of bars: this player's raw damage by card, then the buffs they
+    // gave other players, then the buffs other players gave them. Each section's bars are scaled to that section's own
+    // biggest entry, and tinted to the player's class colour. Name and rDPS are omitted - the hovered row shows them.
+    private void RebuildTooltip(RdpsRow? row, Color color)
+    {
+        while (_tooltipList.GetChildCount() > 0)
+        {
+            Node child = _tooltipList.GetChild(0);
+            _tooltipList.RemoveChild(child);
+            child.QueueFree();
+        }
+
+        if (row == null)
+        {
+            _tooltipList.AddChild(SectionHeader("No damage yet."));
+            return;
+        }
+
+        AddSection("Raw Damage", row.Dealt.Select(d => (d.Card, d.Amount)), color);
+        AddSection("Given", row.GivenBy.Select(g => ($"{g.Effect} → {CombatLedger.Instance.NameOf(g.Other)}", g.Amount)), color);
+        AddSection("Received", row.ReceivedBy.Select(r => ($"{r.Effect} ← {CombatLedger.Instance.NameOf(r.Other)}", r.Amount)), color);
+    }
+
+    private void AddSection(string title, IEnumerable<(string Label, decimal Amount)> items, Color color)
+    {
+        List<(string Label, decimal Amount)> list = items.Where(i => Round(i.Amount) != 0m).ToList();
+        if (list.Count == 0)
+        {
+            return;
+        }
+
+        decimal max = Math.Max(1m, list.Max(i => i.Amount));
+        _tooltipList.AddChild(SectionHeader(title));
+        foreach ((string label, decimal amount) in list)
+        {
+            _tooltipList.AddChild(BreakdownRow(label, amount, max, color));
+        }
+    }
+
+    private string Signature(ulong netId, RdpsRow? row)
+    {
+        if (row == null)
+        {
+            return $"{netId}:none";
+        }
+
+        var text = new System.Text.StringBuilder();
+        text.Append(netId);
+        foreach ((string card, decimal amount) in row.Dealt)
+        {
+            text.Append('|').Append(card).Append(Round(amount));
+        }
+
+        foreach ((string effect, ulong other, decimal amount) in row.GivenBy)
+        {
+            text.Append("|g").Append(effect).Append(other).Append(Round(amount));
+        }
+
+        foreach ((string effect, ulong other, decimal amount) in row.ReceivedBy)
+        {
+            text.Append("|r").Append(effect).Append(other).Append(Round(amount));
+        }
+
+        return text.ToString();
     }
 
     private Row Ensure(Player player)
@@ -196,6 +281,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return existing;
         }
 
+        Color color = player.Character.NameColor;
+
         var name = new Label
         {
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
@@ -205,17 +292,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         name.AddThemeColorOverride("font_color", Colors.White);
         name.Text = PlayerIdentity.Name(player);
 
-        var bar = new ProgressBar
-        {
-            MinValue = 0d,
-            MaxValue = 1d,
-            ShowPercentage = false,
-            CustomMinimumSize = new Vector2(120f, 14f),
-            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = player.Character.NameColor });
-        bar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(1f, 1f, 1f, 0.12f) });
+        ProgressBar bar = MakeBar(color, new Vector2(120f, 14f));
 
         var rdps = new Label
         {
@@ -242,9 +319,64 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         };
         _list.AddChild(container);
 
-        var widget = new Row { Container = container, Name = name, Bar = bar, Rdps = rdps };
+        var widget = new Row { Container = container, Name = name, Bar = bar, Rdps = rdps, Color = color };
         _rows[netId] = widget;
         return widget;
+    }
+
+    private static HBoxContainer BreakdownRow(string label, decimal amount, decimal max, Color color)
+    {
+        var text = new Label
+        {
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            ClipText = true,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        text.AddThemeColorOverride("font_color", Colors.White);
+        text.Text = label;
+
+        ProgressBar bar = MakeBar(color, new Vector2(96f, 12f));
+        bar.Value = (double)Math.Clamp(amount / max, 0m, 1m);
+
+        var value = new Label
+        {
+            CustomMinimumSize = new Vector2(52f, 0f),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        value.AddThemeColorOverride("font_color", Colors.White);
+        value.Text = Round(amount).ToString();
+
+        var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        row.AddThemeConstantOverride("separation", 8);
+        row.AddChild(text);
+        row.AddChild(bar);
+        row.AddChild(value);
+        return row;
+    }
+
+    private static Label SectionHeader(string title)
+    {
+        var header = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
+        header.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.55f));
+        header.Text = title;
+        return header;
+    }
+
+    private static ProgressBar MakeBar(Color fill, Vector2 minSize)
+    {
+        var bar = new ProgressBar
+        {
+            MinValue = 0d,
+            MaxValue = 1d,
+            ShowPercentage = false,
+            CustomMinimumSize = minSize,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        bar.AddThemeStyleboxOverride("fill", new StyleBoxFlat { BgColor = fill });
+        bar.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(1f, 1f, 1f, 0.12f) });
+        return bar;
     }
 
     private static StyleBoxFlat WindowStyle(bool contentMargin = false)
@@ -277,40 +409,6 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private static decimal Round(decimal value)
     {
         return Math.Round(value, MidpointRounding.AwayFromZero);
-    }
-
-    // The hover breakdown, FFXIV-style: this player's raw damage by card, then the buffs they gave other players, then
-    // the buffs other players gave them. Card names and effects are already human-readable; the three sections do not
-    // sum to rDPS (received is shown, not subtracted), which is intended.
-    private static string Breakdown(string playerName, RdpsRow? row)
-    {
-        var text = new System.Text.StringBuilder();
-        text.Append(playerName);
-        if (row == null)
-        {
-            return text.Append("\n\nNo damage yet.").ToString();
-        }
-
-        text.Append("   rDPS ").Append(Round(row.Rdps));
-        Section(text, "Raw Damage", row.Dealt.Select(d => (d.Card, d.Amount)));
-        Section(text, "Given", row.GivenBy.Select(g => ($"{g.Effect} → {CombatLedger.Instance.NameOf(g.Other)}", g.Amount)));
-        Section(text, "Received", row.ReceivedBy.Select(r => ($"{r.Effect} ← {CombatLedger.Instance.NameOf(r.Other)}", r.Amount)));
-        return text.ToString();
-    }
-
-    private static void Section(System.Text.StringBuilder text, string title, IEnumerable<(string Label, decimal Amount)> rows)
-    {
-        List<(string Label, decimal Amount)> list = rows.Where(r => Round(r.Amount) != 0m).ToList();
-        if (list.Count == 0)
-        {
-            return;
-        }
-
-        text.Append("\n\n").Append(title);
-        foreach ((string label, decimal amount) in list)
-        {
-            text.Append("\n  ").Append(label).Append("   ").Append(Round(amount));
-        }
     }
 }
 
