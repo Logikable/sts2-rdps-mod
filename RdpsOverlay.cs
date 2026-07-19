@@ -75,7 +75,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             AnchorBottom = 0f,
             GrowHorizontal = Control.GrowDirection.Begin,
             GrowVertical = Control.GrowDirection.End,
-            OffsetTop = 72f,
+            OffsetTop = 144f,
             OffsetRight = -40f,
             CustomMinimumSize = new Vector2(Width, 0f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
@@ -225,24 +225,45 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        AddSection("Raw Damage", row.Dealt.Select(d => (d.Card, d.Amount)), color);
-        AddSection("Given", row.GivenBy.Select(g => ($"{g.Effect} → {CombatLedger.Instance.NameOf(g.Other)}", g.Amount)), color);
-        AddSection("Received", row.ReceivedBy.Select(r => ($"{r.Effect} ← {CombatLedger.Instance.NameOf(r.Other)}", r.Amount)), color);
+        List<(string Card, decimal Amount, decimal Buff)> dealt = row.Dealt.Where(d => Round(d.Amount) != 0m).ToList();
+        if (dealt.Count > 0)
+        {
+            decimal max = Math.Max(1m, dealt.Max(d => d.Amount));
+            _tooltipList.AddChild(SectionHeader("Damage Breakdown"));
+            foreach ((string card, decimal amount, decimal buff) in dealt)
+            {
+                _tooltipList.AddChild(SplitRow(card, amount, buff, max, color));
+            }
+        }
+
+        AddEffectSection("Given", Combine(row.GivenBy), "+", color);
+        AddEffectSection("Received", Combine(row.ReceivedBy), "-", color);
     }
 
-    private void AddSection(string title, IEnumerable<(string Label, decimal Amount)> items, Color color)
+    // Sum an effect list across the players it went to / came from, so the breakdown shows one bar per effect rather
+    // than one per teammate.
+    private static List<(string Effect, decimal Amount)> Combine(IReadOnlyList<(string Effect, ulong Other, decimal Amount)> source)
     {
-        List<(string Label, decimal Amount)> list = items.Where(i => Round(i.Amount) != 0m).ToList();
-        if (list.Count == 0)
+        return source
+            .GroupBy(e => e.Effect)
+            .Select(g => (g.Key, g.Sum(e => e.Amount)))
+            .Where(e => Round(e.Item2) != 0m)
+            .OrderByDescending(e => e.Item2)
+            .ToList();
+    }
+
+    private void AddEffectSection(string title, List<(string Effect, decimal Amount)> items, string sign, Color color)
+    {
+        if (items.Count == 0)
         {
             return;
         }
 
-        decimal max = Math.Max(1m, list.Max(i => i.Amount));
+        decimal max = Math.Max(1m, items.Max(i => i.Amount));
         _tooltipList.AddChild(SectionHeader(title));
-        foreach ((string label, decimal amount) in list)
+        foreach ((string effect, decimal amount) in items)
         {
-            _tooltipList.AddChild(BreakdownRow(label, amount, max, color));
+            _tooltipList.AddChild(BreakdownRow(effect, sign + Round(amount), (double)Math.Clamp(amount / max, 0m, 1m), color));
         }
     }
 
@@ -255,19 +276,19 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         var text = new System.Text.StringBuilder();
         text.Append(netId);
-        foreach ((string card, decimal amount) in row.Dealt)
+        foreach ((string card, decimal amount, decimal buff) in row.Dealt)
         {
-            text.Append('|').Append(card).Append(Round(amount));
+            text.Append('|').Append(card).Append(Round(amount)).Append('b').Append(Round(buff));
         }
 
-        foreach ((string effect, ulong other, decimal amount) in row.GivenBy)
+        foreach ((string effect, decimal amount) in Combine(row.GivenBy))
         {
-            text.Append("|g").Append(effect).Append(other).Append(Round(amount));
+            text.Append("|g").Append(effect).Append(Round(amount));
         }
 
-        foreach ((string effect, ulong other, decimal amount) in row.ReceivedBy)
+        foreach ((string effect, decimal amount) in Combine(row.ReceivedBy))
         {
-            text.Append("|r").Append(effect).Append(other).Append(Round(amount));
+            text.Append("|r").Append(effect).Append(Round(amount));
         }
 
         return text.ToString();
@@ -324,34 +345,71 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return widget;
     }
 
-    private static HBoxContainer BreakdownRow(string label, decimal amount, decimal max, Color color)
+    private static HBoxContainer BreakdownRow(string label, string valueText, double fraction, Color color)
     {
-        var text = new Label
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            ClipText = true,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        text.AddThemeColorOverride("font_color", Colors.White);
-        text.Text = label;
-
         ProgressBar bar = MakeBar(color, new Vector2(96f, 12f));
-        bar.Value = (double)Math.Clamp(amount / max, 0m, 1m);
+        bar.Value = fraction;
+        return Row3(RowLabel(label, expand: true), bar, RowLabel(valueText, expand: false));
+    }
 
-        var value = new Label
+    // A Damage Breakdown row whose bar is split: a solid segment for the card's own damage and a fainter segment for
+    // the part teammates' buffs added, together spanning the card's total (scaled to the section's biggest card).
+    private static HBoxContainer SplitRow(string label, decimal total, decimal buff, decimal max, Color color)
+    {
+        return Row3(RowLabel(label, expand: true), SplitBar(total - buff, total, max, color), RowLabel(Round(total).ToString(), expand: false));
+    }
+
+    private static Control SplitBar(decimal own, decimal total, decimal max, Color color)
+    {
+        var holder = new Control
         {
-            CustomMinimumSize = new Vector2(52f, 0f),
-            HorizontalAlignment = HorizontalAlignment.Right,
+            CustomMinimumSize = new Vector2(96f, 12f),
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        value.AddThemeColorOverride("font_color", Colors.White);
-        value.Text = Round(amount).ToString();
 
+        // Back: neutral track with a faint fill up to the card's whole contribution.
+        ProgressBar back = MakeBar(new Color(color.R, color.G, color.B, 0.35f), Vector2.Zero);
+        back.Value = (double)Math.Clamp(total / max, 0m, 1m);
+        holder.AddChild(back);
+        back.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        // Front: no track, a solid fill up to the card's own damage, overlaying the left of the faint segment.
+        ProgressBar front = MakeBar(color, Vector2.Zero);
+        front.AddThemeStyleboxOverride("background", new StyleBoxFlat { BgColor = new Color(0f, 0f, 0f, 0f) });
+        front.Value = (double)Math.Clamp(own / max, 0m, 1m);
+        holder.AddChild(front);
+        front.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        return holder;
+    }
+
+    private static Label RowLabel(string text, bool expand)
+    {
+        var label = new Label { MouseFilter = Control.MouseFilterEnum.Ignore };
+        label.AddThemeColorOverride("font_color", Colors.White);
+        label.Text = text;
+        if (expand)
+        {
+            label.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+            label.ClipText = true;
+        }
+        else
+        {
+            label.CustomMinimumSize = new Vector2(52f, 0f);
+            label.HorizontalAlignment = HorizontalAlignment.Right;
+        }
+
+        return label;
+    }
+
+    private static HBoxContainer Row3(Control left, Control middle, Control right)
+    {
         var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         row.AddThemeConstantOverride("separation", 8);
-        row.AddChild(text);
-        row.AddChild(bar);
-        row.AddChild(value);
+        row.AddChild(left);
+        row.AddChild(middle);
+        row.AddChild(right);
         return row;
     }
 

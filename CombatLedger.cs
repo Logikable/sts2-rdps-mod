@@ -17,6 +17,11 @@ namespace RdpsMeter;
 internal sealed class PlayerLedger
 {
     public Dictionary<string, decimal> DealtByCard { get; } = new();
+
+    // Of the damage in DealtByCard, the portion that came from teammates' buffs on those hits (the rest is the card's
+    // own damage). Lets the breakdown split each card's bar into own-vs-buff.
+    public Dictionary<string, decimal> BuffByCard { get; } = new();
+
     public Dictionary<(string Effect, ulong Other), decimal> GivenBySource { get; } = new();
     public Dictionary<(string Effect, ulong Other), decimal> ReceivedBySource { get; } = new();
 
@@ -37,7 +42,7 @@ internal sealed class RdpsRow
     public required decimal ADps { get; init; }
     public required decimal Given { get; init; }
     public required decimal Received { get; init; }
-    public required IReadOnlyList<(string Card, decimal Amount)> Dealt { get; init; }
+    public required IReadOnlyList<(string Card, decimal Amount, decimal Buff)> Dealt { get; init; }
     public required IReadOnlyList<(string Effect, ulong Other, decimal Amount)> GivenBy { get; init; }
     public required IReadOnlyList<(string Effect, ulong Other, decimal Amount)> ReceivedBy { get; init; }
 
@@ -90,9 +95,11 @@ internal sealed class CombatLedger
             dealer.DealtByCard[attribution.DealerCard] =
                 dealer.DealtByCard.GetValueOrDefault(attribution.DealerCard) + unblocked;
 
+            decimal buffTotal = 0m;
             foreach (ExternalContribution contribution in attribution.Externals)
             {
                 decimal amount = unblocked * contribution.PreBlock / attribution.Total;
+                buffTotal += amount;
 
                 var received = (contribution.Effect, contribution.ApplierNetId);
                 dealer.ReceivedBySource[received] = dealer.ReceivedBySource.GetValueOrDefault(received) + amount;
@@ -100,6 +107,12 @@ internal sealed class CombatLedger
                 PlayerLedger applier = Ledger(contribution.ApplierNetId);
                 var given = (contribution.Effect, dealerNetId);
                 applier.GivenBySource[given] = applier.GivenBySource.GetValueOrDefault(given) + amount;
+            }
+
+            if (buffTotal > 0m)
+            {
+                dealer.BuffByCard[attribution.DealerCard] =
+                    dealer.BuffByCard.GetValueOrDefault(attribution.DealerCard) + buffTotal;
             }
         }
     }
@@ -184,7 +197,8 @@ internal sealed class CombatLedger
                     Given = kv.Value.Given,
                     Received = kv.Value.Received,
                     Dealt = kv.Value.DealtByCard
-                        .Select(d => (d.Key, d.Value)).OrderByDescending(d => d.Value).ToList(),
+                        .Select(d => (d.Key, d.Value, kv.Value.BuffByCard.GetValueOrDefault(d.Key)))
+                        .OrderByDescending(d => d.Value).ToList(),
                     GivenBy = kv.Value.GivenBySource
                         .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
                     ReceivedBy = kv.Value.ReceivedBySource
