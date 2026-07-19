@@ -45,21 +45,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     private sealed class Row
     {
-        public required HBoxContainer Container { get; init; }
-        public required Label Name { get; init; }
+        public required Control Container { get; init; }
         public required ProgressBar Bar { get; init; }
         public required Label Rdps { get; init; }
+        public required Label Percent { get; init; }
         public required Color Color { get; init; }
     }
 
     private readonly Dictionary<ulong, Row> _rows = new();
     private PanelContainer _panel = null!;
+    private DragHandle _header = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
     private VBoxContainer _tooltipList = null!;
     private IReadOnlyDictionary<ulong, RdpsRow> _snapshot = new Dictionary<ulong, RdpsRow>();
     private ulong? _hovered;
     private string? _tooltipSignature;
+    private bool _clampPending;
 
     public override void _Ready()
     {
@@ -85,8 +87,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         var root = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         root.AddThemeConstantOverride("separation", 0);
 
-        var header = new DragHandle { CustomMinimumSize = new Vector2(0f, 18f) };
-        header.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        _header = new DragHandle { CustomMinimumSize = new Vector2(0f, 24f) };
+        _header.AddThemeStyleboxOverride("panel", new StyleBoxFlat
         {
             BgColor = new Color(1f, 1f, 1f, 0.06f),
             BorderColor = new Color(1f, 1f, 1f, 0.12f),
@@ -94,11 +96,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             CornerRadiusTopLeft = 5,
             CornerRadiusTopRight = 5,
         });
-        header.Init(_panel);
+        _header.Init(_panel, OverlayLayout.SavePosition);
+
+        var title = new Label
+        {
+            Text = "rDPS",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        title.AddThemeFontSizeOverride("font_size", 16);
+        title.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        _header.AddChild(title);
+        title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         var body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        body.AddThemeConstantOverride("margin_left", 8);
-        body.AddThemeConstantOverride("margin_right", 8);
+        body.AddThemeConstantOverride("margin_left", 10);
+        body.AddThemeConstantOverride("margin_right", 10);
         body.AddThemeConstantOverride("margin_top", 6);
         body.AddThemeConstantOverride("margin_bottom", 6);
 
@@ -106,10 +120,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _list.AddThemeConstantOverride("separation", 4);
         body.AddChild(_list);
 
-        root.AddChild(header);
+        root.AddChild(_header);
         root.AddChild(body);
         _panel.AddChild(root);
         AddChild(_panel);
+
+        // Restore the last-used spot if there is one; otherwise the default top-right anchoring stands.
+        if (OverlayLayout.LoadPosition() is Vector2 saved)
+        {
+            FreePosition(_panel, saved);
+            _header.MarkDetached();
+            _clampPending = true;
+        }
 
         // The hover breakdown: a matching floating window of the same table-with-bars rows, positioned by hand and
         // shown only while a row is hovered.
@@ -136,6 +158,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
+        // A restored position could be off-screen if the resolution shrank since; pull it back into view once, after
+        // the window has a measured size.
+        if (_clampPending && _panel.Size.X > 0f)
+        {
+            Vector2 view = _panel.GetViewportRect().Size;
+            _panel.Position = new Vector2(
+                Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, view.X - _panel.Size.X)),
+                Mathf.Clamp(_panel.Position.Y, 0f, Mathf.Max(0f, view.Y - _panel.Size.Y)));
+            _clampPending = false;
+        }
+
         _snapshot = CombatLedger.Instance.Snapshot().ToDictionary(r => r.NetId);
 
         IReadOnlyList<Player> players = CombatManager.Instance?.DebugOnlyGetState()?.Players ?? Array.Empty<Player>();
@@ -145,11 +178,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             .ToList();
 
         decimal max = 1m;
+        decimal team = 0m;
         foreach (Player player in ordered)
         {
-            if (_snapshot.TryGetValue(player.NetId, out RdpsRow? r) && r.Rdps > max)
+            if (_snapshot.TryGetValue(player.NetId, out RdpsRow? r))
             {
-                max = r.Rdps;
+                team += r.Rdps;
+                if (r.Rdps > max)
+                {
+                    max = r.Rdps;
+                }
             }
         }
 
@@ -161,6 +199,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             Row widget = Ensure(player);
             decimal rdps = _snapshot.TryGetValue(player.NetId, out RdpsRow? row) ? row.Rdps : 0m;
             widget.Rdps.Text = Round(rdps).ToString();
+            widget.Percent.Text = team > 0m ? $"{Round(rdps / team * 100m)}%" : "0%";
             widget.Bar.Value = (double)Math.Clamp(rdps / max, 0m, 1m);
             _list.MoveChild(widget.Container, index++);
         }
@@ -304,32 +343,65 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         Color color = player.Character.NameColor;
 
-        var name = new Label
-        {
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            ClipText = true,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        name.AddThemeColorOverride("font_color", Colors.White);
-        name.Text = PlayerIdentity.Name(player);
-
-        ProgressBar bar = MakeBar(color, new Vector2(120f, 14f));
-
-        var rdps = new Label
-        {
-            CustomMinimumSize = new Vector2(56f, 0f),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        rdps.AddThemeColorOverride("font_color", Colors.White);
-
         // The row takes the mouse so hovering it drives the breakdown; its children ignore it so the whole row is one
         // hover target.
-        var container = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Stop };
-        container.AddThemeConstantOverride("separation", 8);
-        container.AddChild(name);
+        var container = new Control
+        {
+            CustomMinimumSize = new Vector2(0f, 22f),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+
+        // Background: a full-width bar behind the text, tinted to the class colour but translucent so text stays legible.
+        var bar = new ProgressBar
+        {
+            MinValue = 0d,
+            MaxValue = 1d,
+            ShowPercentage = false,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        bar.AddThemeStyleboxOverride("fill", RowBarStyle(new Color(color.R, color.G, color.B, 0.55f)));
+        bar.AddThemeStyleboxOverride("background", RowBarStyle(new Color(1f, 1f, 1f, 0.05f)));
         container.AddChild(bar);
-        container.AddChild(rdps);
+        bar.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        // Foreground: class icon + name on the left, rDPS + team share on the right, over the bar.
+        var icon = new TextureRect
+        {
+            Texture = player.Character.IconTexture,
+            CustomMinimumSize = new Vector2(18f, 18f),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+            SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+
+        Label name = OverlayLabel(PlayerIdentity.Name(player));
+        name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        name.ClipText = true;
+
+        Label rdps = OverlayLabel(string.Empty);
+        rdps.CustomMinimumSize = new Vector2(48f, 0f);
+        rdps.HorizontalAlignment = HorizontalAlignment.Right;
+
+        Label percent = OverlayLabel(string.Empty);
+        percent.CustomMinimumSize = new Vector2(40f, 0f);
+        percent.HorizontalAlignment = HorizontalAlignment.Right;
+        percent.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.7f));
+
+        var line = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        line.AddThemeConstantOverride("separation", 6);
+        line.AddChild(icon);
+        line.AddChild(name);
+        line.AddChild(rdps);
+        line.AddChild(percent);
+
+        var overlay = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        overlay.AddThemeConstantOverride("margin_left", 6);
+        overlay.AddThemeConstantOverride("margin_right", 6);
+        overlay.AddChild(line);
+        container.AddChild(overlay);
+        overlay.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
         container.MouseEntered += () => _hovered = netId;
         container.MouseExited += () =>
         {
@@ -340,9 +412,41 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         };
         _list.AddChild(container);
 
-        var widget = new Row { Container = container, Name = name, Bar = bar, Rdps = rdps, Color = color };
+        var widget = new Row { Container = container, Bar = bar, Rdps = rdps, Percent = percent, Color = color };
         _rows[netId] = widget;
         return widget;
+    }
+
+    private static Label OverlayLabel(string text)
+    {
+        var label = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore };
+        label.AddThemeColorOverride("font_color", Colors.White);
+        label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.85f));
+        label.AddThemeConstantOverride("outline_size", 4);
+        return label;
+    }
+
+    private static StyleBoxFlat RowBarStyle(Color color)
+    {
+        return new StyleBoxFlat
+        {
+            BgColor = color,
+            CornerRadiusTopLeft = 3,
+            CornerRadiusTopRight = 3,
+            CornerRadiusBottomLeft = 3,
+            CornerRadiusBottomRight = 3,
+        };
+    }
+
+    private static void FreePosition(Control panel, Vector2 position)
+    {
+        panel.AnchorLeft = 0f;
+        panel.AnchorTop = 0f;
+        panel.AnchorRight = 0f;
+        panel.AnchorBottom = 0f;
+        panel.GrowHorizontal = Control.GrowDirection.End;
+        panel.GrowVertical = Control.GrowDirection.End;
+        panel.Position = position;
     }
 
     private static HBoxContainer BreakdownRow(string label, string valueText, double fraction, Color color)
@@ -478,25 +582,38 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 internal sealed partial class DragHandle : Panel
 {
     private Control _target = null!;
+    private Action<Vector2>? _onDragEnd;
     private bool _dragging;
     private bool _detached;
     private Vector2 _grabOffset;
 
-    public void Init(Control target)
+    public void Init(Control target, Action<Vector2> onDragEnd)
     {
         _target = target;
+        _onDragEnd = onDragEnd;
         MouseFilter = MouseFilterEnum.Stop;
+    }
+
+    // Treat the window as already free-positioned (e.g. restored to a saved spot) so the next drag doesn't re-anchor it.
+    public void MarkDetached()
+    {
+        _detached = true;
     }
 
     public override void _GuiInput(InputEvent @event)
     {
         if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } button)
         {
-            _dragging = button.Pressed;
             if (button.Pressed)
             {
                 Detach();
                 _grabOffset = GetGlobalMousePosition() - _target.Position;
+                _dragging = true;
+            }
+            else if (_dragging)
+            {
+                _dragging = false;
+                _onDragEnd?.Invoke(_target.Position);
             }
 
             AcceptEvent();
