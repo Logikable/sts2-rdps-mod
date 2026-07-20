@@ -58,7 +58,11 @@ internal static class AttributionEngine
     {
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
         // The card's human-readable title (not its enum id) so the meter can show "Twin Strike", not "TWIN_STRIKE".
-        string dealerCard = cardSource?.Title ?? "(none)";
+        // A potion has no card source but is a real player hit; name it by the potion the player is resolving so its
+        // damage reads "Fire Potion" rather than the "(none)" a null card source would leave behind.
+        string dealerCard = cardSource?.Title
+            ?? (dealerNetId is ulong potionUser ? PotionSource.Current(potionUser) : null)
+            ?? "(none)";
 
         // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
         // comes from PowerOwnership (per-player stack contributions), falling back to the single Applier the game
