@@ -1,8 +1,13 @@
 # rDPS Meter
 
 FFXIV-style rDPS damage meter for Slay the Spire 2 co-op. Damage gained from a
-teammate's buffs and debuffs (Vulnerable, Flanking, ...) is credited to the
-player who applied them, so support play shows up on the meter.
+teammate's buffs and debuffs (Vulnerable, Flanking, Poison, Doom, ...) is
+credited to the player who applied them, so support play shows up on the meter.
+A draggable in-combat overlay shows each player's rDPS and share of the team's
+damage with an instant hover breakdown; it persists between fights and toggles
+between the current combat and the running session total.
+
+Built against **Slay the Spire 2 v0.109.0** (beta branch).
 
 ## Attribution model
 
@@ -17,13 +22,30 @@ player who applied them, so support play shows up on the meter.
 
 ## Building
 
-`./deploy.sh` builds with the .NET 9 SDK at `~/.dotnet` and copies the mod
-into the game's `mods/RdpsMeter/` folder. `lib/` holds reference copies of
-the game's own assemblies (sts2.dll, 0Harmony.dll, GodotSharp.dll) from
-`data_sts2_windows_x86_64/`; refresh them after a game update.
+The mod compiles against the game's own assembly, `sts2.dll`, which is
+MegaCrit's proprietary code and is **not** included in this repository (it is
+gitignored). Supply your own copy from your game install before building:
 
-## Status
+```
+cp "<Slay the Spire 2>/data_sts2_windows_x86_64/sts2.dll" lib/sts2.dll
+```
 
-Phase 1: logs every resolved damage event (dealer, target, settled damage,
-source card, dealer NetId) and every real damage calculation with its
-modifier list, to validate the attribution surface. No meter UI yet.
+`<Slay the Spire 2>` is your Steam install directory, e.g.
+`C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2`. Keep the copy
+in sync with the game version you target — the reference DLL determines which
+game build the mod is compiled against.
+
+`./deploy.sh` then builds with the .NET 9 SDK at `~/.dotnet` and copies the mod
+into the game's `mods/RdpsMeter/` folder. The other two dependencies in `lib/`
+— `0Harmony.dll` (Harmony, MIT) and `GodotSharp.dll` (Godot, MIT) — are
+redistributable and are checked in.
+
+## Installing
+
+Create `mods/RdpsMeter/` in your game install and drop in the built
+`RdpsMeter.dll` (from `.godot/mono/temp/bin/Release/`) alongside
+`RdpsMeter.json`, or just run `./deploy.sh`. Launch the game; the overlay
+appears when a combat starts.
+
+Packaged builds are named `RdpsMeter-<game version>-<mod version>.zip` and
+contain a single `RdpsMeter/` folder with the DLL and manifest.

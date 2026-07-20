@@ -1,3 +1,6 @@
 bin/
 obj/
 .godot/
+
+# The game's own assembly - proprietary, not redistributable. Supply it yourself (see README.md).
+lib/sts2.dll
