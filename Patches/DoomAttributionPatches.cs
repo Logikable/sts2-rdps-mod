@@ -36,10 +36,10 @@ internal static class DoomAttributionPatches
 
             foreach (ulong netId in shares.Keys)
             {
-                CombatLedger.Instance.RecordName(netId, PlayerIdentity.Name(netId));
+                CombatLedger.Name(netId, PlayerIdentity.Name(netId));
             }
 
-            CombatLedger.Instance.ApplyDot("Doom", shares, creature.CurrentHp);
+            CombatLedger.Record("Doom", shares, creature.CurrentHp);
         }
     }
 }

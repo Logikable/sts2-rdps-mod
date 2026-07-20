@@ -9,9 +9,11 @@ namespace RdpsMeter;
 /// tree) so it draws on top of everything without inheriting the game's layout or theme. It shows one row per player in
 /// the combat - every player from the start, at zero, so the window's width is fixed and its height depends only on the
 /// party size - with the player's name, a bar tinted to their class colour, and their rDPS. The panel is a bordered
-/// window that starts near the top-right and can be dragged by its header; only the header (drag) and the rows (hover)
-/// take the mouse, so the rest never intercepts a click meant for the game underneath. Hovering a row pops an instant
-/// styled breakdown of that player's damage - the same table-with-bars look. Hidden whenever a combat is not running.
+/// window that starts near the top-right and can be dragged by its header; only the header (drag), its Live/Total
+/// button and the rows (hover) take the mouse, so the rest never intercepts a click meant for the game underneath.
+/// Hovering a row pops an instant styled breakdown of that player's damage - the same table-with-bars look. It stays
+/// up between fights, showing either this combat's damage or the running session total per the header toggle, and
+/// hides only before the first fight or when the shown tally is empty out of combat.
 /// </summary>
 internal static class RdpsOverlay
 {
@@ -52,9 +54,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         public required Color Color { get; init; }
     }
 
+    // A player's look, captured while they are on-screen so their row keeps its class colour, icon and name after
+    // combat ends and the live combat state (the only place these come from) is gone.
+    private readonly record struct PlayerVisual(Color Color, Texture2D? Icon, string Name);
+
     private readonly Dictionary<ulong, Row> _rows = new();
+    private readonly Dictionary<ulong, PlayerVisual> _visuals = new();
     private PanelContainer _panel = null!;
     private DragHandle _header = null!;
+    private Button _toggle = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
     private VBoxContainer _tooltipList = null!;
@@ -62,6 +70,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private ulong? _hovered;
     private string? _tooltipSignature;
     private bool _clampPending;
+
+    // false = show this combat's tally, true = show the running total across every fight this session.
+    private bool _showTotal;
 
     public override void _Ready()
     {
@@ -110,6 +121,35 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _header.AddChild(title);
         title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
+        // Live/Total switch, pinned to the right of the header. It takes the mouse (so a click toggles rather than
+        // starts a drag) while the rest of the header stays a drag surface.
+        _toggle = new Button
+        {
+            Text = "Live",
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 1f,
+            AnchorRight = 1f,
+            AnchorTop = 0.5f,
+            AnchorBottom = 0.5f,
+            OffsetLeft = -60f,
+            OffsetRight = -6f,
+            OffsetTop = -10f,
+            OffsetBottom = 10f,
+        };
+        _toggle.AddThemeFontSizeOverride("font_size", 12);
+        _toggle.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        _toggle.AddThemeColorOverride("font_hover_color", Colors.White);
+        _toggle.AddThemeStyleboxOverride("normal", ToggleStyle(0.10f));
+        _toggle.AddThemeStyleboxOverride("hover", ToggleStyle(0.18f));
+        _toggle.AddThemeStyleboxOverride("pressed", ToggleStyle(0.24f));
+        _toggle.Pressed += () =>
+        {
+            _showTotal = !_showTotal;
+            _toggle.Text = _showTotal ? "Total" : "Live";
+        };
+        _header.AddChild(_toggle);
+
         var body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         body.AddThemeConstantOverride("margin_left", 10);
         body.AddThemeConstantOverride("margin_right", 10);
@@ -151,8 +191,25 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     public override void _Process(double delta)
     {
         bool inCombat = CombatManager.Instance is { IsInProgress: true };
-        _panel.Visible = inCombat;
-        if (!inCombat)
+
+        // Capture every live player's class colour, icon and name while combat is running, so their rows keep the
+        // right look after the fight ends and the combat state is gone.
+        IReadOnlyList<Player> livePlayers = inCombat
+            ? CombatManager.Instance?.DebugOnlyGetState()?.Players ?? Array.Empty<Player>()
+            : Array.Empty<Player>();
+        foreach (Player player in livePlayers)
+        {
+            _visuals[player.NetId] =
+                new PlayerVisual(player.Character.NameColor, player.Character.IconTexture, PlayerIdentity.Name(player));
+        }
+
+        _snapshot = (_showTotal ? CombatLedger.Total : CombatLedger.Current).Snapshot().ToDictionary(r => r.NetId);
+
+        // Stay up between fights: visible during combat, and afterwards for as long as the shown tally still holds
+        // damage. Only truly empty (before the first fight, or a wiped current tally out of combat) hides it.
+        bool visible = inCombat || _snapshot.Count > 0;
+        _panel.Visible = visible;
+        if (!visible)
         {
             _tooltip.Visible = false;
             return;
@@ -169,19 +226,24 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             _clampPending = false;
         }
 
-        _snapshot = CombatLedger.Instance.Snapshot().ToDictionary(r => r.NetId);
+        // Show every player with a tally, plus any live player yet to deal damage, so the party appears at zero from
+        // the start of a fight.
+        var netIds = new HashSet<ulong>(_snapshot.Keys);
+        foreach (Player player in livePlayers)
+        {
+            netIds.Add(player.NetId);
+        }
 
-        IReadOnlyList<Player> players = CombatManager.Instance?.DebugOnlyGetState()?.Players ?? Array.Empty<Player>();
-        List<Player> ordered = players
-            .OrderByDescending(p => _snapshot.TryGetValue(p.NetId, out RdpsRow? r) ? r.Rdps : 0m)
-            .ThenBy(p => p.NetId)
+        List<ulong> ordered = netIds
+            .OrderByDescending(id => _snapshot.TryGetValue(id, out RdpsRow? r) ? r.Rdps : 0m)
+            .ThenBy(id => id)
             .ToList();
 
         decimal max = 1m;
         decimal team = 0m;
-        foreach (Player player in ordered)
+        foreach (ulong id in ordered)
         {
-            if (_snapshot.TryGetValue(player.NetId, out RdpsRow? r))
+            if (_snapshot.TryGetValue(id, out RdpsRow? r))
             {
                 team += r.Rdps;
                 if (r.Rdps > max)
@@ -193,11 +255,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         var seen = new HashSet<ulong>();
         int index = 0;
-        foreach (Player player in ordered)
+        foreach (ulong id in ordered)
         {
-            seen.Add(player.NetId);
-            Row widget = Ensure(player);
-            decimal rdps = _snapshot.TryGetValue(player.NetId, out RdpsRow? row) ? row.Rdps : 0m;
+            seen.Add(id);
+            Row widget = Ensure(id);
+            decimal rdps = _snapshot.TryGetValue(id, out RdpsRow? row) ? row.Rdps : 0m;
             widget.Rdps.Text = Round(rdps).ToString();
             widget.Percent.Text = team > 0m ? $"{Round(rdps / team * 100m)}%" : "0%";
             widget.Bar.Value = (double)Math.Clamp(rdps / max, 0m, 1m);
@@ -345,15 +407,19 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return text.ToString();
     }
 
-    private Row Ensure(Player player)
+    private Row Ensure(ulong netId)
     {
-        ulong netId = player.NetId;
         if (_rows.TryGetValue(netId, out Row? existing))
         {
             return existing;
         }
 
-        Color color = player.Character.NameColor;
+        // Prefer the look captured while the player was live; fall back to a neutral tint and the ledger's resolved
+        // name for a player we somehow never saw on-screen (e.g. a tally restored with no live combat).
+        PlayerVisual visual = _visuals.TryGetValue(netId, out PlayerVisual cached)
+            ? cached
+            : new PlayerVisual(new Color(0.7f, 0.7f, 0.7f), null, _snapshot.GetValueOrDefault(netId)?.Name ?? netId.ToString());
+        Color color = visual.Color;
 
         // The row takes the mouse so hovering it drives the breakdown; its children ignore it so the whole row is one
         // hover target.
@@ -379,7 +445,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // Foreground: class icon + name on the left, rDPS + team share on the right, over the bar.
         var icon = new TextureRect
         {
-            Texture = player.Character.IconTexture,
+            Texture = visual.Icon,
             CustomMinimumSize = new Vector2(18f, 18f),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
@@ -387,7 +453,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
 
-        Label name = OverlayLabel(PlayerIdentity.Name(player));
+        Label name = OverlayLabel(visual.Name);
         name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         name.ClipText = true;
 
@@ -436,6 +502,28 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.85f));
         label.AddThemeConstantOverride("outline_size", 4);
         return label;
+    }
+
+    // The header's Live/Total button: a faint rounded chip that brightens on hover and press.
+    private static StyleBoxFlat ToggleStyle(float alpha)
+    {
+        return new StyleBoxFlat
+        {
+            BgColor = new Color(1f, 1f, 1f, alpha),
+            BorderColor = new Color(1f, 1f, 1f, 0.18f),
+            BorderWidthLeft = 1,
+            BorderWidthTop = 1,
+            BorderWidthRight = 1,
+            BorderWidthBottom = 1,
+            CornerRadiusTopLeft = 3,
+            CornerRadiusTopRight = 3,
+            CornerRadiusBottomLeft = 3,
+            CornerRadiusBottomRight = 3,
+            ContentMarginLeft = 6,
+            ContentMarginRight = 6,
+            ContentMarginTop = 1,
+            ContentMarginBottom = 1,
+        };
     }
 
     private static StyleBoxFlat RowBarStyle(Color color)

@@ -51,7 +51,12 @@ internal sealed class RdpsRow
 
 internal sealed class CombatLedger
 {
-    public static CombatLedger Instance { get; } = new();
+    // Two tallies fed in parallel: Current is wiped at the start of each combat (this fight only), Total accumulates
+    // for the whole session (every fight). The overlay shows whichever one the player has toggled to.
+    public static CombatLedger Current { get; } = new();
+    public static CombatLedger Total { get; } = new();
+
+    private static readonly IReadOnlyList<CombatLedger> Writers = new[] { Current, Total };
 
     private readonly object _lock = new();
     private readonly Dictionary<ulong, PlayerLedger> _ledgers = new();
@@ -59,6 +64,39 @@ internal sealed class CombatLedger
 
     private CombatLedger()
     {
+    }
+
+    /// <summary>Folds one settled hit into every tally.</summary>
+    public static void Record(HitAttribution attribution, DamageResult result)
+    {
+        foreach (CombatLedger ledger in Writers)
+        {
+            ledger.ApplyHit(attribution, result);
+        }
+    }
+
+    /// <summary>Folds one damage-over-time tick into every tally.</summary>
+    public static void Record(string effect, IReadOnlyDictionary<ulong, decimal> shares, int effectiveDamage)
+    {
+        foreach (CombatLedger ledger in Writers)
+        {
+            ledger.ApplyDot(effect, shares, effectiveDamage);
+        }
+    }
+
+    /// <summary>Records a resolved player name in every tally.</summary>
+    public static void Name(ulong netId, string name)
+    {
+        foreach (CombatLedger ledger in Writers)
+        {
+            ledger.RecordName(netId, name);
+        }
+    }
+
+    /// <summary>Wipes the current-combat tally at each combat start; Total is left to accumulate across fights.</summary>
+    public static void ResetCurrent()
+    {
+        Current.Reset();
     }
 
     public void Reset()

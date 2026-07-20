@@ -113,7 +113,7 @@ internal static class SelfTest
 
         await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Vulnerable pro-rata",
             Expect("aDPS", l.DealtWith(you, NoCard), 9m),
             Expect("recv <-2", l.ReceivedFrom(you, "Vulnerable", 2uL), 2m),
@@ -135,7 +135,7 @@ internal static class SelfTest
         await PowerCmd.Apply<FlankingPower>(ctx, enemy, 2m, applier2, null);
         await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Flanking",
             Expect("aDPS", l.DealtWith(you, NoCard), 12m),
             Expect("recv <-2", l.ReceivedFrom(you, "Flanking", 2uL), 6m),
@@ -155,7 +155,7 @@ internal static class SelfTest
         await PowerCmd.Apply<StrengthPower>(ctx, dealer, 3m, applier2, null);
         await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Strength (teammate-gifted)",
             Expect("aDPS", l.DealtWith(you, NoCard), 9m),
             Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
@@ -181,7 +181,7 @@ internal static class SelfTest
             await poison.AfterSideTurnStart(enemy.Side, new[] { enemy }, enemy.CombatState!);
         }
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Poison pro-rata",
             Expect("2 aDPS Poison", l.DealtWith(2uL, "Poison"), 3m),
             Expect("3 aDPS Poison", l.DealtWith(3uL, "Poison"), 2m));
@@ -207,7 +207,7 @@ internal static class SelfTest
             await poison.AfterSideTurnStart(enemy.Side, new[] { enemy }, enemy.CombatState!);
         }
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Poison + Accelerant",
             Expect("2 aDPS (base tick)", l.DealtWith(2uL, "Poison"), 4m),
             Expect("you aDPS (accel tick)", l.DealtWith(you, "Poison"), 3m));
@@ -231,7 +231,7 @@ internal static class SelfTest
             await demise.AfterSideTurnEnd(ctx, enemy.Side, new[] { enemy });
         }
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Demise",
             Expect("2 aDPS Demise", l.DealtWith(2uL, "Demise"), 9m));
     }
@@ -275,7 +275,7 @@ internal static class SelfTest
             await strangle.AfterCardPlayed(ctx, cardPlay);
         }
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Strangle",
             Expect("2 aDPS Strangle", l.DealtWith(2uL, "Strangle"), 7m));
     }
@@ -310,7 +310,7 @@ internal static class SelfTest
             await haunt.AfterCardPlayed(ctx, cardPlay);
         }
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Haunt",
             Expect("you aDPS Haunt", l.DealtWith(you, "Haunt"), 6m));
     }
@@ -333,7 +333,7 @@ internal static class SelfTest
         LogShares("Doom", doom);
         await DoomPower.DoomKill(new[] { enemy });
 
-        CombatLedger l = CombatLedger.Instance;
+        CombatLedger l = CombatLedger.Current;
         return Report("Doom",
             Expect("2 aDPS Doom", l.DealtWith(2uL, "Doom"), 10m),
             Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m));
@@ -346,7 +346,7 @@ internal static class SelfTest
     /// </summary>
     private static async Task Prep(Creature dealer, Creature enemy)
     {
-        CombatLedger.Instance.Reset();
+        CombatLedger.Current.Reset();
         Patches.AttributionPatches.ClearPending();
 
         for (int guard = 0; enemy.GetPower<ArtifactPower>() != null && guard < 10; guard++)

@@ -16,7 +16,7 @@ internal static class CombatLifecyclePatches
     private static void StartCombatInternalPrefix()
     {
         AttributionPatches.ClearPending();
-        CombatLedger.Instance.Reset();
+        CombatLedger.ResetCurrent();
 
         // The F9 self-test drives live combat with fake players; only arm it for developer builds, never for players.
         if (DevMode.Enabled)
@@ -29,6 +29,6 @@ internal static class CombatLifecyclePatches
     [HarmonyPrefix]
     private static void EndCombatInternalPrefix()
     {
-        CombatLedger.Instance.PrintSummary();
+        CombatLedger.Current.PrintSummary();
     }
 }

@@ -64,12 +64,12 @@ internal static class AttributionPatches
 
         if (attribution.DealerNetId is ulong dealerNetId && dealer?.Player != null)
         {
-            CombatLedger.Instance.RecordName(dealerNetId, PlayerIdentity.Name(dealer.Player));
+            CombatLedger.Name(dealerNetId, PlayerIdentity.Name(dealer.Player));
         }
 
         foreach (ExternalContribution contribution in attribution.Externals)
         {
-            CombatLedger.Instance.RecordName(contribution.ApplierNetId, PlayerIdentity.Name(contribution.ApplierNetId));
+            CombatLedger.Name(contribution.ApplierNetId, PlayerIdentity.Name(contribution.ApplierNetId));
         }
 
         Calcs.AddOrUpdate(modifiers, attribution);
@@ -119,10 +119,10 @@ internal static class AttributionPatches
         {
             foreach (ulong netId in shares.Keys)
             {
-                CombatLedger.Instance.RecordName(netId, PlayerIdentity.Name(netId));
+                CombatLedger.Name(netId, PlayerIdentity.Name(netId));
             }
 
-            CombatLedger.Instance.ApplyDot("Poison", shares, results.UnblockedDamage);
+            CombatLedger.Record("Poison", shares, results.UnblockedDamage);
             return;
         }
 
@@ -130,16 +130,16 @@ internal static class AttributionPatches
         {
             foreach (ulong netId in sourceShares.Keys)
             {
-                CombatLedger.Instance.RecordName(netId, PlayerIdentity.Name(netId));
+                CombatLedger.Name(netId, PlayerIdentity.Name(netId));
             }
 
-            CombatLedger.Instance.ApplyDot(sourceEffect, sourceShares, results.UnblockedDamage);
+            CombatLedger.Record(sourceEffect, sourceShares, results.UnblockedDamage);
             return;
         }
 
         if (attribution != null)
         {
-            CombatLedger.Instance.ApplyHit(attribution, results);
+            CombatLedger.Record(attribution, results);
         }
     }
 
