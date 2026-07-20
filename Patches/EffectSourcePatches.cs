@@ -36,11 +36,13 @@ internal static class EffectSourcePatches
             return;
         }
 
+        // Prefer the game's own executing-model stack; fall back to our supplemental stack for the end-of-turn AoE
+        // powers the game does not push (Hailstorm, The Bomb).
         string? name = choiceContext.LastInvolvedModel switch
         {
             PowerModel power => power.Title.GetFormattedText(),
             RelicModel relic => relic.Title.GetFormattedText(),
-            _ => null,
+            _ => ExecutingEffect.Current(player.NetId),
         };
         EffectSource.Set(player.NetId, name);
     }

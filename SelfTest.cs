@@ -87,6 +87,7 @@ internal static class SelfTest
         all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
         all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
         all &= await DemiseScenario(context, dealer, enemy, applier2);
+        all &= await MagicBombScenario(context, dealer, enemy, applier2);
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
@@ -234,6 +235,31 @@ internal static class SelfTest
         CombatLedger l = CombatLedger.Current;
         return Report("Demise",
             Expect("2 aDPS Demise", l.DealtWith(2uL, "Demise"), 9m));
+    }
+
+    /// <summary>
+    /// A teammate puts Magic Bomb 8 on the enemy. Magic Bomb damages the enemy it sits on at that enemy's side-turn
+    /// end, dealt with the enemy as dealer - so the counterfactual engine drops it; the removed HP must be booked as
+    /// the applier's own aDPS, named by the power.
+    /// </summary>
+    private static async Task<bool> MagicBombScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+
+        await PowerCmd.Apply<MagicBombPower>(ctx, enemy, 8m, applier2, null);
+
+        MagicBombPower? bomb = enemy.GetPower<MagicBombPower>();
+        LogShares("MagicBomb", bomb);
+        if (bomb != null)
+        {
+            await bomb.AfterSideTurnEnd(ctx, enemy.Side, new[] { enemy });
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        string name = bomb?.Title.GetFormattedText() ?? "Magic Bomb";
+        return Report("Magic Bomb",
+            Expect("2 aDPS Magic Bomb", l.DealtWith(2uL, name), 8m));
     }
 
     /// <summary>

@@ -44,6 +44,27 @@ internal static class SourceAttributionPatches
         }
     }
 
+    /// <summary>
+    /// Magic Bomb is a debuff that damages the enemy it sits on at the end of that enemy's turn - dealt with the enemy
+    /// as dealer, so the counterfactual engine drops it. The damage is the player who applied it. Register it against
+    /// that applier, gated on Magic Bomb's own condition (its owner is ending its turn and the applier is still alive).
+    /// </summary>
+    [HarmonyPatch(typeof(MagicBombPower), nameof(MagicBombPower.AfterSideTurnEnd))]
+    [HarmonyPrefix]
+    private static void MagicBombAfterSideTurnEndPrefix(MagicBombPower __instance, IEnumerable<Creature> participants)
+    {
+        if (!participants.Contains(__instance.Owner) || __instance.Applier is not { IsDead: false })
+        {
+            return;
+        }
+
+        IReadOnlyDictionary<ulong, decimal>? shares = AttributionEngine.OwnershipShares(__instance);
+        if (shares != null)
+        {
+            SourceAttribution.Register(__instance.Owner, __instance.Title.GetFormattedText(), shares);
+        }
+    }
+
     // Cards a Strangle instance will damage on: the game arms a card in BeforeCardPlayed and fires in AfterCardPlayed,
     // so mirroring that set here means we register exactly when it will deal damage - and never on the card that
     // applied the Strangle itself, which was never armed.
