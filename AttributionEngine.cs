@@ -58,11 +58,12 @@ internal static class AttributionEngine
     {
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
         // The card's human-readable title, without the upgrade marker, so "Anger" and "Anger+" share one row (Title
-        // appends a "+"/"+N"; TitleLocString is the bare name). A potion has no card source but is a real player hit;
-        // name it by the potion the player is resolving so its damage reads "Fire Potion" rather than "(none)".
-        string dealerCard = cardSource?.TitleLocString.GetFormattedText()
-            ?? (dealerNetId is ulong potionUser ? PotionSource.Current(potionUser) : null)
-            ?? "(none)";
+        // appends a "+"/"+N"; TitleLocString is the bare name). A hit with no card is a potion or a damaging
+        // power/relic (Thorns, a retaliation relic, ...); name it by whichever the player is resolving so its damage
+        // reads "Fire Potion" or "Thorns" rather than the "(none)" a null card source would leave behind.
+        string? cardName = cardSource?.TitleLocString.GetFormattedText();
+        string? sourceName = dealerNetId is ulong id ? PotionSource.Current(id) ?? EffectSource.Current(id) : null;
+        string dealerCard = cardName ?? sourceName ?? "(none)";
 
         // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
         // comes from PowerOwnership (per-player stack contributions), falling back to the single Applier the game
