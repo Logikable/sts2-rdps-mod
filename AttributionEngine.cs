@@ -57,10 +57,10 @@ internal static class AttributionEngine
         decimal finalResult)
     {
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
-        // The card's human-readable title (not its enum id) so the meter can show "Twin Strike", not "TWIN_STRIKE".
-        // A potion has no card source but is a real player hit; name it by the potion the player is resolving so its
-        // damage reads "Fire Potion" rather than the "(none)" a null card source would leave behind.
-        string dealerCard = cardSource?.Title
+        // The card's human-readable title, without the upgrade marker, so "Anger" and "Anger+" share one row (Title
+        // appends a "+"/"+N"; TitleLocString is the bare name). A potion has no card source but is a real player hit;
+        // name it by the potion the player is resolving so its damage reads "Fire Potion" rather than "(none)".
+        string dealerCard = cardSource?.TitleLocString.GetFormattedText()
             ?? (dealerNetId is ulong potionUser ? PotionSource.Current(potionUser) : null)
             ?? "(none)";
 
