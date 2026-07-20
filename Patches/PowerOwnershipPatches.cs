@@ -2,6 +2,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace RdpsMeter.Patches;
 
@@ -19,9 +20,21 @@ internal static class PowerOwnershipPatches
     [HarmonyPrefix]
     private static void AfterPowerAmountChangedPrefix(PowerModel power, decimal amount, Creature? applier)
     {
-        if (applier?.Player?.NetId is ulong netId)
+        // Poison applied by a Concoct buff is booked to the ally who swung; redirect those stacks to the player who
+        // played Concoct instead, split across its owners.
+        if (power is PoisonPower && ConcoctAttribution.Consume(power.Owner) is { } concoctShares)
         {
-            PowerOwnership.Instance.Record(power, netId, amount);
+            foreach ((ulong netId, decimal fraction) in concoctShares)
+            {
+                PowerOwnership.Instance.Record(power, netId, amount * fraction);
+            }
+
+            return;
+        }
+
+        if (applier?.Player?.NetId is ulong applierNetId)
+        {
+            PowerOwnership.Instance.Record(power, applierNetId, amount);
         }
     }
 }

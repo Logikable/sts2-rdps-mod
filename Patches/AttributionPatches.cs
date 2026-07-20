@@ -153,5 +153,6 @@ internal static class AttributionPatches
         PoisonAttribution.Clear();
         SourceAttribution.Clear();
         PotionSource.Clear();
+        ConcoctAttribution.Clear();
     }
 }
