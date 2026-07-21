@@ -3,7 +3,7 @@
     "name": "rDPS Meter",
     "author": "Logikable",
     "description": "FFXIV-style rDPS damage meter for co-op: damage gained from a teammate's buffs and debuffs (Vulnerable, Flanking, ...) is credited to the player who applied them.",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "has_pck": false,
     "has_dll": true,
     "dependencies": [],
