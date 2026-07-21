@@ -51,52 +51,34 @@ internal sealed class RdpsRow
 
 internal sealed class CombatLedger
 {
-    // Two tallies fed in parallel: Current is wiped at the start of each combat (this fight only), Total accumulates
-    // for the whole session (every fight). The overlay shows whichever one the player has toggled to.
-    public static CombatLedger Current { get; } = new();
-    public static CombatLedger Total { get; } = new();
-
-    private static readonly IReadOnlyList<CombatLedger> Writers = new[] { Current, Total };
+    // The active combat's tally, owned by RunLedger (which keeps one CombatLedger per combat and derives the running
+    // total by summing them). Every live write routes to it; the overlay reads current-vs-total through RunLedger.
+    public static CombatLedger Current => RunLedger.Active;
 
     private readonly object _lock = new();
     private readonly Dictionary<ulong, PlayerLedger> _ledgers = new();
     private readonly Dictionary<ulong, string> _names = new();
 
-    private CombatLedger()
+    internal CombatLedger()
     {
     }
 
-    /// <summary>Folds one settled hit into every tally.</summary>
+    /// <summary>Folds one settled hit into the active combat's tally.</summary>
     public static void Record(HitAttribution attribution, DamageResult result)
     {
-        foreach (CombatLedger ledger in Writers)
-        {
-            ledger.ApplyHit(attribution, result);
-        }
+        RunLedger.Active.ApplyHit(attribution, result);
     }
 
-    /// <summary>Folds one damage-over-time tick into every tally.</summary>
+    /// <summary>Folds one damage-over-time tick into the active combat's tally.</summary>
     public static void Record(string effect, IReadOnlyDictionary<ulong, decimal> shares, int effectiveDamage)
     {
-        foreach (CombatLedger ledger in Writers)
-        {
-            ledger.ApplyDot(effect, shares, effectiveDamage);
-        }
+        RunLedger.Active.ApplyDot(effect, shares, effectiveDamage);
     }
 
-    /// <summary>Records a resolved player name in every tally.</summary>
+    /// <summary>Records a resolved player name in the active combat's tally.</summary>
     public static void Name(ulong netId, string name)
     {
-        foreach (CombatLedger ledger in Writers)
-        {
-            ledger.RecordName(netId, name);
-        }
-    }
-
-    /// <summary>Wipes the current-combat tally at each combat start; Total is left to accumulate across fights.</summary>
-    public static void ResetCurrent()
-    {
-        Current.Reset();
+        RunLedger.Active.RecordName(netId, name);
     }
 
     public void Reset()
@@ -292,6 +274,104 @@ internal sealed class CombatLedger
     public string NameOf(ulong netId)
     {
         return _names.GetValueOrDefault(netId, netId.ToString());
+    }
+
+    /// <summary>
+    /// Folds this combat's tally into <paramref name="target"/>, summing every player's cards and sources. Used to
+    /// build the run total by accumulating every combat into one throwaway ledger before snapshotting it.
+    /// </summary>
+    public void AccumulateInto(CombatLedger target)
+    {
+        lock (_lock)
+        {
+            foreach ((ulong netId, PlayerLedger source) in _ledgers)
+            {
+                PlayerLedger into = target.Ledger(netId);
+                foreach ((string card, decimal amount) in source.DealtByCard)
+                {
+                    into.DealtByCard[card] = into.DealtByCard.GetValueOrDefault(card) + amount;
+                }
+
+                foreach ((string card, decimal amount) in source.BuffByCard)
+                {
+                    into.BuffByCard[card] = into.BuffByCard.GetValueOrDefault(card) + amount;
+                }
+
+                foreach ((var key, decimal amount) in source.GivenBySource)
+                {
+                    into.GivenBySource[key] = into.GivenBySource.GetValueOrDefault(key) + amount;
+                }
+
+                foreach ((var key, decimal amount) in source.ReceivedBySource)
+                {
+                    into.ReceivedBySource[key] = into.ReceivedBySource.GetValueOrDefault(key) + amount;
+                }
+            }
+
+            foreach ((ulong netId, string name) in _names)
+            {
+                target._names[netId] = name;
+            }
+        }
+    }
+
+    /// <summary>A serializable snapshot of this combat's tally, tagged with its combat key.</summary>
+    public CombatEntryDto ToState(string key)
+    {
+        lock (_lock)
+        {
+            var entry = new CombatEntryDto { Key = key };
+            foreach ((ulong netId, PlayerLedger ledger) in _ledgers)
+            {
+                entry.Players.Add(new PlayerEntryDto
+                {
+                    NetId = netId,
+                    Name = NameOf(netId),
+                    Dealt = ledger.DealtByCard
+                        .Select(d => new CardEntryDto { Card = d.Key, Amount = d.Value, Buff = ledger.BuffByCard.GetValueOrDefault(d.Key) })
+                        .ToList(),
+                    Given = ledger.GivenBySource
+                        .Select(g => new SourceEntryDto { Effect = g.Key.Effect, Other = g.Key.Other, Amount = g.Value })
+                        .ToList(),
+                    Received = ledger.ReceivedBySource
+                        .Select(r => new SourceEntryDto { Effect = r.Key.Effect, Other = r.Key.Other, Amount = r.Value })
+                        .ToList(),
+                });
+            }
+
+            return entry;
+        }
+    }
+
+    /// <summary>Rebuilds a combat's tally from a saved snapshot.</summary>
+    public static CombatLedger FromState(CombatEntryDto entry)
+    {
+        var ledger = new CombatLedger();
+        foreach (PlayerEntryDto player in entry.Players)
+        {
+            PlayerLedger into = ledger.Ledger(player.NetId);
+            ledger._names[player.NetId] = player.Name;
+            foreach (CardEntryDto card in player.Dealt)
+            {
+                into.DealtByCard[card.Card] = card.Amount;
+                if (card.Buff != 0m)
+                {
+                    into.BuffByCard[card.Card] = card.Buff;
+                }
+            }
+
+            foreach (SourceEntryDto given in player.Given)
+            {
+                into.GivenBySource[(given.Effect, given.Other)] = given.Amount;
+            }
+
+            foreach (SourceEntryDto received in player.Received)
+            {
+                into.ReceivedBySource[(received.Effect, received.Other)] = received.Amount;
+            }
+        }
+
+        return ledger;
     }
 
     private PlayerLedger Ledger(ulong netId)

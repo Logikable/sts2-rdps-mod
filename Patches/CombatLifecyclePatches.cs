@@ -16,7 +16,9 @@ internal static class CombatLifecyclePatches
     private static void StartCombatInternalPrefix()
     {
         AttributionPatches.ClearPending();
-        CombatLedger.ResetCurrent();
+
+        // Open (or, on a mid-combat save reload, reopen and wipe) this combat's tally, keyed by where the run is.
+        RunLedger.BeginCombat(RunContext.CombatKey);
 
         // The F9 self-test drives live combat with fake players; only arm it for developer builds, never for players.
         if (DevMode.Enabled)
@@ -29,6 +31,6 @@ internal static class CombatLifecyclePatches
     [HarmonyPrefix]
     private static void EndCombatInternalPrefix()
     {
-        CombatLedger.Current.PrintSummary();
+        RunLedger.EndCombat();
     }
 }

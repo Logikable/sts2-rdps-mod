@@ -203,7 +203,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
                 new PlayerVisual(player.Character.NameColor, player.Character.IconTexture, PlayerIdentity.Name(player));
         }
 
-        _snapshot = (_showTotal ? CombatLedger.Total : CombatLedger.Current).Snapshot().ToDictionary(r => r.NetId);
+        _snapshot = (_showTotal ? RunLedger.TotalSnapshot() : RunLedger.CurrentSnapshot()).ToDictionary(r => r.NetId);
 
         // Stay up between fights: visible during combat, and afterwards for as long as the shown tally still holds
         // damage. Only truly empty (before the first fight, or a wiped current tally out of combat) hides it.

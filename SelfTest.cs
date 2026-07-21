@@ -92,6 +92,7 @@ internal static class SelfTest
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
+        all &= PersistenceRoundTrip();
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
         return all;
@@ -381,6 +382,28 @@ internal static class SelfTest
         return Report("Doom",
             Expect("2 aDPS Doom", l.DealtWith(2uL, "Doom"), 10m),
             Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m));
+    }
+
+    /// <summary>
+    /// The run's saved breakdown must survive a JSON round-trip byte-for-byte: serializing the live ledger, parsing it
+    /// back, and re-serializing must reproduce the same combats and totals. Runs last, over whatever the scenarios left
+    /// in the active combat, so it exercises real card/effect/name entries rather than a hand-built stub.
+    /// </summary>
+    private static bool PersistenceRoundTrip()
+    {
+        RunLedgerDto dto = RunLedger.ToDto();
+        string json = RunLedgerStore.Serialize(dto);
+        RunLedgerDto? back = RunLedgerStore.Deserialize(json);
+
+        return Report("Persistence round-trip",
+            Expect("combats preserved", back?.Combats.Count ?? -1, dto.Combats.Count),
+            Expect("total dealt preserved", back != null ? TotalDealt(back) : -1m, TotalDealt(dto)),
+            Expect("reserialize is stable", back != null && RunLedgerStore.Serialize(back) == json ? 1m : 0m, 1m));
+    }
+
+    private static decimal TotalDealt(RunLedgerDto dto)
+    {
+        return dto.Combats.SelectMany(c => c.Players).SelectMany(p => p.Dealt).Sum(d => d.Amount);
     }
 
     /// <summary>
