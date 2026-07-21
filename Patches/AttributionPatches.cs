@@ -58,6 +58,13 @@ internal static class AttributionPatches
             return;
         }
 
+        // Damage that lands on a player - Infection and similar self/ally-damaging cards, a Doubt/retaliation hit
+        // onto a teammate - is not offensive output, so it never belongs in the meter. Drop it before it is stashed.
+        if (target?.Player != null)
+        {
+            return;
+        }
+
         IReadOnlyList<AbstractModel> modifierList = modifiers as IReadOnlyList<AbstractModel> ?? modifiers.ToList();
         HitAttribution attribution = AttributionEngine.Attribute(
             damage, props, target, dealer, cardSource, cardPlay, modifyDamageHookType, modifierList, __result);
@@ -115,29 +122,41 @@ internal static class AttributionPatches
             }
         }
 
+        // A hit on a player (Infection and similar self/ally damage) is not damage dealt to the enemy team. Still
+        // consume any queued DoT/source entry below so it can't leak onto a later enemy hit, but credit no one for it.
+        bool targetIsPlayer = target.Player != null;
+
         if (PoisonAttribution.TryConsume(target, out IReadOnlyDictionary<ulong, decimal> shares))
         {
-            foreach (ulong netId in shares.Keys)
+            if (!targetIsPlayer)
             {
-                CombatLedger.Name(netId, PlayerIdentity.Name(netId));
+                foreach (ulong netId in shares.Keys)
+                {
+                    CombatLedger.Name(netId, PlayerIdentity.Name(netId));
+                }
+
+                CombatLedger.Record("Poison", shares, results.UnblockedDamage);
             }
 
-            CombatLedger.Record("Poison", shares, results.UnblockedDamage);
             return;
         }
 
         if (SourceAttribution.TryConsume(target, out string sourceEffect, out IReadOnlyDictionary<ulong, decimal> sourceShares))
         {
-            foreach (ulong netId in sourceShares.Keys)
+            if (!targetIsPlayer)
             {
-                CombatLedger.Name(netId, PlayerIdentity.Name(netId));
+                foreach (ulong netId in sourceShares.Keys)
+                {
+                    CombatLedger.Name(netId, PlayerIdentity.Name(netId));
+                }
+
+                CombatLedger.Record(sourceEffect, sourceShares, results.UnblockedDamage);
             }
 
-            CombatLedger.Record(sourceEffect, sourceShares, results.UnblockedDamage);
             return;
         }
 
-        if (attribution != null)
+        if (attribution != null && !targetIsPlayer)
         {
             CombatLedger.Record(attribution, results);
         }

@@ -82,6 +82,7 @@ internal static class SelfTest
 
         bool all = true;
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
+        all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
@@ -121,6 +122,23 @@ internal static class SelfTest
             Expect("recv <-3", l.ReceivedFrom(you, "Vulnerable", 3uL), 1m),
             Expect("given 2->you", l.GivenTo(2uL, "Vulnerable", you), 2m),
             Expect("given 3->you", l.GivenTo(3uL, "Vulnerable", you), 1m));
+    }
+
+    /// <summary>
+    /// A card like Infection deals damage to the player who holds it, not to the enemy team. Damage that lands on a
+    /// player must never enter the meter, so a hit on the dealer's own creature credits no one.
+    /// </summary>
+    private static async Task<bool> InfectionScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 5m, DamageProps.card, dealer, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Infection (player target excluded)",
+            Expect("no self aDPS", l.DealtWith(you, NoCard), 0m),
+            Expect("no rDPS row", l.Snapshot().Sum(r => r.ADps), 0m));
     }
 
     /// <summary>
