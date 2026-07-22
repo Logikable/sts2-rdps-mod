@@ -16,6 +16,7 @@ internal sealed class RunLedgerDto
 internal sealed class CombatEntryDto
 {
     public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
     public List<PlayerEntryDto> Players { get; set; } = new();
 }
 

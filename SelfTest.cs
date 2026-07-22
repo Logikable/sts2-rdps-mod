@@ -92,6 +92,7 @@ internal static class SelfTest
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
+        all &= FightLabelScenario();
         all &= PersistenceRoundTrip();
 
         GD.Print($"[RdpsMeter] Self-test: {(all ? "ALL SCENARIOS PASSED" : "SOME SCENARIOS FAILED")}");
@@ -382,6 +383,37 @@ internal static class SelfTest
         return Report("Doom",
             Expect("2 aDPS Doom", l.DealtWith(2uL, "Doom"), 10m),
             Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m));
+    }
+
+    /// <summary>
+    /// The fight-picker labels: a single enemy keeps its full name (pluralized when there are several), while a mix is
+    /// shortened toughest-first to about the length of one name so the dropdown stays readable.
+    /// </summary>
+    private static bool FightLabelScenario()
+    {
+        var cases = new (string[] Enemies, string Expected)[]
+        {
+            (new[] { "Nibbit" }, "Nibbit"),
+            (new[] { "Cubex Construct" }, "Cubex Construct"),
+            (new[] { "Acid Slime", "Acid Slime", "Acid Slime" }, "Acid Slimes"),
+            (new[] { "Shrinker Beetle", "Fungi Beast" }, "Beetle & Beast"),
+            (new[] { "Cubex Construct", "Red Louse", "Fungi Beast" }, "Construct +2"),
+            (Array.Empty<string>(), "Combat"),
+        };
+
+        bool ok = true;
+        foreach ((string[] enemies, string expected) in cases)
+        {
+            string actual = FightLabel.From(enemies);
+            if (actual != expected)
+            {
+                ok = false;
+                GD.Print($"[RdpsMeter]     FightLabel [{string.Join(", ", enemies)}]: got '{actual}', expected '{expected}'");
+            }
+        }
+
+        GD.Print($"[RdpsMeter] Scenario 'Fight labels': {(ok ? "PASS" : "FAIL")}");
+        return ok;
     }
 
     /// <summary>

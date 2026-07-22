@@ -55,6 +55,10 @@ internal sealed class CombatLedger
     // total by summing them). Every live write routes to it; the overlay reads current-vs-total through RunLedger.
     public static CombatLedger Current => RunLedger.Active;
 
+    // A short, human-readable name for this combat (its starting enemies), shown in the fight picker. Set at combat
+    // start and carried through save/load so a resumed run keeps its fight names.
+    public string Label { get; set; } = string.Empty;
+
     private readonly object _lock = new();
     private readonly Dictionary<ulong, PlayerLedger> _ledgers = new();
     private readonly Dictionary<ulong, string> _names = new();
@@ -320,7 +324,7 @@ internal sealed class CombatLedger
     {
         lock (_lock)
         {
-            var entry = new CombatEntryDto { Key = key };
+            var entry = new CombatEntryDto { Key = key, Label = Label };
             foreach ((ulong netId, PlayerLedger ledger) in _ledgers)
             {
                 entry.Players.Add(new PlayerEntryDto
@@ -346,7 +350,7 @@ internal sealed class CombatLedger
     /// <summary>Rebuilds a combat's tally from a saved snapshot.</summary>
     public static CombatLedger FromState(CombatEntryDto entry)
     {
-        var ledger = new CombatLedger();
+        var ledger = new CombatLedger { Label = entry.Label };
         foreach (PlayerEntryDto player in entry.Players)
         {
             PlayerLedger into = ledger.Ledger(player.NetId);

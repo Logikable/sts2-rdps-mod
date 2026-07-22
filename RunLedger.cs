@@ -1,19 +1,28 @@
 namespace RdpsMeter;
 
+/// <summary>One combat in the run, for the fight picker: its stable key and its short display label.</summary>
+internal readonly record struct CombatInfo(string Key, string Label);
+
 /// <summary>
 /// The rDPS accounting for a whole run, kept as one tally per combat rather than a single running total. Each combat is
-/// filed under its RunLocation key (see <see cref="RunContext.CombatKey"/>); the "current" view is the active combat's
-/// tally and the "total" view is the sum of every combat's, so the two panes stay consistent by construction.
+/// filed under its RunLocation key (see <see cref="RunContext.CombatKey"/>) and remembers the order it was entered, so
+/// the overlay can offer a "Fight 1, Fight 2, ..." picker alongside the current-combat and whole-run views. The "current"
+/// view is the active combat's tally and the "total" view is the sum of every combat's, so the panes stay consistent by
+/// construction.
 ///
 /// Keying by combat is what makes a mid-combat save reload correct: the game restarts that combat from the top, and
-/// <see cref="BeginCombat"/> replaces its slot, so the aborted attempt's damage is discarded from both the current and
-/// the total pane instead of being counted twice. The whole map is persisted per run (keyed by the run seed), so a run
-/// paused today and resumed another day keeps its breakdown.
+/// <see cref="BeginCombat"/> replaces its slot (keeping its place in the order), so the aborted attempt's damage is
+/// discarded from every view instead of being counted twice. The whole map is persisted per run (keyed by the run seed),
+/// so a run paused today and resumed another day keeps its breakdown and its fight names.
 /// </summary>
 internal static class RunLedger
 {
     private static readonly object Lock = new();
     private static readonly Dictionary<string, CombatLedger> Combats = new();
+
+    // The combat keys in the order they were first entered, so fights number stably (Fight 1, 2, 3) even as the dict
+    // is re-keyed by a reloaded combat.
+    private static readonly List<string> Order = new();
 
     // The active combat's tally, where live hits are booked. Defaults to a detached ledger so writes before the first
     // combat (or after a run ends) go somewhere harmless rather than throwing.
@@ -38,6 +47,7 @@ internal static class RunLedger
         lock (Lock)
         {
             Combats.Clear();
+            Order.Clear();
             _active = new CombatLedger();
             _runId = runId;
         }
@@ -55,31 +65,26 @@ internal static class RunLedger
 
         lock (Lock)
         {
-            Combats.Clear();
-            _active = new CombatLedger();
-            _runId = runId;
-
-            if (saved != null && saved.RunId == runId)
-            {
-                foreach (CombatEntryDto entry in saved.Combats)
-                {
-                    Combats[entry.Key] = CombatLedger.FromState(entry);
-                }
-            }
+            Restore(saved != null && saved.RunId == runId ? saved : null, runId);
         }
     }
 
     /// <summary>
     /// A combat is beginning. Point the active tally at a fresh ledger for this combat, replacing any tally already
     /// filed under the same key - that only happens when a mid-combat save was reloaded and the fight is being replayed,
-    /// in which case the aborted attempt must be discarded. The wipe drops it from the total pane too, since the total
-    /// is the sum of the surviving per-combat tallies.
+    /// in which case the aborted attempt must be discarded. Replacing keeps the combat's place in the order, so fight
+    /// numbers don't shuffle, and the wipe drops the old attempt from the total view too.
     /// </summary>
-    public static void BeginCombat(string key)
+    public static void BeginCombat(string key, string label)
     {
         lock (Lock)
         {
-            var ledger = new CombatLedger();
+            var ledger = new CombatLedger { Label = label };
+            if (!Combats.ContainsKey(key))
+            {
+                Order.Add(key);
+            }
+
             Combats[key] = ledger;
             _active = ledger;
         }
@@ -114,14 +119,52 @@ internal static class RunLedger
         return aggregate.Snapshot();
     }
 
+    /// <summary>A single combat's tally, or an empty snapshot if that combat is no longer in the run.</summary>
+    public static IReadOnlyList<RdpsRow> SnapshotOf(string key)
+    {
+        lock (Lock)
+        {
+            return Combats.TryGetValue(key, out CombatLedger? combat) ? combat.Snapshot() : Array.Empty<RdpsRow>();
+        }
+    }
+
+    /// <summary>The run's combats in entry order, for building the fight picker.</summary>
+    public static IReadOnlyList<CombatInfo> Fights()
+    {
+        lock (Lock)
+        {
+            var list = new List<CombatInfo>(Order.Count);
+            foreach (string key in Order)
+            {
+                if (Combats.TryGetValue(key, out CombatLedger? combat))
+                {
+                    list.Add(new CombatInfo(key, combat.Label));
+                }
+            }
+
+            return list;
+        }
+    }
+
+    public static bool HasCombat(string key)
+    {
+        lock (Lock)
+        {
+            return Combats.ContainsKey(key);
+        }
+    }
+
     public static RunLedgerDto ToDto()
     {
         lock (Lock)
         {
             var dto = new RunLedgerDto { RunId = _runId };
-            foreach ((string key, CombatLedger combat) in Combats)
+            foreach (string key in Order)
             {
-                dto.Combats.Add(combat.ToState(key));
+                if (Combats.TryGetValue(key, out CombatLedger? combat))
+                {
+                    dto.Combats.Add(combat.ToState(key));
+                }
             }
 
             return dto;
@@ -133,18 +176,27 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            Combats.Clear();
-            _active = new CombatLedger();
-            _runId = dto?.RunId ?? string.Empty;
-            if (dto == null)
-            {
-                return;
-            }
+            Restore(dto, dto?.RunId ?? string.Empty);
+        }
+    }
 
-            foreach (CombatEntryDto entry in dto.Combats)
-            {
-                Combats[entry.Key] = CombatLedger.FromState(entry);
-            }
+    // Rebuild the in-memory state from a saved snapshot (or empty when null), preserving the saved combat order. Callers
+    // hold Lock.
+    private static void Restore(RunLedgerDto? dto, string runId)
+    {
+        Combats.Clear();
+        Order.Clear();
+        _active = new CombatLedger();
+        _runId = runId;
+        if (dto == null)
+        {
+            return;
+        }
+
+        foreach (CombatEntryDto entry in dto.Combats)
+        {
+            Combats[entry.Key] = CombatLedger.FromState(entry);
+            Order.Add(entry.Key);
         }
     }
 

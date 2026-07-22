@@ -58,11 +58,19 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // combat ends and the live combat state (the only place these come from) is gone.
     private readonly record struct PlayerVisual(Color Color, Texture2D? Icon, string Name);
 
+    // Which tally the meter is showing: the whole run's total, the active/most-recent combat, or one picked fight.
+    private enum ViewKind
+    {
+        Total,
+        Current,
+        Combat,
+    }
+
     private readonly Dictionary<ulong, Row> _rows = new();
     private readonly Dictionary<ulong, PlayerVisual> _visuals = new();
     private PanelContainer _panel = null!;
     private DragHandle _header = null!;
-    private Button _toggle = null!;
+    private MenuButton _menu = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
     private VBoxContainer _tooltipList = null!;
@@ -71,8 +79,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private string? _tooltipSignature;
     private bool _clampPending;
 
-    // false = show this combat's tally, true = show the running total across every fight this session.
-    private bool _showTotal;
+    // The picked view. When Combat, _viewKey is the chosen fight's combat key; it falls back to Current if that fight
+    // is no longer in the run (e.g. a new run wiped it).
+    private ViewKind _viewKind = ViewKind.Current;
+    private string? _viewKey;
+
+    // Menu item ids: negatives for the two fixed views, the combat's index for each fight.
+    private const int IdTotal = -1;
+    private const int IdCurrent = -2;
 
     public override void _Ready()
     {
@@ -121,34 +135,38 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _header.AddChild(title);
         title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
-        // Live/Total switch, pinned to the right of the header. It takes the mouse (so a click toggles rather than
-        // starts a drag) while the rest of the header stays a drag surface.
-        _toggle = new Button
+        // View picker, pinned to the right of the header: Total, Live, then one entry per fight. It takes the mouse (so
+        // a click opens the menu rather than starting a drag) while the rest of the header stays a drag surface. The
+        // menu is rebuilt each time it opens, so it always lists the fights seen so far.
+        _menu = new MenuButton
         {
             Text = "Live",
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
+            ClipText = true,
             AnchorLeft = 1f,
             AnchorRight = 1f,
             AnchorTop = 0.5f,
             AnchorBottom = 0.5f,
-            OffsetLeft = -60f,
+            OffsetLeft = -128f,
             OffsetRight = -6f,
-            OffsetTop = -10f,
-            OffsetBottom = 10f,
+            OffsetTop = -11f,
+            OffsetBottom = 11f,
         };
-        _toggle.AddThemeFontSizeOverride("font_size", 12);
-        _toggle.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
-        _toggle.AddThemeColorOverride("font_hover_color", Colors.White);
-        _toggle.AddThemeStyleboxOverride("normal", ToggleStyle(0.10f));
-        _toggle.AddThemeStyleboxOverride("hover", ToggleStyle(0.18f));
-        _toggle.AddThemeStyleboxOverride("pressed", ToggleStyle(0.24f));
-        _toggle.Pressed += () =>
-        {
-            _showTotal = !_showTotal;
-            _toggle.Text = _showTotal ? "Total" : "Live";
-        };
-        _header.AddChild(_toggle);
+        _menu.AddThemeFontSizeOverride("font_size", 12);
+        _menu.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        _menu.AddThemeColorOverride("font_hover_color", Colors.White);
+        _menu.AddThemeStyleboxOverride("normal", ToggleStyle(0.10f));
+        _menu.AddThemeStyleboxOverride("hover", ToggleStyle(0.18f));
+        _menu.AddThemeStyleboxOverride("pressed", ToggleStyle(0.24f));
+
+        PopupMenu popup = _menu.GetPopup();
+        popup.AddThemeStyleboxOverride("panel", WindowStyle(contentMargin: true));
+        popup.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        popup.AddThemeColorOverride("font_hover_color", Colors.White);
+        popup.AboutToPopup += RebuildMenu;
+        popup.IdPressed += OnViewPicked;
+        _header.AddChild(_menu);
 
         var body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         body.AddThemeConstantOverride("margin_left", 10);
@@ -203,7 +221,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
                 new PlayerVisual(player.Character.NameColor, player.Character.IconTexture, PlayerIdentity.Name(player));
         }
 
-        _snapshot = (_showTotal ? RunLedger.TotalSnapshot() : RunLedger.CurrentSnapshot()).ToDictionary(r => r.NetId);
+        _snapshot = SelectedView().ToDictionary(r => r.NetId);
 
         // Stay up between fights: visible during combat, and afterwards for as long as the shown tally still holds
         // damage. Only truly empty (before the first fight, or a wiped current tally out of combat) hides it.
@@ -273,6 +291,80 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         UpdateTooltip();
+    }
+
+    // The rows for the currently-picked view, updating the picker's caption to match. A picked fight that has since left
+    // the run (a new run wiped it) silently falls back to the live view.
+    private IReadOnlyList<RdpsRow> SelectedView()
+    {
+        switch (_viewKind)
+        {
+            case ViewKind.Total:
+                _menu.Text = "Total";
+                return RunLedger.TotalSnapshot();
+            case ViewKind.Combat when _viewKey is string key && RunLedger.HasCombat(key):
+                _menu.Text = CaptionFor(key);
+                return RunLedger.SnapshotOf(key);
+            default:
+                _viewKind = ViewKind.Current;
+                _viewKey = null;
+                _menu.Text = "Live";
+                return RunLedger.CurrentSnapshot();
+        }
+    }
+
+    // Rebuilt each time the menu opens so it lists whatever fights the run has reached: Total, Live, then Fight N: name.
+    private void RebuildMenu()
+    {
+        PopupMenu popup = _menu.GetPopup();
+        popup.Clear();
+        popup.AddItem("Total", IdTotal);
+        popup.AddItem("Live", IdCurrent);
+
+        IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
+        for (int i = 0; i < fights.Count; i++)
+        {
+            string name = string.IsNullOrEmpty(fights[i].Label) ? $"Fight {i + 1}" : $"Fight {i + 1}: {fights[i].Label}";
+            popup.AddItem(name, i);
+        }
+    }
+
+    private void OnViewPicked(long id)
+    {
+        if (id == IdTotal)
+        {
+            _viewKind = ViewKind.Total;
+            _viewKey = null;
+        }
+        else if (id == IdCurrent)
+        {
+            _viewKind = ViewKind.Current;
+            _viewKey = null;
+        }
+        else
+        {
+            IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
+            if (id >= 0 && id < fights.Count)
+            {
+                _viewKind = ViewKind.Combat;
+                _viewKey = fights[(int)id].Key;
+            }
+        }
+    }
+
+    // The chip caption for a picked fight: its short label, or "Fight N" when the label is missing (an older save).
+    private static string CaptionFor(string key)
+    {
+        IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
+        for (int i = 0; i < fights.Count; i++)
+        {
+            if (fights[i].Key == key)
+            {
+                return string.IsNullOrEmpty(fights[i].Label) ? $"Fight {i + 1}" : fights[i].Label;
+            }
+        }
+
+        return "Live";
     }
 
     private void UpdateTooltip()
