@@ -91,6 +91,7 @@ internal static class SelfTest
         all &= await MagicBombScenario(context, dealer, enemy, applier2);
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
+        all &= await OutbreakScenario(context, dealer, enemy, applier2);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
         all &= FightLabelScenario();
         all &= PersistenceRoundTrip();
@@ -386,6 +387,46 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// The dealer plays Outbreak, then poisons an enemy three times. On the third poison Outbreak deals its amount to
+    /// every enemy with the player as dealer but no card source, from AfterPowerAmountChanged - a non-pushing hook - so
+    /// without a source label it would read "(none)". It must be booked as the player's own aDPS, named "Outbreak".
+    /// The first poison is applied by a teammate (so Outbreak ignores it) so the three owner-applied increments that
+    /// drive the burst are the direct calls, keeping the count exact.
+    /// </summary>
+    private static async Task<bool> OutbreakScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<OutbreakPower>(ctx, dealer, 11m, dealer, null);
+        await PowerCmd.Apply<PoisonPower>(ctx, enemy, 1m, applier2, null);
+
+        OutbreakPower? outbreak = dealer.GetPower<OutbreakPower>();
+        PoisonPower? poison = enemy.GetPower<PoisonPower>();
+        if (outbreak != null && poison != null)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                await outbreak.AfterPowerAmountChanged(ctx, poison, 1m, dealer, null);
+            }
+        }
+
+        // Outbreak bursts every hittable enemy, so its total is 11 per enemy; the point of the check is that the damage
+        // is booked as the player's own and named "Outbreak" (a whole number of 11s), never left as "(none)".
+        CombatLedger l = CombatLedger.Current;
+        string name = outbreak?.Title.GetFormattedText() ?? "Outbreak";
+        decimal dealt = l.DealtWith(you, name);
+        bool ok = dealt > 0m && dealt % 11m == 0m && l.DealtWith(you, NoCard) == 0m;
+        GD.Print($"[RdpsMeter] Scenario 'Outbreak': {(ok ? "PASS" : "FAIL")}");
+        if (!ok)
+        {
+            GD.Print($"[RdpsMeter]     Outbreak dealt={dealt} (want a positive multiple of 11), unlabeled={l.DealtWith(you, NoCard)}");
+        }
+
+        return ok;
+    }
+
+    /// <summary>
     /// The fight-picker labels: a single enemy keeps its full name (pluralized when there are several), while a mix is
     /// shortened toughest-first to about the length of one name so the dropdown stays readable.
     /// </summary>
@@ -496,6 +537,11 @@ internal static class SelfTest
         if (enemy.GetPower<StranglePower>() != null)
         {
             await PowerCmd.Remove<StranglePower>(enemy);
+        }
+
+        if (dealer.GetPower<OutbreakPower>() != null)
+        {
+            await PowerCmd.Remove<OutbreakPower>(dealer);
         }
 
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);

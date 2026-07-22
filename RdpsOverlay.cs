@@ -84,6 +84,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private ViewKind _viewKind = ViewKind.Current;
     private string? _viewKey;
 
+    // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
+    private int _generation = -1;
+
     // Menu item ids: negatives for the two fixed views, the combat's index for each fight.
     private const int IdTotal = -1;
     private const int IdCurrent = -2;
@@ -208,6 +211,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     public override void _Process(double delta)
     {
+        // A new (or reloaded) run replaces the roster: drop the cached rows and player visuals so they rebuild for the
+        // character being played now instead of lingering as the previous run's, and return the picker to the live view.
+        int generation = RunLedger.Generation;
+        if (generation != _generation)
+        {
+            _generation = generation;
+            _viewKind = ViewKind.Current;
+            _viewKey = null;
+            _visuals.Clear();
+            foreach (Row row in _rows.Values)
+            {
+                row.Container.QueueFree();
+            }
+
+            _rows.Clear();
+        }
+
         bool inCombat = CombatManager.Instance is { IsInProgress: true };
 
         // Capture every live player's class colour, icon and name while combat is running, so their rows keep the

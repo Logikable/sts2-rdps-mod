@@ -8,10 +8,11 @@ using MegaCrit.Sts2.Core.Models.Powers;
 namespace RdpsMeter.Patches;
 
 /// <summary>
-/// Names damage from the end-of-turn AoE buffs the game does not push onto its executing-model stack, so their hits
-/// read "Hailstorm" / "The Bomb" instead of "(none)". These powers sit on the player and deal to every enemy with the
-/// player as dealer but no card source, from BeforeSideTurnEnd - a hook whose dispatcher does not push - so
-/// <see cref="EffectSource"/> cannot recover them from LastInvolvedModel.
+/// Names damage from player buffs that deal it from a hook the game does not push onto its executing-model stack, so
+/// their hits read as the power ("Hailstorm", "The Bomb", "Outbreak") instead of "(none)". These powers sit on the
+/// player and deal to every enemy with the player as dealer but no card source, from a hook whose dispatcher does not
+/// push (BeforeSideTurnEnd for the end-of-turn bombs, AfterPowerAmountChanged for Outbreak's every-third-poison burst),
+/// so <see cref="EffectSource"/> cannot recover them from LastInvolvedModel.
 ///
 /// A prefix pushes the power onto <see cref="ExecutingEffect"/> (which EffectSource consults as a fallback) for the
 /// span of the hook, and the postfix wraps the returned Task so the matching pop runs only after the async hook - and
@@ -25,6 +26,7 @@ internal static class EndOfTurnSourcePatches
     {
         yield return AccessTools.Method(typeof(HailstormPower), nameof(HailstormPower.BeforeSideTurnEnd));
         yield return AccessTools.Method(typeof(TheBombPower), nameof(TheBombPower.BeforeSideTurnEnd));
+        yield return AccessTools.Method(typeof(OutbreakPower), nameof(OutbreakPower.AfterPowerAmountChanged));
     }
 
     [HarmonyPrefix]

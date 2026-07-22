@@ -29,6 +29,10 @@ internal static class RunLedger
     private static CombatLedger _active = new();
     private static string _runId = string.Empty;
 
+    // Bumped every time a run is started or resumed, so the overlay can tell the roster changed and drop cached
+    // per-player visuals (a new run may be a different character on the same local net id).
+    public static int Generation { get; private set; }
+
     /// <summary>The active combat's tally. All live writes land here.</summary>
     public static CombatLedger Active
     {
@@ -50,6 +54,7 @@ internal static class RunLedger
             Order.Clear();
             _active = new CombatLedger();
             _runId = runId;
+            Generation++;
         }
 
         Persist();
@@ -66,6 +71,7 @@ internal static class RunLedger
         lock (Lock)
         {
             Restore(saved != null && saved.RunId == runId ? saved : null, runId);
+            Generation++;
         }
     }
 
