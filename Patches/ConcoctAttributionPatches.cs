@@ -1,6 +1,9 @@
+using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.ValueProps;
 
@@ -15,12 +18,27 @@ namespace RdpsMeter.Patches;
 /// applies its poison, carrying the ConcoctPower owner's shares; <see cref="PowerOwnership"/> reads it when the poison
 /// stacks land and books them to that player instead. The arming is consumed by the very next poison change on that
 /// enemy (the one ConcoctPower is about to apply) and cleared at combat end, so it never mis-credits a later poison.
+///
+/// ConcoctPower does not exist before game v0.109.0, so the target is resolved by name through TargetMethods rather
+/// than a compile-time typeof: on an older build the type is absent, TargetMethods yields nothing, and the same DLL
+/// loads unpatched there. Nothing is lost - Concoct's poison mechanic itself doesn't exist on those builds, so there
+/// is no mis-credit to correct. __instance is typed as the base PowerModel for the same reason.
 /// </summary>
-[HarmonyPatch(typeof(ConcoctPower), nameof(ConcoctPower.AfterDamageGiven))]
+[HarmonyPatch]
 internal static class ConcoctAttributionPatches
 {
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        System.Type? concoct = AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.Powers.ConcoctPower");
+        MethodInfo? method = concoct == null ? null : AccessTools.Method(concoct, "AfterDamageGiven");
+        if (method != null)
+        {
+            yield return method;
+        }
+    }
+
     [HarmonyPrefix]
-    private static void Prefix(ConcoctPower __instance, Creature? dealer, DamageResult result, ValueProp props, Creature target)
+    private static void Prefix(PowerModel __instance, Creature? dealer, DamageResult result, ValueProp props, Creature target)
     {
         // Mirror ConcoctPower's own gate so a redirect is armed only when it will actually apply poison.
         if (dealer != __instance.Owner || !props.IsPoweredAttack() || result.UnblockedDamage <= 0)
