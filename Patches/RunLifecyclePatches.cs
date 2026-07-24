@@ -17,39 +17,41 @@ internal static class RunLifecyclePatches
     [HarmonyPrefix]
     private static void SetUpNewSingleplayerPrefix(RunState state)
     {
-        StartNewRun(state);
+        StartNewRun(state, singleplayer: true);
     }
 
     [HarmonyPatch(nameof(RunManager.SetUpNewMultiplayer))]
     [HarmonyPrefix]
     private static void SetUpNewMultiplayerPrefix(RunState state)
     {
-        StartNewRun(state);
+        StartNewRun(state, singleplayer: false);
     }
 
     [HarmonyPatch(nameof(RunManager.SetUpSavedSingleplayer))]
     [HarmonyPrefix]
     private static void SetUpSavedSingleplayerPrefix(RunState state)
     {
-        ResumeRun(state);
+        ResumeRun(state, singleplayer: true);
     }
 
     [HarmonyPatch(nameof(RunManager.SetUpSavedMultiplayer))]
     [HarmonyPrefix]
     private static void SetUpSavedMultiplayerPrefix(RunState state)
     {
-        ResumeRun(state);
+        ResumeRun(state, singleplayer: false);
     }
 
-    private static void StartNewRun(RunState state)
+    private static void StartNewRun(RunState state, bool singleplayer)
     {
         RunContext.State = state;
+        RunContext.IsSingleplayer = singleplayer;
         RunLedger.StartNewRun(RunContext.RunId);
     }
 
-    private static void ResumeRun(RunState state)
+    private static void ResumeRun(RunState state, bool singleplayer)
     {
         RunContext.State = state;
+        RunContext.IsSingleplayer = singleplayer;
         RunLedger.ResumeRun(RunContext.RunId);
     }
 }

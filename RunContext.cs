@@ -14,6 +14,13 @@ internal static class RunContext
 {
     public static RunState? State { get; set; }
 
+    /// <summary>
+    /// Whether this run is a solo one, from which setup path started it. There is nobody to credit in a solo run, so
+    /// the overlay shows the damage breakdown itself rather than a one-row table you have to hover. Defaults to false
+    /// so a run we never saw start renders the ordinary party table.
+    /// </summary>
+    public static bool IsSingleplayer { get; set; }
+
     public static string RunId => State?.Rng.StringSeed ?? "unknown";
 
     /// <summary>

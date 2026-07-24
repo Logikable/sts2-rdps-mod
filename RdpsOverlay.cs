@@ -11,9 +11,11 @@ namespace RdpsMeter;
 /// party size - with the player's name, a bar tinted to their class colour, and their rDPS. The panel is a bordered
 /// window that starts near the top-right and can be dragged by its header; only the header (drag), its Live/Total
 /// button and the rows (hover) take the mouse, so the rest never intercepts a click meant for the game underneath.
-/// Hovering a row pops an instant styled breakdown of that player's damage - the same table-with-bars look. It stays
-/// up between fights, showing either this combat's damage or the running session total per the header toggle, and
-/// hides only before the first fight or when the shown tally is empty out of combat.
+/// Hovering a row pops an instant styled breakdown of that player's damage - the same table-with-bars look. In a solo
+/// run there is nobody to credit, so the row and its hover collapse into one: the panel shows the breakdown directly
+/// and carries the rDPS total in its header. It stays up between fights, showing either this combat's damage or the
+/// running session total per the header toggle, and hides only before the first fight or when the shown tally is empty
+/// out of combat.
 /// </summary>
 internal static class RdpsOverlay
 {
@@ -41,9 +43,10 @@ internal static class RdpsOverlay
 
 internal sealed partial class RdpsOverlayNode : CanvasLayer
 {
-    // Fixed widths so neither window reflows as names or numbers change; only the row count drives height.
+    // Fixed widths so neither window reflows as names or numbers change; only the row count drives height. The
+    // breakdown is the wider of the two, whether it is the hover window or (solo) the panel's own body.
     private const float Width = 300f;
-    private const float TooltipWidth = 320f;
+    private const float BreakdownWidth = 320f;
 
     private sealed class Row
     {
@@ -70,6 +73,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private readonly Dictionary<ulong, PlayerVisual> _visuals = new();
     private PanelContainer _panel = null!;
     private DragHandle _header = null!;
+    private Label _title = null!;
     private MenuButton _menu = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
@@ -77,6 +81,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private IReadOnlyDictionary<ulong, RdpsRow> _snapshot = new Dictionary<ulong, RdpsRow>();
     private ulong? _hovered;
     private string? _tooltipSignature;
+
+    // The breakdown currently drawn in the panel body (solo only), so a steady tally costs nothing to redraw.
+    private string? _bodySignature;
     private bool _clampPending;
 
     // The picked view. When Combat, _viewKey is the chosen fight's combat key; it falls back to Current if that fight
@@ -126,17 +133,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         });
         _header.Init(_panel, OverlayLayout.SavePosition);
 
-        var title = new Label
+        _title = new Label
         {
             Text = "rDPS",
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        title.AddThemeFontSizeOverride("font_size", 16);
-        title.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
-        _header.AddChild(title);
-        title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _title.AddThemeFontSizeOverride("font_size", 16);
+        _title.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        _header.AddChild(_title);
+        _title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
 
         // View picker, pinned to the right of the header: Total, Live, then one entry per fight. It takes the mouse (so
         // a click opens the menu rather than starting a drag) while the rest of the header stays a drag surface. The
@@ -198,7 +205,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // shown only while a row is hovered.
         _tooltip = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(TooltipWidth, 0f),
+            CustomMinimumSize = new Vector2(BreakdownWidth, 0f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
             Visible = false,
         };
@@ -220,12 +227,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             _viewKind = ViewKind.Current;
             _viewKey = null;
             _visuals.Clear();
-            foreach (Row row in _rows.Values)
+            foreach (Node child in _list.GetChildren())
             {
-                row.Container.QueueFree();
+                _list.RemoveChild(child);
+                child.QueueFree();
             }
 
             _rows.Clear();
+            _bodySignature = null;
         }
 
         bool inCombat = CombatManager.Instance is { IsInProgress: true };
@@ -276,6 +285,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             .OrderByDescending(id => _snapshot.TryGetValue(id, out RdpsRow? r) ? r.Rdps : 0m)
             .ThenBy(id => id)
             .ToList();
+
+        // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
+        // way. The panel becomes the breakdown itself, with the rDPS total moved up into the header.
+        bool solo = RunContext.IsSingleplayer && ordered.Count <= 1;
+        _panel.CustomMinimumSize = new Vector2(solo ? BreakdownWidth : Width, 0f);
+        if (solo)
+        {
+            RenderBreakdownBody(ordered.Count > 0 ? ordered[0] : null);
+            return;
+        }
+
+        _title.Text = "rDPS";
 
         decimal max = 1m;
         decimal team = 0m;
@@ -387,6 +408,37 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return "Live";
     }
 
+    // The solo body: the lone player's breakdown drawn straight into the panel, with their rDPS in the header (the row
+    // that would have carried it is gone) and no "Damage Breakdown" strip, since the window's own title now says it.
+    private void RenderBreakdownBody(ulong? netId)
+    {
+        _hovered = null;
+        _tooltip.Visible = false;
+        _tooltipSignature = null;
+
+        // Coming from a party table, the body still holds its rows; forget them and let the rebuild free the children.
+        if (_rows.Count > 0)
+        {
+            _rows.Clear();
+            _bodySignature = null;
+        }
+
+        RdpsRow? row = netId is ulong id ? _snapshot.GetValueOrDefault(id) : null;
+        _title.Text = row == null ? "rDPS" : $"rDPS {Round(row.Rdps)}";
+
+        string signature = netId is ulong key ? Signature(key, row) : "empty";
+        if (signature == _bodySignature)
+        {
+            return;
+        }
+
+        _bodySignature = signature;
+        Color color = netId is ulong owner && _visuals.TryGetValue(owner, out PlayerVisual visual)
+            ? visual.Color
+            : new Color(0.7f, 0.7f, 0.7f);
+        RebuildBreakdown(_list, row, color, damageHeader: false);
+    }
+
     private void UpdateTooltip()
     {
         if (_hovered is not { } netId || !_rows.TryGetValue(netId, out Row? widget))
@@ -402,7 +454,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         string signature = Signature(netId, row);
         if (signature != _tooltipSignature)
         {
-            RebuildTooltip(row, widget.Color);
+            RebuildBreakdown(_tooltipList, row, widget.Color, damageHeader: true);
             _tooltipSignature = signature;
         }
 
@@ -423,27 +475,28 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // The hover breakdown, FFXIV-style but as a table of bars: this player's raw damage by card, then the buffs they
     // gave other players, then the buffs other players gave them. Each section's bars are scaled to that section's own
     // biggest entry, and tinted to the player's class colour. Name and rDPS are omitted - the hovered row shows them.
-    private void RebuildTooltip(RdpsRow? row, Color color)
+    private void RebuildBreakdown(VBoxContainer list, RdpsRow? row, Color color, bool damageHeader)
     {
-        while (_tooltipList.GetChildCount() > 0)
+        while (list.GetChildCount() > 0)
         {
-            Node child = _tooltipList.GetChild(0);
-            _tooltipList.RemoveChild(child);
+            Node child = list.GetChild(0);
+            list.RemoveChild(child);
             child.QueueFree();
         }
 
         if (row == null)
         {
-            _tooltipList.AddChild(SectionHeader("No damage yet."));
+            list.AddChild(SectionHeader("No damage yet."));
             return;
         }
 
-        AddDamageSection(row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color);
-        AddEffectSection("Given", Combine(row.GivenBy), "+", color);
-        AddEffectSection("Received", Combine(row.ReceivedBy), "-", color);
+        AddDamageSection(list, row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color, damageHeader);
+        AddEffectSection(list, "Given", Combine(row.GivenBy), "+", color);
+        AddEffectSection(list, "Received", Combine(row.ReceivedBy), "-", color);
     }
 
-    private void AddDamageSection(List<(string Card, decimal Amount, decimal Buff)> items, Color color)
+    private static void AddDamageSection(
+        VBoxContainer list, List<(string Card, decimal Amount, decimal Buff)> items, Color color, bool header)
     {
         if (items.Count == 0)
         {
@@ -452,10 +505,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         decimal max = Math.Max(1m, items.Max(i => i.Amount));
         decimal total = items.Sum(i => i.Amount);
-        _tooltipList.AddChild(SectionHeader("Damage Breakdown"));
+        if (header)
+        {
+            list.AddChild(SectionHeader("Damage Breakdown"));
+        }
+
         foreach ((string card, decimal amount, decimal buff) in items)
         {
-            _tooltipList.AddChild(BarRow(card, Round(amount).ToString(), Percent(amount, total), SplitBackground(amount - buff, amount, max, color)));
+            list.AddChild(BarRow(card, Round(amount).ToString(), Percent(amount, total), SplitBackground(amount - buff, amount, max, color)));
         }
     }
 
@@ -471,7 +528,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             .ToList();
     }
 
-    private void AddEffectSection(string title, List<(string Effect, decimal Amount)> items, string sign, Color color)
+    private static void AddEffectSection(
+        VBoxContainer list, string title, List<(string Effect, decimal Amount)> items, string sign, Color color)
     {
         if (items.Count == 0)
         {
@@ -480,10 +538,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         decimal max = Math.Max(1m, items.Max(i => i.Amount));
         decimal total = items.Sum(i => i.Amount);
-        _tooltipList.AddChild(SectionHeader(title));
+        list.AddChild(SectionHeader(title));
         foreach ((string effect, decimal amount) in items)
         {
-            _tooltipList.AddChild(BarRow(effect, sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
+            list.AddChild(BarRow(effect, sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
         }
     }
 
