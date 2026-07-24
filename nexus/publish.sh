@@ -87,11 +87,15 @@ fi
 # The action reads the zip relative to the working directory.
 cd "$(dirname "$ZIP")"
 
+# Name the file version after the zip itself (RdpsMeter-<game>-<mod>), so the
+# Nexus file name carries the game version too, not just the mod version.
+DISPLAY_NAME="$(basename "$ZIP" .zip)"
+
 INPUT_API_KEY="$API_KEY" \
 INPUT_FILE_ID="$FILE_ID" \
 INPUT_FILENAME="$(basename "$ZIP")" \
 INPUT_VERSION="$VERSION" \
-INPUT_DISPLAY_NAME="RdpsMeter $VERSION" \
+INPUT_DISPLAY_NAME="$DISPLAY_NAME" \
 INPUT_CATEGORY="main" \
 INPUT_UPDATE_MOD_VERSION="true" \
 INPUT_ARCHIVE_EXISTING_VERSION="true" \
