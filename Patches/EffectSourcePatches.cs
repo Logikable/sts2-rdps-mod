@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
@@ -20,13 +23,35 @@ namespace RdpsMeter.Patches;
 /// every dealer-less-card player hit and cleared when no power/relic is on the stack (e.g. an end-of-turn AoE power
 /// the game does not push), so nothing is mislabelled by a stale entry.
 /// </summary>
-[HarmonyPatch(typeof(CreatureCmd), nameof(CreatureCmd.Damage), new[]
-{
-    typeof(PlayerChoiceContext), typeof(IEnumerable<Creature>), typeof(decimal), typeof(ValueProp),
-    typeof(Creature), typeof(CardModel), typeof(CardPlay),
-})]
+[HarmonyPatch]
 internal static class EffectSourcePatches
 {
+    // The core multi-target Damage overload every other overload funnels into. Newer game builds append a trailing
+    // CardPlay? parameter, so the overload is matched on its stable leading parameters rather than an exact type list
+    // - resolving whichever shape (six or seven parameters) the running game declares.
+    private static readonly Type[] LeadingParams =
+    {
+        typeof(PlayerChoiceContext), typeof(IEnumerable<Creature>), typeof(decimal), typeof(ValueProp),
+        typeof(Creature), typeof(CardModel),
+    };
+
+    private static MethodBase TargetMethod()
+    {
+        return AccessTools.GetDeclaredMethods(typeof(CreatureCmd))
+            .First(m => m.Name == nameof(CreatureCmd.Damage) && MatchesCoreOverload(m));
+    }
+
+    private static bool MatchesCoreOverload(MethodInfo method)
+    {
+        ParameterInfo[] ps = method.GetParameters();
+        if (ps.Length != LeadingParams.Length && ps.Length != LeadingParams.Length + 1)
+        {
+            return false;
+        }
+
+        return !LeadingParams.Where((t, i) => ps[i].ParameterType != t).Any();
+    }
+
     [HarmonyPrefix]
     private static void Prefix(PlayerChoiceContext choiceContext, Creature? dealer, CardModel? cardSource)
     {
