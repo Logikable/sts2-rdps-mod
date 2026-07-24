@@ -1,0 +1,9 @@
+{
+  "title": "rDPS Meter",
+  "description": "An FFXIV-style damage meter for co-op runs.\n\nDamage that a teammate's buff or debuff enabled is credited to the player who applied it, not to whoever swung. Vulnerable, Flanking, gifted Strength, Poison, Doom and the rest are split between the players who actually caused them, pro-rata when several people stacked the same debuff.\n\n- A live in-combat panel, draggable, one row per player, with each player's share of the party's damage.\n- Hover a player for their breakdown: damage by card (split into their own damage and the part teammates' buffs added), what their buffs gave other players, and what they received.\n- In a solo run the panel shows that breakdown directly, with no hovering.\n- A fight picker for the whole run: the running total, the live fight, or any earlier fight by name.\n- Breakdowns are saved per run, so a run you pause today still has its numbers tomorrow. Runs paused in parallel keep separate records, and a fight replayed from a mid-combat save replaces its old entry instead of double-counting.\n\nDoes not affect gameplay - it only reads damage as it resolves.",
+  "visibility": "private",
+  "changeNote": "First release.",
+  "tags": [],
+  "dependencies": [],
+  "contentDescriptors": []
+}
