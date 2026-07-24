@@ -3,4 +3,6 @@ obj/
 .godot/
 
 # The game's own assembly - proprietary, not redistributable. Supply it yourself (see README.md).
+# Includes version-suffixed copies kept for cross-version API comparison.
 lib/sts2.dll
+lib/sts2-*.dll
