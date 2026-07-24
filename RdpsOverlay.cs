@@ -424,7 +424,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         RdpsRow? row = netId is ulong id ? _snapshot.GetValueOrDefault(id) : null;
-        _title.Text = row == null ? "rDPS" : $"rDPS {Round(row.Rdps)}";
+        _title.Text = row == null ? "rDPS" : $"rDPS: {Round(row.Rdps)}";
 
         string signature = netId is ulong key ? Signature(key, row) : "empty";
         if (signature == _bodySignature)
