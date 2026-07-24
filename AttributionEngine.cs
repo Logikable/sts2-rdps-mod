@@ -1,3 +1,5 @@
+using System.Reflection;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Hooks;
@@ -186,7 +188,7 @@ internal static class AttributionEngine
             {
                 if (!exclude.Contains(modifier))
                 {
-                    num += modifier.ModifyDamageAdditive(target, num, props, dealer, cardSource, cardPlay);
+                    num += Invoke(AdditiveListener, modifier, cardPlay, target, num, props, dealer, cardSource);
                 }
             }
         }
@@ -197,7 +199,7 @@ internal static class AttributionEngine
             {
                 if (!exclude.Contains(modifier))
                 {
-                    num *= modifier.ModifyDamageMultiplicative(target, num, props, dealer, cardSource, cardPlay);
+                    num *= Invoke(MultiplicativeListener, modifier, cardPlay, target, num, props, dealer, cardSource);
                 }
             }
         }
@@ -212,7 +214,7 @@ internal static class AttributionEngine
                     continue;
                 }
 
-                decimal candidate = modifier.ModifyDamageCap(target, props, dealer, cardSource, cardPlay);
+                decimal candidate = Invoke(CapListener, modifier, cardPlay, target, props, dealer, cardSource);
                 if (candidate < cap)
                 {
                     cap = candidate;
@@ -225,6 +227,29 @@ internal static class AttributionEngine
         }
 
         return Math.Max(0m, num);
+    }
+
+    // The game's per-modifier ModifyDamage listeners gained a trailing CardPlay? parameter in a later build. Each is
+    // resolved once and invoked reflectively, appending cardPlay only when this build's method declares it, so the
+    // recompute pipeline reproduces the game's damage on either version. Recompute runs only for hits an external buff
+    // actually changed, so this reflection stays off the common damage path.
+    private readonly record struct Listener(MethodInfo Method, bool TakesCardPlay);
+
+    private static readonly Listener AdditiveListener = Resolve("ModifyDamageAdditive", baseArity: 5);
+    private static readonly Listener MultiplicativeListener = Resolve("ModifyDamageMultiplicative", baseArity: 5);
+    private static readonly Listener CapListener = Resolve("ModifyDamageCap", baseArity: 4);
+
+    private static Listener Resolve(string name, int baseArity)
+    {
+        MethodInfo method = AccessTools.Method(typeof(AbstractModel), name)
+            ?? throw new MissingMethodException(nameof(AbstractModel), name);
+        return new Listener(method, method.GetParameters().Length > baseArity);
+    }
+
+    private static decimal Invoke(Listener listener, AbstractModel modifier, CardPlay? cardPlay, params object?[] baseArgs)
+    {
+        object?[] args = listener.TakesCardPlay ? [.. baseArgs, cardPlay] : baseArgs;
+        return (decimal)listener.Method.Invoke(modifier, args)!;
     }
 
     /// <summary>

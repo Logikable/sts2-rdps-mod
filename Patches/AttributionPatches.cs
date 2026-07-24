@@ -1,3 +1,5 @@
+using System;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
@@ -34,6 +36,10 @@ internal static class AttributionPatches
     private static readonly Dictionary<Creature, Queue<HitAttribution>> Pending = new();
     private static readonly object PendingLock = new();
 
+    // Resolved once from Hook.ModifyDamage's own parameters: the index of its cardPlay argument, or -1 on a build
+    // that has none. -2 means "not yet resolved".
+    private static int _cardPlayArgIndex = -2;
+
     [HarmonyPatch(nameof(Hook.ModifyDamage))]
     [HarmonyPostfix]
     private static void ModifyDamagePostfix(
@@ -42,16 +48,22 @@ internal static class AttributionPatches
         decimal damage,
         ValueProp props,
         CardModel? cardSource,
-        CardPlay? cardPlay,
         ModifyDamageHookType modifyDamageHookType,
         CardPreviewMode previewMode,
         IEnumerable<AbstractModel> modifiers,
-        decimal __result)
+        decimal __result,
+        object[] __args,
+        MethodBase __originalMethod)
     {
         if (previewMode != CardPreviewMode.None || modifyDamageHookType != ModifyDamageHookType.All)
         {
             return;
         }
+
+        // cardPlay is read from the raw argument array rather than declared as a parameter: a build whose
+        // Hook.ModifyDamage has no cardPlay would refuse to bind a patch that declares one, disabling attribution
+        // wholesale. When absent, recompute runs without it - that build's damage pipeline takes no cardPlay either.
+        CardPlay? cardPlay = CardPlayArg(__originalMethod, __args);
 
         if (CombatManager.Instance is not { IsInProgress: true })
         {
@@ -80,6 +92,17 @@ internal static class AttributionPatches
         }
 
         Calcs.AddOrUpdate(modifiers, attribution);
+    }
+
+    private static CardPlay? CardPlayArg(MethodBase original, object[] args)
+    {
+        if (_cardPlayArgIndex == -2)
+        {
+            ParameterInfo[] parameters = original.GetParameters();
+            _cardPlayArgIndex = Array.FindIndex(parameters, p => p.Name == "cardPlay" && p.ParameterType == typeof(CardPlay));
+        }
+
+        return _cardPlayArgIndex >= 0 ? args[_cardPlayArgIndex] as CardPlay : null;
     }
 
     [HarmonyPatch(nameof(Hook.AfterModifyingDamageAmount))]
