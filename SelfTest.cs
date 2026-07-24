@@ -487,6 +487,9 @@ internal static class SelfTest
         const string runB = "selftest-run-b";
         var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
 
+        // The harness's own combat is handed back at the end wearing the name it started with.
+        string harnessLabel = RunLedger.Active.Label;
+
         RunLedger.StartNewRun(runA);
         RunLedger.BeginCombat("9:0:0:-", "Alpha");
         RunLedger.Active.ApplyDot("Poison", share, 10);
@@ -510,7 +513,7 @@ internal static class SelfTest
 
         // Hand the ledger back to the combat the harness is actually in.
         RunLedger.StartNewRun(RunContext.RunId);
-        RunLedger.BeginCombat(RunContext.CombatKey, "Harness");
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
 
         return Report("Two runs stored separately",
             Expect("run A damage", aDamage, 10m),

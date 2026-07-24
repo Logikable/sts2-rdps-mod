@@ -1,7 +1,8 @@
 namespace RdpsMeter;
 
 /// <summary>
-/// Turns the enemies a combat started with into a short, readable name for the fight picker. A single enemy type keeps
+/// Names a fight after the enemies in it, for the rare combat the game itself does not name (see
+/// <see cref="Patches.CombatLifecyclePatches"/>, which prefers the encounter's own title). A single enemy type keeps
 /// its full name (pluralized when there are several of it - "Slimes"); a mix is shortened to about the length of one
 /// name by keeping just the creature nouns, so the dropdown stays scannable. Input is expected toughest-first, so a mix
 /// is named after its most notable enemy (an elite reads as "Elite +2", not after whichever minion sat in slot one).

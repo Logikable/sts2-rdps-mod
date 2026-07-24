@@ -37,24 +37,58 @@ internal static class CombatLifecyclePatches
         RunLedger.EndCombat();
     }
 
-    // The fight's name from the enemies present as combat begins. The state and its creatures already exist at this
-    // point (StartCombatInternal iterates them right after), so the starting roster is intact; ordering by max HP puts
-    // the toughest enemy first so FightLabel names a mixed fight after it.
+    // The fight's name. The game names its own encounters ("Group of Slimes", "Knight Gang", "The Kin") and those read
+    // far better than anything assembled from the roster, so they win; the roster is only used when a combat has no
+    // encounter behind it (the debug/harness path). The state and its creatures already exist at this point
+    // (StartCombatInternal iterates them right after), so the starting roster is intact; ordering by max HP puts the
+    // toughest enemy first so FightLabel names a mixed fight after it.
     private static string StartingFightLabel()
     {
         try
         {
-            List<string> enemies = CombatManager.Instance?.DebugOnlyGetState()?.HittableEnemies
+            CombatState? state = CombatManager.Instance?.DebugOnlyGetState();
+            string? title = EncounterTitle(state);
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                Trace($"[RdpsMeter] Fight named '{title}' from the encounter");
+                return title;
+            }
+
+            List<string> enemies = state?.HittableEnemies
                 .OrderByDescending(c => c.MaxHp)
                 .Select(c => c.Name)
                 .ToList() ?? new List<string>();
-            return FightLabel.From(enemies);
+            string label = FightLabel.From(enemies);
+            Trace($"[RdpsMeter] Fight named '{label}' from the roster [{string.Join(", ", enemies)}] - no encounter title");
+            return label;
         }
         catch (Exception ex)
         {
             // A fight name is never worth breaking combat start over; fall back to a generic label.
             GD.PrintErr($"[RdpsMeter] Could not name the fight: {ex}");
             return "Combat";
+        }
+    }
+
+    // Which of the two naming sources a fight got its name from - worth seeing while developing, silent in play.
+    private static void Trace(string message)
+    {
+        if (DevMode.Enabled)
+        {
+            GD.Print(message);
+        }
+    }
+
+    // Kept apart so a missing or unlocalized encounter title falls back to the roster rather than losing the name.
+    private static string? EncounterTitle(CombatState? state)
+    {
+        try
+        {
+            return state?.Encounter?.Title.GetFormattedText();
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 }
