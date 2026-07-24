@@ -12,8 +12,9 @@ internal readonly record struct CombatInfo(string Key, string Label);
 ///
 /// Keying by combat is what makes a mid-combat save reload correct: the game restarts that combat from the top, and
 /// <see cref="BeginCombat"/> replaces its slot (keeping its place in the order), so the aborted attempt's damage is
-/// discarded from every view instead of being counted twice. The whole map is persisted per run (keyed by the run seed),
-/// so a run paused today and resumed another day keeps its breakdown and its fight names.
+/// discarded from every view instead of being counted twice. The whole map is persisted under the run's own seed (see
+/// <see cref="RunLedgerStore"/>), so a run paused today and resumed another day keeps its breakdown and its fight names,
+/// and runs paused in parallel - a solo one and a co-op one - keep separate breakdowns rather than overwriting.
 /// </summary>
 internal static class RunLedger
 {
@@ -66,7 +67,7 @@ internal static class RunLedger
     /// </summary>
     public static void ResumeRun(string runId)
     {
-        RunLedgerDto? saved = RunLedgerStore.Load();
+        RunLedgerDto? saved = RunLedgerStore.Load(runId);
 
         lock (Lock)
         {

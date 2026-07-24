@@ -80,7 +80,9 @@ internal static class SelfTest
         var applier3 = new Creature(Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 3uL), 1, 1);
         var context = new NoOpChoiceContext();
 
-        bool all = true;
+        // First, while the harness combat is still empty: this one hijacks the run ledger to play two runs against each
+        // other, and puts the harness's own run back when it is done.
+        bool all = TwoRunsScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
@@ -472,6 +474,51 @@ internal static class SelfTest
             Expect("combats preserved", back?.Combats.Count ?? -1, dto.Combats.Count),
             Expect("total dealt preserved", back != null ? TotalDealt(back) : -1m, TotalDealt(dto)),
             Expect("reserialize is stable", back != null && RunLedgerStore.Serialize(back) == json ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Two runs paused in parallel - the game allows a solo run and a co-op run at once - must keep separate saved
+    /// breakdowns. Plays a fight in run A, then one in run B (which is what used to overwrite A), then resumes each and
+    /// checks it comes back with its own damage and its own fight name. Leaves the harness's run in place afterwards.
+    /// </summary>
+    private static bool TwoRunsScenario()
+    {
+        const string runA = "selftest-run-a";
+        const string runB = "selftest-run-b";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+
+        RunLedger.StartNewRun(runA);
+        RunLedger.BeginCombat("9:0:0:-", "Alpha");
+        RunLedger.Active.ApplyDot("Poison", share, 10);
+        RunLedger.EndCombat();
+
+        RunLedger.StartNewRun(runB);
+        RunLedger.BeginCombat("9:1:1:-", "Beta");
+        RunLedger.Active.ApplyDot("Poison", share, 20);
+        RunLedger.EndCombat();
+
+        RunLedger.ResumeRun(runA);
+        decimal aDamage = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+        IReadOnlyList<CombatInfo> aFights = RunLedger.Fights();
+
+        RunLedger.ResumeRun(runB);
+        decimal bDamage = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+        IReadOnlyList<CombatInfo> bFights = RunLedger.Fights();
+
+        RunLedgerStore.Delete(runA);
+        RunLedgerStore.Delete(runB);
+
+        // Hand the ledger back to the combat the harness is actually in.
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, "Harness");
+
+        return Report("Two runs stored separately",
+            Expect("run A damage", aDamage, 10m),
+            Expect("run A fights", aFights.Count, 1m),
+            Expect("run A fight name", aFights.Count == 1 && aFights[0].Label == "Alpha" ? 1m : 0m, 1m),
+            Expect("run B damage", bDamage, 20m),
+            Expect("run B fights", bFights.Count, 1m),
+            Expect("run B fight name", bFights.Count == 1 && bFights[0].Label == "Beta" ? 1m : 0m, 1m));
     }
 
     private static decimal TotalDealt(RunLedgerDto dto)

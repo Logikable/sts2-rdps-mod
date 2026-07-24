@@ -44,13 +44,24 @@ internal sealed class SourceEntryDto
 }
 
 /// <summary>
-/// Reads and writes the current run's rDPS breakdown to the game's user data, so pausing a run and returning another day
-/// keeps the numbers. Stored as a single JSON file (not beside the read-only mod dll); a missing or unreadable file just
-/// means "no saved breakdown", and any IO or parse error is swallowed - the meter must never break a run to save a stat.
+/// Reads and writes each run's rDPS breakdown to the game's user data, so pausing a run and returning another day keeps
+/// the numbers. One JSON file per run (named after the run's seed, under a folder in user:// rather than beside the
+/// read-only mod dll), because the game holds several runs in progress at once - a solo run and a co-op one - and a
+/// single shared file would let whichever was played last erase the other. The run id is also stored inside the file and
+/// checked on load, so the breakdown is used only for the run it belongs to whatever the file ends up named. A missing
+/// or unreadable file just means "no saved breakdown", and any IO or parse error is swallowed - the meter must never
+/// break a run to save a stat.
 /// </summary>
 internal static class RunLedgerStore
 {
-    private const string Path = "user://rdps_meter_run.json";
+    private const string Folder = "user://rdps_meter";
+
+    // Where the breakdown lived when the meter kept only one run's worth; adopted once, then removed.
+    private const string LegacyPath = "user://rdps_meter_run.json";
+
+    // Abandoned runs are never cleaned up by the game, so keep only the most recently written few files. Far more than
+    // the handful of runs anyone has going at once, and each file is a few KB.
+    private const int KeepRuns = 12;
 
     public static string Serialize(RunLedgerDto dto)
     {
@@ -66,14 +77,21 @@ internal static class RunLedgerStore
     {
         try
         {
-            using FileAccess? file = FileAccess.Open(Path, FileAccess.ModeFlags.Write);
-            if (file == null)
+            DirAccess.MakeDirRecursiveAbsolute(Folder);
+            string path = PathFor(dto.RunId);
+            using (FileAccess? file = FileAccess.Open(path, FileAccess.ModeFlags.Write))
             {
-                GD.PrintErr($"[RdpsMeter] Could not open {Path} to save the run breakdown: {FileAccess.GetOpenError()}");
-                return;
+                if (file == null)
+                {
+                    GD.PrintErr($"[RdpsMeter] Could not open {path} to save the run breakdown: {FileAccess.GetOpenError()}");
+                    return;
+                }
+
+                file.StoreString(Serialize(dto));
             }
 
-            file.StoreString(Serialize(dto));
+            DiscardLegacy(dto.RunId);
+            Prune();
         }
         catch (Exception ex)
         {
@@ -81,27 +99,102 @@ internal static class RunLedgerStore
         }
     }
 
-    public static RunLedgerDto? Load()
+    /// <summary>The saved breakdown for one run, or null when that run has none.</summary>
+    public static RunLedgerDto? Load(string runId)
+    {
+        RunLedgerDto? saved = Read(PathFor(runId));
+        if (saved != null)
+        {
+            return saved;
+        }
+
+        RunLedgerDto? legacy = Read(LegacyPath);
+        return legacy != null && legacy.RunId == runId ? legacy : null;
+    }
+
+    /// <summary>Forgets one run's saved breakdown. For the self-test to clean up after itself.</summary>
+    public static void Delete(string runId)
     {
         try
         {
-            if (!FileAccess.FileExists(Path))
+            string path = PathFor(runId);
+            if (FileAccess.FileExists(path))
+            {
+                DirAccess.RemoveAbsolute(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[RdpsMeter] Failed to delete a saved run breakdown: {ex}");
+        }
+    }
+
+    private static RunLedgerDto? Read(string path)
+    {
+        try
+        {
+            if (!FileAccess.FileExists(path))
             {
                 return null;
             }
 
-            using FileAccess? file = FileAccess.Open(Path, FileAccess.ModeFlags.Read);
-            if (file == null)
-            {
-                return null;
-            }
-
-            return Deserialize(file.GetAsText());
+            using FileAccess? file = FileAccess.Open(path, FileAccess.ModeFlags.Read);
+            return file == null ? null : Deserialize(file.GetAsText());
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[RdpsMeter] Failed to load the run breakdown (starting fresh): {ex}");
             return null;
+        }
+    }
+
+    // One file per run, named after its seed. Anything that is not a plain name character is folded to '_' so the seed
+    // can never walk out of the folder; two seeds could in principle fold to the same name, which costs one breakdown
+    // and no wrong numbers, since the run id inside the file is what decides whether it is loaded.
+    private static string PathFor(string runId)
+    {
+        var name = new System.Text.StringBuilder();
+        foreach (char c in runId)
+        {
+            name.Append(char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_');
+        }
+
+        return $"{Folder}/{(name.Length == 0 ? "unknown" : name.ToString())}.json";
+    }
+
+    // The old single-file breakdown is dead weight once the run it holds has been written to its own file (and junk if
+    // it no longer parses).
+    private static void DiscardLegacy(string runId)
+    {
+        if (!FileAccess.FileExists(LegacyPath))
+        {
+            return;
+        }
+
+        RunLedgerDto? legacy = Read(LegacyPath);
+        if (legacy == null || legacy.RunId == runId)
+        {
+            DirAccess.RemoveAbsolute(LegacyPath);
+        }
+    }
+
+    private static void Prune()
+    {
+        using DirAccess? dir = DirAccess.Open(Folder);
+        if (dir == null)
+        {
+            return;
+        }
+
+        List<string> files = dir.GetFiles().Where(f => f.EndsWith(".json")).ToList();
+        if (files.Count <= KeepRuns)
+        {
+            return;
+        }
+
+        foreach (string name in files.OrderByDescending(f => FileAccess.GetModifiedTime($"{Folder}/{f}")).Skip(KeepRuns))
+        {
+            DirAccess.RemoveAbsolute($"{Folder}/{name}");
         }
     }
 }
