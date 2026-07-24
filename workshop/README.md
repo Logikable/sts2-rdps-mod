@@ -25,9 +25,10 @@ This directory holds the parts worth versioning:
   tags, dependencies, content descriptors. Fields set to `null` or removed keep
   whatever the Workshop page already has, so an update need only set
   `changeNote`.
-* `image.png` - the store image. Required, must stay under 1MB. Currently a
-  placeholder drawn by `make_preview.py`; replace it with a screenshot of the
-  meter in a real fight, which sells the mod far better.
+* `image.png` - the store image. Required, must stay under 1MB. The same
+  screenshot the Nexus Mods page uses. Note that Nexus serves its copy as WebP
+  from a `.png` URL, so re-downloading it needs a convert step; Steam wants a
+  real PNG.
 * `previews/` - optional extra screenshots, same size limit. Steam keys them by
   filename and deletes any that disappear, so this directory is either mirrored
   whole or left alone.
@@ -40,8 +41,9 @@ The workspace the uploader actually reads is `C:\Users\Sean\sts2-workshop\RdpsMe
 
 ## Notes
 
-* `visibility` starts at `private`. Flip it to `public` once you have subscribed
-  to your own item and seen it load.
+* `visibility` is `null`, meaning updates leave it alone - set it on the Steam
+  page. Putting a value back here would override whatever you chose there on the
+  next upload.
 * Tags are left empty to be picked on the Steam page; `Tools & APIs` is reserved
   for mods that are tools or APIs.
 * `minBranch` / `maxBranch` exist for restricting the mod to a game branch, but

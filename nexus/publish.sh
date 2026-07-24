@@ -13,11 +13,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# The file on the mod page that new versions are attached to. Adding a version
-# to this id is what makes Nexus show an update to people who already have it;
-# uploading a fresh file instead would leave subscribers on the old one. Find it
-# under "API Info" on the mod page's Files tab.
-FILE_ID=6547
+GAME_DOMAIN=slaythespire2
+MOD_PAGE_ID=1385
+
+# Only a file whose name starts with this is ever uploaded to. The file id must
+# be resolved through the v3 API, NOT taken from the older v1 API: v1 file ids
+# are numbered per mod while v3 ids are global, so v1's id for this mod points
+# at a stranger's file in v3. Uploading there would have been a real mistake,
+# caught only because that account happened to refuse us.
+FILE_NAME_PREFIX=RdpsMeter
+
+API=https://api.nexusmods.com/v3
 ACTION="$HOME/.local/share/nexus-upload-action/index.js"
 KEY_FILE="$HOME/.config/nexus/api_key"
 
@@ -37,6 +43,33 @@ if [ -z "$API_KEY" ]; then
   echo "Keys come from https://www.nexusmods.com/settings/api-keys" >&2
   exit 1
 fi
+
+get() {
+  curl -sS -H "apikey: $API_KEY" -H "User-Agent: RdpsMeter-publish" "$API$1"
+}
+
+# The page id in the mod's URL is game-scoped; the file listing is keyed by the
+# mod's global id, so look that up first.
+MOD_UID=$(get "/games/$GAME_DOMAIN/mods/$MOD_PAGE_ID" | python3 -c "
+import json, sys
+print(json.load(sys.stdin)['data']['id'])
+")
+
+# Newest active file whose name is ours. Adding a version to an existing file is
+# what pushes an update to people who already have it; a brand new file would
+# leave them behind.
+read -r FILE_ID FILE_LABEL <<<"$(get "/mods/$MOD_UID/files" | python3 -c "
+import json, sys
+prefix = '$FILE_NAME_PREFIX'
+files = [f for f in json.load(sys.stdin)['data']['mod_files']
+         if f['is_active'] and f['name'].startswith(prefix)]
+if not files:
+    raise SystemExit(f'No active file on the mod page starts with {prefix!r}')
+newest = max(files, key=lambda f: f['last_file_uploaded_at'])
+print(newest['id'], newest['name'])
+")"
+
+echo "Mod $MOD_PAGE_ID ($MOD_UID) -> file $FILE_ID '$FILE_LABEL'"
 
 ZIP=$(../package.sh)
 VERSION=$(python3 -c "
@@ -65,4 +98,4 @@ INPUT_ARCHIVE_EXISTING_VERSION="true" \
 INPUT_PRIMARY_MOD_MANAGER_DOWNLOAD="true" \
   node "$ACTION"
 
-echo "Uploaded version $VERSION to https://www.nexusmods.com/slaythespire2/mods/1385"
+echo "Uploaded version $VERSION to https://www.nexusmods.com/$GAME_DOMAIN/mods/$MOD_PAGE_ID"
