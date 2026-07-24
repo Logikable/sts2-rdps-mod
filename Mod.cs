@@ -1,3 +1,4 @@
+using System.Reflection;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
@@ -32,7 +33,7 @@ public static class Mod
     {
         var harmony = new Harmony("com.rdpsmeter.sts2");
 
-        foreach (Type type in typeof(Mod).Assembly.GetTypes())
+        foreach (Type type in LoadableTypes(typeof(Mod).Assembly))
         {
             if (!Attribute.IsDefined(type, typeof(HarmonyPatch)))
             {
@@ -54,6 +55,24 @@ public static class Mod
             {
                 GD.PrintErr($"[RdpsMeter] Failed to apply patch '{type.Name}' - that feature will be disabled, but the rest of the mod will continue working: {ex}");
             }
+        }
+    }
+
+    /// <summary>
+    /// The assembly's types, minus any that fail to load. A dev-only helper built against a newer game version (its
+    /// base class changed abstract members, say) makes the plain GetTypes() throw ReflectionTypeLoadException, which
+    /// would take the whole mod down at startup before a single patch is applied. Dropping the unloadable types lets
+    /// the mod keep running on an older game build - the same isolate-failures stance ApplyPatches takes per patch.
+    /// </summary>
+    private static IEnumerable<Type> LoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(type => type != null)!;
         }
     }
 }
