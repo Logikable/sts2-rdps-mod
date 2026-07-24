@@ -27,14 +27,26 @@ namespace RdpsMeter.Patches;
 [HarmonyPatch]
 internal static class ConcoctAttributionPatches
 {
+    // Skip the whole class cleanly on a build without ConcoctPower; an empty TargetMethods() alone would log a
+    // spurious "undefined target method" error every launch.
+    private static bool Prepare()
+    {
+        return ConcoctPowerType() != null;
+    }
+
     private static IEnumerable<MethodBase> TargetMethods()
     {
-        System.Type? concoct = AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.Powers.ConcoctPower");
+        System.Type? concoct = ConcoctPowerType();
         MethodInfo? method = concoct == null ? null : AccessTools.Method(concoct, "AfterDamageGiven");
         if (method != null)
         {
             yield return method;
         }
+    }
+
+    private static System.Type? ConcoctPowerType()
+    {
+        return AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.Powers.ConcoctPower");
     }
 
     [HarmonyPrefix]
