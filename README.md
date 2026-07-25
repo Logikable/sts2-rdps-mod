@@ -19,6 +19,35 @@ Built against **Slay the Spire 2 v0.109.0** (beta branch).
   player move on the meter.
 - When several players contributed stacks to one debuff (e.g. Vulnerable),
   its contribution is split pro-rata by live stacks contributed.
+- Strength is credited to the card or potion that granted it (Coordinate,
+  Blaze, a thrown Flex Potion), since every source stacks into one shared
+  Strength pool and the pool's name alone would not say who did what. Other
+  effects are named after themselves — a Vulnerable share reads "Vulnerable"
+  whichever card applied it.
+
+## Languages
+
+The meter follows the language the game is set to. English and Simplified
+Chinese (简体中文) are translated; any other language falls back to English.
+Names the meter borrows from the game — cards, potions, relics, powers,
+enemies — are always shown in the game's own words, and the overlay uses the
+font your language needs, so non-Latin text renders properly.
+
+Translations are the JSON tables in `localization/`, one per language, named
+with the game's three-letter code (`eng`, `zhs`, `jpn`, `kor`, `fra`, ...).
+To add one, copy `eng.json`, translate the values (leave the keys and the
+`{0}`/`{1}` placeholders alone), and run `tools/check-localization.sh`. The
+tables are compiled into the DLL, so adding a language means rebuilding.
+
+Names taken from the game are recorded in the language they were seen in, so
+switching language mid-run leaves fights and buff sources already recorded
+under their old names; new ones use the new language.
+
+To try a translation without rebuilding — or to reword one you dislike — drop
+the same file in the game's user directory as
+`rdps_meter/localization/<code>.json` (on Windows,
+`%AppData%\SlayTheSpire2\rdps_meter\localization\`); it overrides the built-in
+table key by key.
 
 ## Building
 

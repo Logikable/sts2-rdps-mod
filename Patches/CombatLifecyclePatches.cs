@@ -68,7 +68,7 @@ internal static class CombatLifecyclePatches
         {
             // A fight name is never worth breaking combat start over; fall back to a generic label.
             GD.PrintErr($"[RdpsMeter] Could not name the fight: {ex}");
-            return "Combat";
+            return Loc.T("combat");
         }
     }
 

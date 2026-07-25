@@ -13,7 +13,7 @@ internal static class FightLabel
     {
         if (enemyNames == null || enemyNames.Count == 0)
         {
-            return "Combat";
+            return Loc.T("combat");
         }
 
         var distinct = new List<string>();
@@ -27,7 +27,7 @@ internal static class FightLabel
 
         if (distinct.Count == 0)
         {
-            return "Combat";
+            return Loc.T("combat");
         }
 
         if (distinct.Count == 1)
@@ -37,12 +37,14 @@ internal static class FightLabel
 
         if (distinct.Count == 2)
         {
-            return $"{LastWord(distinct[0])} & {LastWord(distinct[1])}";
+            return Loc.T("enemies.pair", LastWord(distinct[0]), LastWord(distinct[1]));
         }
 
-        return $"{LastWord(distinct[0])} +{distinct.Count - 1}";
+        return Loc.T("enemies.more", LastWord(distinct[0]), distinct.Count - 1);
     }
 
+    // Shortening a name to its creature noun only means anything for a language that writes names as words with
+    // spaces; one that does not (Chinese, Japanese) has no last word to take, and keeps the whole name.
     private static string LastWord(string name)
     {
         string[] parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -50,9 +52,15 @@ internal static class FightLabel
     }
 
     // Pluralize just the last word, so "Acid Slime" -> "Acid Slimes". Deliberately naive (append "s"): enemy names
-    // almost always pluralize that way, and an odd plural on a stat label is harmless.
+    // almost always pluralize that way, and an odd plural on a stat label is harmless. English-only - every other
+    // language either does not mark plurals this way or does not mark them at all, so their names are left alone.
     private static string Pluralize(string name)
     {
+        if (!Loc.IsEnglishText)
+        {
+            return name;
+        }
+
         int space = name.LastIndexOf(' ');
         string head = space >= 0 ? name[..(space + 1)] : string.Empty;
         string tail = space >= 0 ? name[(space + 1)..] : name;

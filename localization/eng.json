@@ -1,0 +1,17 @@
+{
+  "title": "rDPS",
+  "title.total": "rDPS: {0}",
+
+  "view.total": "Total",
+  "view.live": "Live",
+
+  "section.damage": "Damage Breakdown",
+  "section.given": "Given",
+  "section.received": "Received",
+  "empty": "No damage yet.",
+
+  "combat": "Combat",
+  "enemies.pair": "{0} & {1}",
+  "enemies.more": "{0} +{1}",
+  "source.unknown": "(none)"
+}
