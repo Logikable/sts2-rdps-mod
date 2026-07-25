@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
+using MegaCrit.Sts2.Core.Models.Potions;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.ValueProps;
 
@@ -209,17 +210,19 @@ internal static class SelfTest
         await Prep(dealer, enemy);
         ulong you = dealer.Player!.NetId;
 
-        await PowerCmd.Apply<CoordinatePower>(ctx, dealer, 3m, applier2, null);
+        // The card is passed as the source exactly as Coordinate's own OnPlay does, since that is what lets the
+        // credit be named after the card rather than the Strength pool it stacks into.
+        CardModel coordinate = ModelDb.Card<Coordinate>();
+        await PowerCmd.Apply<CoordinatePower>(ctx, dealer, 3m, applier2, coordinate);
         LogShares("Strength (granted by Coordinate)", dealer.GetPower<StrengthPower>());
         await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
-        // Credited under "Strength" rather than "Coordinate" - the inner StrengthPower is the power that actually
-        // modifies the hit, and it is the same one however the stacks were granted.
+        string name = coordinate.TitleLocString.GetFormattedText();
         CombatLedger l = CombatLedger.Current;
         return Report("Coordinate (teammate's ally-targeted Strength card)",
             Expect("aDPS", l.DealtWith(you, NoCard), 9m),
-            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
-            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 3m));
+            Expect("recv <-2", l.ReceivedFrom(you, name, 2uL), 3m),
+            Expect("given 2->you", l.GivenTo(2uL, name, you), 3m));
     }
 
     /// <summary>
@@ -233,15 +236,27 @@ internal static class SelfTest
         await Prep(dealer, enemy);
         ulong you = dealer.Player!.NetId;
 
-        await PowerCmd.Apply<FlexPotionPower>(ctx, dealer, 5m, applier2, null);
+        // A potion carries no card source, so its name reaches the ledger through the potion-being-resolved window
+        // that PotionModel.OnUseWrapper opens in real play; the harness opens the same window by hand.
+        string name = ModelDb.Potion<FlexPotion>().Title.GetFormattedText();
+        PotionSource.Begin(2uL, name);
+        try
+        {
+            await PowerCmd.Apply<FlexPotionPower>(ctx, dealer, 5m, applier2, null);
+        }
+        finally
+        {
+            PotionSource.End(2uL);
+        }
+
         LogShares("Strength (granted by Flex Potion)", dealer.GetPower<StrengthPower>());
         await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
         CombatLedger l = CombatLedger.Current;
         return Report("Flex Potion (thrown by a teammate)",
             Expect("aDPS", l.DealtWith(you, NoCard), 11m),
-            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 5m),
-            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 5m));
+            Expect("recv <-2", l.ReceivedFrom(you, name, 2uL), 5m),
+            Expect("given 2->you", l.GivenTo(2uL, name, you), 5m));
     }
 
     /// <summary>
@@ -255,16 +270,21 @@ internal static class SelfTest
         await Prep(dealer, enemy);
         ulong you = dealer.Player!.NetId;
 
+        CardModel coordinate = ModelDb.Card<Coordinate>();
         await PowerCmd.Apply<StrengthPower>(ctx, dealer, 3m, dealer, null);
-        await PowerCmd.Apply<CoordinatePower>(ctx, dealer, 2m, applier2, null);
+        await PowerCmd.Apply<CoordinatePower>(ctx, dealer, 2m, applier2, coordinate);
         LogShares("Strength (own 3 + teammate 2)", dealer.GetPower<StrengthPower>());
         await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
 
+        // The two shares of one Strength instance are credited separately: the teammate's under the card that granted
+        // it, the dealer's own not at all - it never leaves them.
+        string name = coordinate.TitleLocString.GetFormattedText();
         CombatLedger l = CombatLedger.Current;
         return Report("Strength split between the dealer and a teammate",
             Expect("aDPS", l.DealtWith(you, NoCard), 11m),
-            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 2m),
-            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 2m));
+            Expect("recv <-2", l.ReceivedFrom(you, name, 2uL), 2m),
+            Expect("given 2->you", l.GivenTo(2uL, name, you), 2m),
+            Expect("no self-credit", l.ReceivedFrom(you, "Strength", you), 0m));
     }
 
     /// <summary>

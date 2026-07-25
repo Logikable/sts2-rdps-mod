@@ -17,14 +17,17 @@ internal sealed class PowerOwnership
 {
     public static PowerOwnership Instance { get; } = new();
 
-    private readonly ConditionalWeakTable<PowerModel, Dictionary<ulong, decimal>> _contributions = new();
+    // Keyed by applier *and* by what granted the stacks, so a pooled power (Strength, which every source stacks into
+    // one instance) can still say which card or potion each teammate's share came from. Source is null wherever the
+    // power's own name already identifies the effect - the usual case - and those entries behave exactly as before.
+    private readonly ConditionalWeakTable<PowerModel, Dictionary<(ulong NetId, string? Source), decimal>> _contributions = new();
     private readonly object _lock = new();
 
     private PowerOwnership()
     {
     }
 
-    public void Record(PowerModel power, ulong applierNetId, decimal stacks)
+    public void Record(PowerModel power, ulong applierNetId, decimal stacks, string? source = null)
     {
         if (stacks <= 0m)
         {
@@ -33,8 +36,9 @@ internal sealed class PowerOwnership
 
         lock (_lock)
         {
-            Dictionary<ulong, decimal> byApplier = _contributions.GetOrCreateValue(power);
-            byApplier[applierNetId] = byApplier.GetValueOrDefault(applierNetId) + stacks;
+            Dictionary<(ulong, string?), decimal> byApplier = _contributions.GetOrCreateValue(power);
+            var key = (applierNetId, source);
+            byApplier[key] = byApplier.GetValueOrDefault(key) + stacks;
         }
     }
 
@@ -45,9 +49,21 @@ internal sealed class PowerOwnership
     /// </summary>
     public IReadOnlyDictionary<ulong, decimal>? Shares(PowerModel power)
     {
+        return SourcedShares(power)
+            ?.GroupBy(s => s.NetId)
+            .ToDictionary(g => g.Key, g => g.Sum(s => s.Fraction));
+    }
+
+    /// <summary>
+    /// The same shares, but split by what granted each one as well as by who: (applier, source, fraction), summing to
+    /// 1 across the whole list. A null source means the power's own name is the effect's name.
+    /// </summary>
+    public IReadOnlyList<(ulong NetId, string? Source, decimal Fraction)>? SourcedShares(PowerModel power)
+    {
         lock (_lock)
         {
-            if (!_contributions.TryGetValue(power, out Dictionary<ulong, decimal>? byApplier) || byApplier.Count == 0)
+            if (!_contributions.TryGetValue(power, out Dictionary<(ulong NetId, string? Source), decimal>? byApplier)
+                || byApplier.Count == 0)
             {
                 return null;
             }
@@ -58,7 +74,7 @@ internal sealed class PowerOwnership
                 return null;
             }
 
-            return byApplier.ToDictionary(kv => kv.Key, kv => kv.Value / total);
+            return byApplier.Select(kv => (kv.Key.NetId, kv.Key.Source, kv.Value / total)).ToList();
         }
     }
 }

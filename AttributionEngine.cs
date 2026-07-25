@@ -75,16 +75,17 @@ internal static class AttributionEngine
 
         // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
         // comes from PowerOwnership (per-player stack contributions), falling back to the single Applier the game
-        // records when the mod never saw the power applied.
-        var externalPowers = new List<(AbstractModel Mod, string Effect, IReadOnlyDictionary<ulong, decimal> Shares)>();
+        // records when the mod never saw the power applied. Each share carries the name to credit it under: the
+        // granting card or potion where that was recorded, and the power's own name otherwise.
+        var externalPowers = new List<(AbstractModel Mod, IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)> Shares)>();
         foreach (AbstractModel modifier in modifiers)
         {
             if (modifier is PowerModel power)
             {
-                IReadOnlyDictionary<ulong, decimal>? shares = OwnershipShares(power);
-                if (shares != null && shares.Keys.Any(netId => netId != dealerNetId))
+                IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)>? shares = NamedShares(power);
+                if (shares != null && shares.Any(s => s.NetId != dealerNetId))
                 {
-                    externalPowers.Add((modifier, EffectName(modifier), shares));
+                    externalPowers.Add((modifier, shares));
                 }
             }
         }
@@ -114,7 +115,7 @@ internal static class AttributionEngine
         // become credited contributions.
         var rawGainByPower = new Dictionary<AbstractModel, decimal>();
         decimal sumRawGains = 0m;
-        foreach ((AbstractModel mod, string _, IReadOnlyDictionary<ulong, decimal> _) in externalPowers)
+        foreach ((AbstractModel mod, IReadOnlyList<(ulong, string, decimal)> _) in externalPowers)
         {
             decimal gain = total - Recompute(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, Single(mod));
             rawGainByPower[mod] = gain;
@@ -124,10 +125,10 @@ internal static class AttributionEngine
         decimal factor = sumRawGains != 0m ? combinedExternalGain / sumRawGains : 0m;
         var creditByKey = new Dictionary<(ulong NetId, string Effect), decimal>();
         decimal attributedSum = 0m;
-        foreach ((AbstractModel mod, string effect, IReadOnlyDictionary<ulong, decimal> shares) in externalPowers)
+        foreach ((AbstractModel mod, IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)> shares) in externalPowers)
         {
             decimal conserved = rawGainByPower[mod] * factor;
-            foreach ((ulong netId, decimal fraction) in shares)
+            foreach ((ulong netId, string effect, decimal fraction) in shares)
             {
                 if (netId == dealerNetId)
                 {
@@ -274,6 +275,29 @@ internal static class AttributionEngine
         ulong? applier = power.Applier?.Player?.NetId;
         return applier.HasValue
             ? new Dictionary<ulong, decimal> { [applier.Value] = 1m }
+            : null;
+    }
+
+    /// <summary>
+    /// Ownership shares with the name to credit each one under. Most powers name themselves - a Vulnerable share is
+    /// "Vulnerable" whichever card applied it, which is what the player wants to read. A pooled power is the
+    /// exception: every source of Strength stacks into one instance, so "Strength" alone would merge a teammate's
+    /// Coordinate, their Blaze and their thrown Flex Potion into a single unattributable row. Where the granting card
+    /// or potion was recorded (see <see cref="Patches.PowerOwnershipPatches"/>), that name is used for the share
+    /// instead, so each shows separately.
+    /// </summary>
+    private static IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)>? NamedShares(PowerModel power)
+    {
+        IReadOnlyList<(ulong NetId, string? Source, decimal Fraction)>? tracked =
+            PowerOwnership.Instance.SourcedShares(power);
+        if (tracked != null)
+        {
+            return tracked.Select(s => (s.NetId, s.Source ?? EffectName(power), s.Fraction)).ToList();
+        }
+
+        ulong? applier = power.Applier?.Player?.NetId;
+        return applier.HasValue
+            ? new[] { (applier.Value, EffectName(power), 1m) }
             : null;
     }
 
