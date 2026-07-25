@@ -37,4 +37,11 @@
   <ItemGroup>
     <None Include="RdpsMeter.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- The binding verifier under tools/ is its own project; keep its sources and build output out of the mod, which
+       otherwise globs every .cs in the repo (including the verifier's generated files) into itself. -->
+  <ItemGroup>
+    <Compile Remove="tools/**/*.cs" />
+    <None Remove="tools/**/*" />
+  </ItemGroup>
 </Project>
