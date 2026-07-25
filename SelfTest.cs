@@ -91,6 +91,9 @@ internal static class SelfTest
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
+        all &= await CoordinateScenario(context, dealer, enemy, applier2);
+        all &= await FlexPotionScenario(context, dealer, enemy, applier2);
+        all &= await MixedStrengthScenario(context, dealer, enemy, applier2);
         all &= await PoisonScenario(context, dealer, enemy, applier2, applier3);
         all &= await PoisonAccelerantScenario(context, dealer, enemy, applier2);
         all &= await DemiseScenario(context, dealer, enemy, applier2);
@@ -173,6 +176,9 @@ internal static class SelfTest
     /// <summary>
     /// A teammate gifts the dealer +3 Strength. Strength only buffs its owner's own attacks, but the stacks were
     /// contributed by a teammate, so the +3 additive on the dealer's powered 6 (-> 9) is credited to the gifter.
+    ///
+    /// This is the shape Blaze takes (0.108.0's ally-targeted "give another player 5 Strength"): it applies a plain
+    /// StrengthPower to the ally with itself as applier, so it needs no handling of its own.
     /// </summary>
     private static async Task<bool> StrengthScenario(
         NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
@@ -188,6 +194,77 @@ internal static class SelfTest
             Expect("aDPS", l.DealtWith(you, NoCard), 9m),
             Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
             Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 3m));
+    }
+
+    /// <summary>
+    /// A teammate plays Coordinate on the dealer - the ally-targeted card that grants Strength. Coordinate's own
+    /// power modifies no damage: like every TemporaryStrengthPower it re-applies a real StrengthPower internally,
+    /// passing the applier through, and that inner power is what the damage funnel sees. This pins the two-step path,
+    /// which the direct StrengthScenario above does not cover: the credit must still land on the player who played
+    /// the card, not on the dealer who is merely holding the buff.
+    /// </summary>
+    private static async Task<bool> CoordinateScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<CoordinatePower>(ctx, dealer, 3m, applier2, null);
+        LogShares("Strength (granted by Coordinate)", dealer.GetPower<StrengthPower>());
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
+
+        // Credited under "Strength" rather than "Coordinate" - the inner StrengthPower is the power that actually
+        // modifies the hit, and it is the same one however the stacks were granted.
+        CombatLedger l = CombatLedger.Current;
+        return Report("Coordinate (teammate's ally-targeted Strength card)",
+            Expect("aDPS", l.DealtWith(you, NoCard), 9m),
+            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
+            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 3m));
+    }
+
+    /// <summary>
+    /// A teammate throws a Flex Potion onto the dealer. A thrown buff potion reaches the same two-step path as
+    /// Coordinate (FlexPotionPower is a TemporaryStrengthPower), but by a different route - the potion applies it
+    /// with the drinker as applier - so the damage the buff adds must be credited to whoever threw it.
+    /// </summary>
+    private static async Task<bool> FlexPotionScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<FlexPotionPower>(ctx, dealer, 5m, applier2, null);
+        LogShares("Strength (granted by Flex Potion)", dealer.GetPower<StrengthPower>());
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Flex Potion (thrown by a teammate)",
+            Expect("aDPS", l.DealtWith(you, NoCard), 11m),
+            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 5m),
+            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 5m));
+    }
+
+    /// <summary>
+    /// The dealer's own Strength and a teammate's Coordinate stack on one power instance. Only the teammate's share
+    /// may move on the meter - the dealer's own stacks are their own damage - so this pins the split that a shared
+    /// instance makes possible: 2 of the 5 additive belong to the teammate, 3 stay with the dealer.
+    /// </summary>
+    private static async Task<bool> MixedStrengthScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<StrengthPower>(ctx, dealer, 3m, dealer, null);
+        await PowerCmd.Apply<CoordinatePower>(ctx, dealer, 2m, applier2, null);
+        LogShares("Strength (own 3 + teammate 2)", dealer.GetPower<StrengthPower>());
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Strength split between the dealer and a teammate",
+            Expect("aDPS", l.DealtWith(you, NoCard), 11m),
+            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 2m),
+            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 2m));
     }
 
     /// <summary>
@@ -556,6 +633,19 @@ internal static class SelfTest
         if (enemy.GetPower<FlankingPower>() != null)
         {
             await PowerCmd.Remove<FlankingPower>(enemy);
+        }
+
+        // The temporary-strength powers are cleared too, not just the StrengthPower they grant: one left on the dealer
+        // would make the next scenario's application a merge onto it rather than a fresh apply, so that scenario would
+        // no longer be testing the path it names.
+        if (dealer.GetPower<CoordinatePower>() != null)
+        {
+            await PowerCmd.Remove<CoordinatePower>(dealer);
+        }
+
+        if (dealer.GetPower<FlexPotionPower>() != null)
+        {
+            await PowerCmd.Remove<FlexPotionPower>(dealer);
         }
 
         if (dealer.GetPower<StrengthPower>() != null)
