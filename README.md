@@ -20,6 +20,28 @@ Built against **Slay the Spire 2 v0.109.0** (beta branch).
 - When several players contributed stacks to one debuff (e.g. Vulnerable),
   its contribution is split pro-rata by live stacks contributed.
 
+## Languages
+
+The meter follows the language the game is set to. English and Simplified
+Chinese (简体中文) are translated; any other language falls back to English.
+Names the meter borrows from the game — cards, potions, relics, powers,
+enemies — are always shown in the game's own words, and the overlay uses the
+font your language needs, so non-Latin text renders properly.
+
+Translations are the JSON tables in `localization/`, one per language, named
+with the game's three-letter code (`eng`, `zhs`, `jpn`, `kor`, `fra`, ...).
+To add one, copy `eng.json`, translate the values (leave the keys and the
+`{0}`/`{1}` placeholders alone), and run `tools/check-localization.sh`. The
+tables are compiled into the DLL, so adding a language means rebuilding.
+
+To try a translation without rebuilding — or to reword one you dislike — drop
+the same file in the game's user directory as
+`rdps_meter/localization/<code>.json` (on Windows,
+`%AppData%\SlayTheSpire2\rdps_meter\localization\`); it overrides the built-in
+table key by key. Note that fight names are recorded in the language the fight
+was played in, so switching language mid-run leaves earlier fights named in the
+old one.
+
 ## Building
 
 The mod compiles against the game's own assembly, `sts2.dll`, which is

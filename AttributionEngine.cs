@@ -47,6 +47,12 @@ internal sealed class HitAttribution
 /// </summary>
 internal static class AttributionEngine
 {
+    /// <summary>
+    /// What a hit is filed under when nothing identifies where it came from. Stored in the ledger as-is - the saved
+    /// tally stays language-neutral - and translated on its way to the screen by <see cref="Loc.SourceName"/>.
+    /// </summary>
+    public const string UnknownSource = "(none)";
+
     public static HitAttribution Attribute(
         decimal baseAmount,
         ValueProp props,
@@ -65,7 +71,7 @@ internal static class AttributionEngine
         // reads "Fire Potion" or "Thorns" rather than the "(none)" a null card source would leave behind.
         string? cardName = cardSource?.TitleLocString.GetFormattedText();
         string? sourceName = dealerNetId is ulong id ? PotionSource.Current(id) ?? EffectSource.Current(id) : null;
-        string dealerCard = cardName ?? sourceName ?? "(none)";
+        string dealerCard = cardName ?? sourceName ?? UnknownSource;
 
         // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
         // comes from PowerOwnership (per-player stack contributions), falling back to the single Applier the game

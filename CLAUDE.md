@@ -29,6 +29,14 @@ Don't do only one — do all three, or say explicitly which is blocked and why.
    `.\ModUploader.exe upload -w RdpsMeter` from Windows
    `C:\Users\Sean\sts2-workshop` (I can't run the Windows uploader).
 
+## Text on screen
+
+Every string the meter shows goes through `Loc.T` and lives in
+`localization/<lang>.json` (compiled into the dll as embedded resources) — never
+inline in the UI code. Chinese (`zhs`) is the language that matters most after
+English. Run `tools/check-localization.sh` after touching a table. Any new
+`Label` needs `Loc.ApplyFont(label, "font")`, or non-Latin text draws as boxes.
+
 ## Building
 
 Set `DOTNET_ROOT=$HOME/.dotnet`, `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`, and

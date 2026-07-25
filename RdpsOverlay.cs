@@ -94,6 +94,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
     private int _generation = -1;
 
+    // The translation revision the drawn text belongs to; a change means the player switched language, so every label
+    // must be redrawn in the new one (and given that language's font).
+    private int _locale = -1;
+
     // Menu item ids: the combat's index for each fight, and two out-of-range ids for the fixed views. These must be
     // non-negative: PopupMenu.AddItem reassigns any negative id to the item's own index, which would collide the fixed
     // views with the first fights (Total onto fight 0, Live onto fight 1) and send every pick to the wrong view.
@@ -137,7 +141,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         _title = new Label
         {
-            Text = "rDPS",
+            Text = Loc.T("title"),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore,
@@ -152,7 +156,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // menu is rebuilt each time it opens, so it always lists the fights seen so far.
         _menu = new MenuButton
         {
-            Text = "Live",
+            Text = Loc.T("view.live"),
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
             ClipText = true,
@@ -176,6 +180,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         popup.AddThemeStyleboxOverride("panel", WindowStyle(contentMargin: true));
         popup.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
         popup.AddThemeColorOverride("font_hover_color", Colors.White);
+        ApplyLocaleFonts();
         popup.AboutToPopup += RebuildMenu;
         popup.IdPressed += OnViewPicked;
         _header.AddChild(_menu);
@@ -239,6 +244,25 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             _bodySignature = null;
         }
 
+        // A language switch leaves every drawn label in the old language - the cached signatures only track the
+        // numbers, so nothing would otherwise redraw. Drop them and the rows so the next pass rebuilds the text, and
+        // re-font the header, which is built once and lives across the change.
+        int locale = Loc.Revision;
+        if (locale != _locale)
+        {
+            _locale = locale;
+            ApplyLocaleFonts();
+            foreach (Row row in _rows.Values)
+            {
+                _list.RemoveChild(row.Container);
+                row.Container.QueueFree();
+            }
+
+            _rows.Clear();
+            _bodySignature = null;
+            _tooltipSignature = null;
+        }
+
         bool inCombat = CombatManager.Instance is { IsInProgress: true };
 
         // Capture every live player's class colour, icon and name while combat is running, so their rows keep the
@@ -298,7 +322,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        _title.Text = "rDPS";
+        _title.Text = Loc.T("title");
 
         decimal max = 1m;
         decimal team = 0m;
@@ -343,7 +367,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         switch (_viewKind)
         {
             case ViewKind.Total:
-                _menu.Text = "Total";
+                _menu.Text = Loc.T("view.total");
                 return RunLedger.TotalSnapshot();
             case ViewKind.Combat when _viewKey is string key && RunLedger.HasCombat(key):
                 _menu.Text = CaptionFor(key);
@@ -351,7 +375,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             default:
                 _viewKind = ViewKind.Current;
                 _viewKey = null;
-                _menu.Text = "Live";
+                _menu.Text = Loc.T("view.live");
                 return RunLedger.CurrentSnapshot();
         }
     }
@@ -361,13 +385,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     {
         PopupMenu popup = _menu.GetPopup();
         popup.Clear();
-        popup.AddItem("Total", IdTotal);
-        popup.AddItem("Live", IdCurrent);
+        popup.AddItem(Loc.T("view.total"), IdTotal);
+        popup.AddItem(Loc.T("view.live"), IdCurrent);
 
         IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
         for (int i = 0; i < fights.Count; i++)
         {
-            string name = string.IsNullOrEmpty(fights[i].Label) ? $"Fight {i + 1}" : $"Fight {i + 1}: {fights[i].Label}";
+            string name = string.IsNullOrEmpty(fights[i].Label)
+                ? Loc.T("fight", i + 1)
+                : Loc.T("fight.named", i + 1, fights[i].Label);
             popup.AddItem(name, i);
         }
     }
@@ -403,11 +429,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         {
             if (fights[i].Key == key)
             {
-                return string.IsNullOrEmpty(fights[i].Label) ? $"Fight {i + 1}" : fights[i].Label;
+                return string.IsNullOrEmpty(fights[i].Label) ? Loc.T("fight", i + 1) : fights[i].Label;
             }
         }
 
-        return "Live";
+        return Loc.T("view.live");
     }
 
     // The solo body: the lone player's breakdown drawn straight into the panel, with their rDPS in the header (the row
@@ -426,7 +452,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         RdpsRow? row = netId is ulong id ? _snapshot.GetValueOrDefault(id) : null;
-        _title.Text = row == null ? "rDPS" : $"rDPS: {Round(row.Rdps)}";
+        _title.Text = row == null ? Loc.T("title") : Loc.T("title.total", Round(row.Rdps));
 
         string signature = netId is ulong key ? Signature(key, row) : "empty";
         if (signature == _bodySignature)
@@ -488,13 +514,13 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         if (row == null)
         {
-            list.AddChild(SectionHeader("No damage yet."));
+            list.AddChild(SectionHeader(Loc.T("empty")));
             return;
         }
 
         AddDamageSection(list, row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color, damageHeader);
-        AddEffectSection(list, "Given", Combine(row.GivenBy), "+", color);
-        AddEffectSection(list, "Received", Combine(row.ReceivedBy), "-", color);
+        AddEffectSection(list, Loc.T("section.given"), Combine(row.GivenBy), "+", color);
+        AddEffectSection(list, Loc.T("section.received"), Combine(row.ReceivedBy), "-", color);
     }
 
     private static void AddDamageSection(
@@ -509,12 +535,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         decimal total = items.Sum(i => i.Amount);
         if (header)
         {
-            list.AddChild(SectionHeader("Damage Breakdown"));
+            list.AddChild(SectionHeader(Loc.T("section.damage")));
         }
 
         foreach ((string card, decimal amount, decimal buff) in items)
         {
-            list.AddChild(BarRow(card, Round(amount).ToString(), Percent(amount, total), SplitBackground(amount - buff, amount, max, color)));
+            list.AddChild(BarRow(Loc.SourceName(card), Round(amount).ToString(), Percent(amount, total), SplitBackground(amount - buff, amount, max, color)));
         }
     }
 
@@ -543,7 +569,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         list.AddChild(SectionHeader(title));
         foreach ((string effect, decimal amount) in items)
         {
-            list.AddChild(BarRow(effect, sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
+            list.AddChild(BarRow(Loc.PowerName(effect), sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
         }
     }
 
@@ -673,7 +699,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         label.AddThemeColorOverride("font_color", Colors.White);
         label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.85f));
         label.AddThemeConstantOverride("outline_size", 4);
+        Loc.ApplyFont(label, "font");
         return label;
+    }
+
+    // The header's own controls, which are built once in _Ready and outlive a language change - unlike the rows and
+    // breakdown, which are rebuilt from scratch and pick their font up as they are made.
+    private void ApplyLocaleFonts()
+    {
+        Loc.ApplyFont(_title, "font");
+        Loc.ApplyFont(_menu, "font");
+        Loc.ApplyFont(_menu.GetPopup(), "font");
     }
 
     // The header's Live/Total button: a faint rounded chip that brightens on hover and press.
@@ -809,6 +845,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         };
         label.AddThemeFontSizeOverride("font_size", 16);
         label.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        Loc.ApplyFont(label, "font");
         strip.AddChild(label);
         label.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
         return strip;

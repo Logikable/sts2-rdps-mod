@@ -1,0 +1,19 @@
+{
+  "title": "rDPS",
+  "title.total": "rDPS：{0}",
+
+  "view.total": "总计",
+  "view.live": "实时",
+  "fight": "第{0}场战斗",
+  "fight.named": "第{0}场战斗：{1}",
+
+  "section.damage": "伤害明细",
+  "section.given": "给予增益",
+  "section.received": "受到增益",
+  "empty": "暂无伤害",
+
+  "combat": "战斗",
+  "enemies.pair": "{0}与{1}",
+  "enemies.more": "{0} +{1}",
+  "source.unknown": "（无）"
+}

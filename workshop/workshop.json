@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": "Like ACT from FFXIV, or Details from WoW.\nIn multiplayer, this tells you how much damage you're doing, plus how much damage you're contributing to other players, minus how much damage they're contributing to you.\nIn singleplayer, this tells you which cards/relics/potions your damage is coming from.\n\nWorks with Poison, Doom, and most powers. Tracks damage from potions, relics.\n\n[b]Please leave feedback![/b] This is a new mod and I'm actively working on it.\n\nAlso on Nexus Mods: https://www.nexusmods.com/slaythespire2/mods/1385",
   "visibility": null,
-  "changeNote": "0.1.12 - now also works on game version 0.107.1, not just 0.109.0; Defect orb damage (Lightning, Dark, Glass) is now tracked and named instead of showing as \"(none)\"; fixed the fight picker so Total and Live no longer jump to the wrong fight.",
+  "changeNote": "0.1.13 - the meter now follows the game's language: Simplified Chinese (简体中文) is fully translated, and every language now gets the font it needs, so card, enemy and power names no longer draw as empty boxes. Other languages fall back to English; translations are welcome on GitHub.",
   "tags": [],
   "dependencies": [],
   "contentDescriptors": []
