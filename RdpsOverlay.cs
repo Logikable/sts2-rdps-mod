@@ -94,9 +94,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
     private int _generation = -1;
 
-    // Menu item ids: negatives for the two fixed views, the combat's index for each fight.
-    private const int IdTotal = -1;
-    private const int IdCurrent = -2;
+    // Menu item ids: the combat's index for each fight, and two out-of-range ids for the fixed views. These must be
+    // non-negative: PopupMenu.AddItem reassigns any negative id to the item's own index, which would collide the fixed
+    // views with the first fights (Total onto fight 0, Live onto fight 1) and send every pick to the wrong view.
+    private const int IdTotal = int.MaxValue;
+    private const int IdCurrent = int.MaxValue - 1;
 
     public override void _Ready()
     {
