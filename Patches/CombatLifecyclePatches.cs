@@ -23,11 +23,13 @@ internal static class CombatLifecyclePatches
         // named after the enemies it starts with (toughest first, so a mix reads by its most notable enemy).
         RunLedger.BeginCombat(RunContext.CombatKey, StartingFightLabel());
 
+#if RDPS_HARNESS
         // The F9 self-test drives live combat with fake players; only arm it for developer builds, never for players.
         if (DevMode.Enabled)
         {
             SelfTest.Install();
         }
+#endif
     }
 
     [HarmonyPatch(nameof(CombatManager.EndCombatInternal))]

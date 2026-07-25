@@ -13,14 +13,15 @@ public static class Mod
         ApplyPatches();
         GD.Print("[RdpsMeter] Initialized");
 
+#if RDPS_HARNESS
+        // Only a harness build carries the auto-run self-test; the marker decides whether this launch runs it.
         if (DevMode.Enabled)
         {
             AutoHarness.Install();
+            return;
         }
-        else
-        {
-            RdpsOverlay.Install();
-        }
+#endif
+        RdpsOverlay.Install();
     }
 
     /// <summary>

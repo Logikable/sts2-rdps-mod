@@ -1,3 +1,7 @@
+// Developer-only self-test harness - compiled in only under -p:Harness=true (see RdpsMeter.csproj). It must never
+// ship: NoOpChoiceContext below subclasses PlayerChoiceContext, whose abstract members differ between game versions,
+// so a shipped copy would fail to load on any version it wasn't built against and take the whole mod down with it.
+#if RDPS_HARNESS
 using Godot;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Combat;
@@ -665,3 +669,4 @@ internal sealed class NoOpChoiceContext : PlayerChoiceContext
         return Task.CompletedTask;
     }
 }
+#endif

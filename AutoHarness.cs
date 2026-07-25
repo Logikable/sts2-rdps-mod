@@ -1,3 +1,6 @@
+// Developer-only auto-run harness - compiled in only under -p:Harness=true (see RdpsMeter.csproj). Drives SelfTest
+// headlessly; must never ship (see SelfTest.cs for why the harness cannot be in a released build).
+#if RDPS_HARNESS
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Assets;
@@ -109,3 +112,4 @@ internal sealed partial class AutoHarnessNode : Node
         _ = TaskHelper.RunSafely(AutoHarness.RunAsync());
     }
 }
+#endif

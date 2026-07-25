@@ -9,6 +9,15 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <!-- The self-test harness (SelfTest, AutoHarness, and their NoOpChoiceContext) is developer-only and must NOT ship.
+       NoOpChoiceContext subclasses a game type whose abstract surface changes between game versions, so a shipped copy
+       fails to load on any version it wasn't built against - and because the game's own mod loader reflects over the
+       whole assembly to find the entry point, one unloadable type takes the entire mod down before it initializes.
+       Build with -p:Harness=true to compile the harness in for headless self-testing; release builds leave it out. -->
+  <PropertyGroup Condition="'$(Harness)' == 'true'">
+    <DefineConstants>$(DefineConstants);RDPS_HARNESS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- Shipped by the game itself at runtime - reference only, do not copy to our output. -->
     <Reference Include="sts2">
