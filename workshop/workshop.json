@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": "Like ACT from FFXIV, or Details from WoW.\nIn multiplayer, this tells you how much damage you're doing, plus how much damage you're contributing to other players, minus how much damage they're contributing to you.\nIn singleplayer, this tells you which cards/relics/potions your damage is coming from.\n\nWorks with Poison, Doom, and most powers. Tracks damage from potions, relics.\n\n[b]Please leave feedback![/b] This is a new mod and I'm actively working on it.\n\nAlso on Nexus Mods: https://www.nexusmods.com/slaythespire2/mods/1385",
   "visibility": null,
-  "changeNote": "0.1.10 - fights are now named the way the game names them; solo runs show the damage breakdown without hovering; each run's breakdown is saved separately, so paused runs keep their numbers.",
+  "changeNote": "0.1.11 - now also works on game version 0.107.1, not just 0.109.0.",
   "tags": [],
   "dependencies": [],
   "contentDescriptors": []
