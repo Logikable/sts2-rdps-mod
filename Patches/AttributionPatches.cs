@@ -36,9 +36,16 @@ internal static class AttributionPatches
     private static readonly Dictionary<Creature, Queue<HitAttribution>> Pending = new();
     private static readonly object PendingLock = new();
 
-    // Resolved once from Hook.ModifyDamage's own parameters: the index of its cardPlay argument, or -1 on a build
-    // that has none. -2 means "not yet resolved".
-    private static int _cardPlayArgIndex = -2;
+    // cardPlay for the ModifyDamage call in flight, captured by CardPlayCapturePatch just before this postfix on the
+    // builds whose Hook.ModifyDamage carries one. ModifyDamage is synchronous and not re-entered here, so a single
+    // slot per thread pairs the capture with this read; null on a build that has no cardPlay parameter.
+    [ThreadStatic]
+    private static CardPlay? _cardPlay;
+
+    internal static void CaptureCardPlay(CardPlay? cardPlay)
+    {
+        _cardPlay = cardPlay;
+    }
 
     [HarmonyPatch(nameof(Hook.ModifyDamage))]
     [HarmonyPostfix]
@@ -51,19 +58,14 @@ internal static class AttributionPatches
         ModifyDamageHookType modifyDamageHookType,
         CardPreviewMode previewMode,
         IEnumerable<AbstractModel> modifiers,
-        decimal __result,
-        object[] __args,
-        MethodBase __originalMethod)
+        decimal __result)
     {
         if (previewMode != CardPreviewMode.None || modifyDamageHookType != ModifyDamageHookType.All)
         {
             return;
         }
 
-        // cardPlay is read from the raw argument array rather than declared as a parameter: a build whose
-        // Hook.ModifyDamage has no cardPlay would refuse to bind a patch that declares one, disabling attribution
-        // wholesale. When absent, recompute runs without it - that build's damage pipeline takes no cardPlay either.
-        CardPlay? cardPlay = CardPlayArg(__originalMethod, __args);
+        CardPlay? cardPlay = _cardPlay;
 
         if (CombatManager.Instance is not { IsInProgress: true })
         {
@@ -92,17 +94,6 @@ internal static class AttributionPatches
         }
 
         Calcs.AddOrUpdate(modifiers, attribution);
-    }
-
-    private static CardPlay? CardPlayArg(MethodBase original, object[] args)
-    {
-        if (_cardPlayArgIndex == -2)
-        {
-            ParameterInfo[] parameters = original.GetParameters();
-            _cardPlayArgIndex = Array.FindIndex(parameters, p => p.Name == "cardPlay" && p.ParameterType == typeof(CardPlay));
-        }
-
-        return _cardPlayArgIndex >= 0 ? args[_cardPlayArgIndex] as CardPlay : null;
     }
 
     [HarmonyPatch(nameof(Hook.AfterModifyingDamageAmount))]
@@ -198,5 +189,28 @@ internal static class AttributionPatches
         EffectSource.Clear();
         ExecutingEffect.Clear();
         ConcoctAttribution.Clear();
+    }
+}
+
+/// <summary>
+/// Captures Hook.ModifyDamage's cardPlay argument for <see cref="AttributionPatches"/>'s postfix, on the game builds
+/// that have one. It is a separate, Prepare-gated class so the main attribution postfix never has to declare cardPlay:
+/// a declared parameter Harmony can't find would refuse to bind that postfix and disable attribution wholesale, and
+/// pulling cardPlay out of the raw argument array instead corrupts ModifyDamage's out modifiers parameter on write-back.
+/// A plain prefix that only runs where the parameter exists sidesteps both.
+/// </summary>
+[HarmonyPatch(typeof(Hook), nameof(Hook.ModifyDamage))]
+internal static class CardPlayCapturePatch
+{
+    private static bool Prepare()
+    {
+        MethodInfo? modifyDamage = AccessTools.Method(typeof(Hook), nameof(Hook.ModifyDamage));
+        return modifyDamage != null && modifyDamage.GetParameters().Any(p => p.Name == "cardPlay");
+    }
+
+    [HarmonyPrefix]
+    private static void Prefix(CardPlay? cardPlay)
+    {
+        AttributionPatches.CaptureCardPlay(cardPlay);
     }
 }
