@@ -380,7 +380,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
     }
 
-    // Rebuilt each time the menu opens so it lists whatever fights the run has reached: Total, Live, then Fight N: name.
+    // Rebuilt each time the menu opens so it lists whatever fights the run has reached: Total, Live, then each fight by
+    // name, in the order they were fought.
     private void RebuildMenu()
     {
         PopupMenu popup = _menu.GetPopup();
@@ -391,10 +392,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
         for (int i = 0; i < fights.Count; i++)
         {
-            string name = string.IsNullOrEmpty(fights[i].Label)
-                ? Loc.T("fight", i + 1)
-                : Loc.T("fight.named", i + 1, fights[i].Label);
-            popup.AddItem(name, i);
+            popup.AddItem(FightName(fights[i]), i);
         }
     }
 
@@ -421,7 +419,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
     }
 
-    // The chip caption for a picked fight: its short label, or "Fight N" when the label is missing (an older save).
+    // A fight goes by its own name, in both the menu and the chip - the name is what anyone recognizes a fight by, so
+    // numbering it as well would only be noise. A fight with no name at all (a tally saved before the meter named
+    // them) falls back to a generic one.
+    private static string FightName(CombatInfo fight)
+    {
+        return string.IsNullOrEmpty(fight.Label) ? Loc.T("combat") : fight.Label;
+    }
+
+    // The chip caption for the picked fight.
     private static string CaptionFor(string key)
     {
         IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
@@ -429,7 +435,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         {
             if (fights[i].Key == key)
             {
-                return string.IsNullOrEmpty(fights[i].Label) ? Loc.T("fight", i + 1) : fights[i].Label;
+                return FightName(fights[i]);
             }
         }
 

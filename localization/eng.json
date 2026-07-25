@@ -4,8 +4,6 @@
 
   "view.total": "Total",
   "view.live": "Live",
-  "fight": "Fight {0}",
-  "fight.named": "Fight {0}: {1}",
 
   "section.damage": "Damage Breakdown",
   "section.given": "Given",

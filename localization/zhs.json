@@ -4,8 +4,6 @@
 
   "view.total": "总计",
   "view.live": "实时",
-  "fight": "第{0}场战斗",
-  "fight.named": "第{0}场战斗：{1}",
 
   "section.damage": "伤害明细",
   "section.given": "给予增益",
