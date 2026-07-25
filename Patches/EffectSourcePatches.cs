@@ -62,11 +62,14 @@ internal static class EffectSourcePatches
         }
 
         // Prefer the game's own executing-model stack; fall back to our supplemental stack for the end-of-turn AoE
-        // powers the game does not push (Hailstorm, The Bomb).
+        // powers the game does not push (Hailstorm, The Bomb). A Defect orb dealing damage - Lightning and Glass on
+        // passive and evoke, Dark on evoke - is pushed onto the stack by OrbCmd, so it is named the same way (Frost
+        // and Plasma deal no damage, so never reach here).
         string? name = choiceContext.LastInvolvedModel switch
         {
             PowerModel power => power.Title.GetFormattedText(),
             RelicModel relic => relic.Title.GetFormattedText(),
+            OrbModel orb => orb.Title.GetFormattedText(),
             _ => ExecutingEffect.Current(player.NetId),
         };
         EffectSource.Set(player.NetId, name);
