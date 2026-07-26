@@ -44,3 +44,20 @@ put `~/.dotnet` on PATH (`deploy.sh` / `package.sh` bake these in). Ship builds
 are plain `-c Release` (harness compiled out); `-p:Harness=true` enables the
 dev harness. Cross-version: run the binding verifier under `tools/` against each
 captured `sts2.dll` before shipping.
+
+## Checking a new game version
+
+When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three
+checks answer "does the mod still work": rebuild against it (catches changed
+signatures the mod calls directly), run the binding verifier (catches renamed
+Harmony targets), and diff full decompiles of the old and new assemblies —
+
+```
+ilspycmd -p -o out-<ver> -r lib lib/sts2-<ver>.dll   # ~40s for a 9 MB assembly
+diff -rq out-<old> out-<new>
+```
+
+— which is the only one that catches *behavioural* changes, like the new
+multiplayer card 0.108.0 added. A patch release often touches only the `.pck`,
+leaving the managed assembly identical apart from the commit hash in
+`AssemblyInfo.cs`; that diff says so in seconds and no rebuild is needed.
