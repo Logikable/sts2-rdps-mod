@@ -7,7 +7,8 @@ A draggable in-combat overlay shows each player's rDPS and share of the team's
 damage with an instant hover breakdown; it persists between fights and toggles
 between the current combat and the running session total.
 
-Built against **Slay the Spire 2 v0.109.0** (beta branch).
+Built against **Slay the Spire 2 v0.109.1** (beta branch). v0.109.0 ships a
+code-identical assembly, so one build covers both.
 
 ## Attribution model
 
