@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.14 - damage counting fix: a hit into an enemy's block used to be recorded as nothing at all, so fights against blocking enemies under-reported everyone, and the teammate buff share on those swings vanished with them. Block now counts as damage dealt. Overkill - the excess past a killing blow - no longer counts, since the target was never there to take it. The meter now opens on the run total rather than the live combat; the picker still switches to the current fight or any earlier one. The window also holds one fixed width instead of changing with what it is showing, and text too long for its column is trimmed rather than stretching the window. Checked against game v0.109.1.",
+  "changeNote": "0.1.15 - the meter stays on screen once a run has recorded anything: ending a fight, walking into a shop or quitting to the menu no longer takes it away, so the numbers can still be read after the match. On launch it comes back up showing the run you were last playing, rather than sitting blank until the next fight. On the run history page it now follows the map point you are looking at and shows that fight's damage; a fight it has no record of - an older run, or one from before the mod was installed - shows an empty window under that fight's name rather than another run's numbers. Checked against game v0.109.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
