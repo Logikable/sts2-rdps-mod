@@ -45,6 +45,18 @@ are plain `-c Release` (harness compiled out); `-p:Harness=true` enables the
 dev harness. Cross-version: run the binding verifier under `tools/` against each
 captured `sts2.dll` before shipping.
 
+## Overlay width
+
+Both windows are one fixed width (`Width` in `RdpsOverlay.cs`). Text too long
+for its space is cut short — never widen the window to fit content.
+
+The width comes **only** from the panel's `CustomMinimumSize`. Row content
+cannot influence it: each row is a plain `Control` whose children are anchored
+`FullRect`, and a plain `Control`'s minimum size is just its
+`CustomMinimumSize` — anchored children contribute nothing. So a long name or a
+big number can overflow its column, but it can never reflow the window. Any
+width change is therefore something assigning `CustomMinimumSize`, not content.
+
 ## Damage accounting
 
 The game's `DamageResult` splits a swing into three **disjoint** parts:

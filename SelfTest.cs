@@ -95,6 +95,7 @@ internal static class SelfTest
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await OverkillScenario(context, dealer, enemy);
+        all &= await OverlayWidthScenario(dealer, enemy);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
         all &= await FlexPotionScenario(context, dealer, enemy, applier2);
         all &= await MixedStrengthScenario(context, dealer, enemy, applier2);
@@ -275,17 +276,62 @@ internal static class SelfTest
     }
 
     /// <summary>An unbuffed swing by <paramref name="you"/> for <paramref name="total"/>, with no teammate share.</summary>
-    private static HitAttribution Swing(Creature enemy, ulong you, decimal total)
+    private static HitAttribution Swing(Creature enemy, ulong you, decimal total, string card = NoCard)
     {
         return new HitAttribution
         {
             Target = enemy,
             Total = total,
             DealerNetId = you,
-            DealerCard = NoCard,
+            DealerCard = card,
             DealerPreBlock = total,
             Externals = Array.Empty<ExternalContribution>(),
         };
+    }
+
+    /// <summary>
+    /// The window holds one width whatever it is showing. The expected width is written out here rather than read back
+    /// from the overlay's own constant, so that changing the constant fails this instead of moving both together.
+    ///
+    /// Note what this can and cannot see: the harness plays solo, so it exercises the breakdown layout only. The
+    /// party-table layout the other players get is not reachable from here.
+    /// </summary>
+    private static async Task<bool> OverlayWidthScenario(Creature dealer, Creature enemy)
+    {
+        const decimal expected = 320m;
+
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Overlay width is fixed': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        await Prep(dealer, enemy);
+        await Settle();
+        decimal empty = (decimal)overlay.HarnessPanelWidth;
+
+        CombatLedger.Current.ApplyHit(
+            Swing(enemy, dealer.Player!.NetId, 999999m, "A card name far longer than the row could ever show"),
+            new DamageResult(enemy, DamageProps.card) { UnblockedDamage = 999999 });
+        await Settle();
+        decimal stretched = (decimal)overlay.HarnessPanelWidth;
+
+        return Report("Overlay width is fixed",
+            Expect("empty width", empty, expected),
+            Expect("width with oversized content", stretched, expected));
+    }
+
+    /// <summary>Waits for the overlay to redraw and its containers to re-sort, which Godot defers by a frame.</summary>
+    private static async Task Settle()
+    {
+        if (Engine.GetMainLoop() is SceneTree tree)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                await tree.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
+            }
+        }
     }
 
     /// <summary>

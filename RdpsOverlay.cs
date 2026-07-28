@@ -43,10 +43,15 @@ internal static class RdpsOverlay
 
 internal sealed partial class RdpsOverlayNode : CanvasLayer
 {
-    // Fixed widths so neither window reflows as names or numbers change; only the row count drives height. The
-    // breakdown is the wider of the two, whether it is the hover window or (solo) the panel's own body.
-    private const float Width = 300f;
-    private const float BreakdownWidth = 320f;
+    // One fixed width for both windows, so nothing reflows as names or numbers change and the hover breakdown lines up
+    // with the panel it came from; only the row count drives height. Anything too long for its column is cut short
+    // rather than allowed to widen the window, so every label in a row must either reserve a column or clip.
+    private const float Width = 320f;
+
+    // Reserved columns for the two right-hand numbers. Generous enough that realistic tallies never reach the trim,
+    // since the name beside them is the cheaper thing to shorten.
+    private const float ValueColumn = 56f;
+    private const float PercentColumn = 44f;
 
     private sealed class Row
     {
@@ -212,7 +217,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // shown only while a row is hovered.
         _tooltip = new PanelContainer
         {
-            CustomMinimumSize = new Vector2(BreakdownWidth, 0f),
+            CustomMinimumSize = new Vector2(Width, 0f),
             MouseFilter = Control.MouseFilterEnum.Ignore,
             Visible = false,
         };
@@ -315,7 +320,6 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
         // way. The panel becomes the breakdown itself, with the rDPS total moved up into the header.
         bool solo = RunContext.IsSingleplayer && ordered.Count <= 1;
-        _panel.CustomMinimumSize = new Vector2(solo ? BreakdownWidth : Width, 0f);
         if (solo)
         {
             RenderBreakdownBody(ordered.Count > 0 ? ordered[0] : null);
@@ -386,6 +390,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// Harness-only: a shipped build has no reason to expose the picker's internals.
     /// </summary>
     internal string HarnessPickerCaption => _menu.Text;
+
+    /// <summary>The panel's laid-out width, so the self-test can check that content never reflows it.</summary>
+    internal float HarnessPanelWidth => _panel.Size.X;
 
     /// <summary>The overlay living in the scene tree, or null if it has not been installed yet.</summary>
     internal static RdpsOverlayNode? HarnessInstance =>
@@ -674,14 +681,19 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         Label name = OverlayLabel(visual.Name);
         name.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         name.ClipText = true;
+        name.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 
+        // The numbers clip too. Their reserved column is wide enough that they realistically never do, but without it
+        // a long tally would set the row's minimum width and drag the whole window wider as the fight went on.
         Label rdps = OverlayLabel(string.Empty);
-        rdps.CustomMinimumSize = new Vector2(48f, 0f);
+        rdps.CustomMinimumSize = new Vector2(ValueColumn, 0f);
         rdps.HorizontalAlignment = HorizontalAlignment.Right;
+        rdps.ClipText = true;
 
         Label percent = OverlayLabel(string.Empty);
-        percent.CustomMinimumSize = new Vector2(40f, 0f);
+        percent.CustomMinimumSize = new Vector2(PercentColumn, 0f);
         percent.HorizontalAlignment = HorizontalAlignment.Right;
+        percent.ClipText = true;
         percent.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.7f));
 
         var line = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -788,14 +800,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         Label text = OverlayLabel(label);
         text.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         text.ClipText = true;
+        text.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 
         Label value = OverlayLabel(valueText);
-        value.CustomMinimumSize = new Vector2(48f, 0f);
+        value.CustomMinimumSize = new Vector2(ValueColumn, 0f);
         value.HorizontalAlignment = HorizontalAlignment.Right;
+        value.ClipText = true;
 
         Label percent = OverlayLabel(percentText);
-        percent.CustomMinimumSize = new Vector2(40f, 0f);
+        percent.CustomMinimumSize = new Vector2(PercentColumn, 0f);
         percent.HorizontalAlignment = HorizontalAlignment.Right;
+        percent.ClipText = true;
         percent.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.7f));
 
         var line = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
