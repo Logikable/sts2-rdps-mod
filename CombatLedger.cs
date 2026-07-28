@@ -94,12 +94,15 @@ internal sealed class CombatLedger
     }
 
     /// <summary>
-    /// Folds one settled hit into the tallies. Damage the target's block absorbed counts as damage dealt, the same as
-    /// damage that reached its HP: the swing landed and the block it chewed through is work done, so a hit into a
-    /// blocking enemy reads on the meter instead of vanishing. Dealt is therefore the whole swing - HP lost, overkill
-    /// past a killing blow, and the part block ate - which is what the attribution was decomposed from, so the
-    /// pre-block shares carry over unscaled. Each teammate contribution is booked as received (on the dealer) and
-    /// given (on the applier). Monster-dealt hits still contribute nothing.
+    /// Folds one settled hit into the tallies. Dealt is what the swing actually did to the target: the HP it took plus
+    /// the block it chewed through. Damage block absorbed counts, since the swing landed and getting through block is
+    /// work done, so a hit into a blocking enemy reads on the meter instead of vanishing. Overkill - the excess past a
+    /// killing blow - does not, since damage a target was never there to take is not damage done.
+    ///
+    /// Dealt therefore equals the pre-block swing the attribution was decomposed from, except on a killing blow, where
+    /// the wasted excess is dropped and every teammate share scales down with it in the same proportion. Each
+    /// contribution is booked as received (on the dealer) and given (on the applier). Monster-dealt hits contribute
+    /// nothing.
     /// </summary>
     public void ApplyHit(HitAttribution attribution, DamageResult result)
     {
@@ -108,7 +111,7 @@ internal sealed class CombatLedger
             return;
         }
 
-        int dealt = result.UnblockedDamage + result.OverkillDamage + result.BlockedDamage;
+        int dealt = result.UnblockedDamage + result.BlockedDamage;
         if (dealt <= 0)
         {
             return;

@@ -94,6 +94,7 @@ internal static class SelfTest
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
+        all &= await OverkillScenario(context, dealer, enemy);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
         all &= await FlexPotionScenario(context, dealer, enemy, applier2);
         all &= await MixedStrengthScenario(context, dealer, enemy, applier2);
@@ -236,6 +237,55 @@ internal static class SelfTest
             Expect("enemy lost the unblocked 5", enemy.CurrentHp, hpBefore - 5));
 
         return absorbed && split;
+    }
+
+    /// <summary>
+    /// Overkill - the part of a killing blow the target was not alive to take - is not damage done, so it must not be
+    /// counted, while damage block absorbed is and must be.
+    ///
+    /// Unlike the other scenarios this hands the settled result to the ledger directly instead of landing a real hit,
+    /// because a real one would have to kill: the harness fight has a single enemy, killing it ends the combat, and
+    /// CreatureCmd.Damage only runs the hooks the ledger listens on while a combat is in progress - so every scenario
+    /// after the kill would silently record nothing. The funnel that produces a DamageResult is already covered by
+    /// every other scenario; what needs pinning here is only how ApplyHit adds the three parts up.
+    /// </summary>
+    private static async Task<bool> OverkillScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        // 20 swung at a target with 4 HP: 4 lands, 16 is wasted.
+        CombatLedger.Current.ApplyHit(
+            Swing(enemy, you, 20m),
+            new DamageResult(enemy, DamageProps.card) { UnblockedDamage = 4, OverkillDamage = 16 });
+
+        bool wasted = Report("Overkill (excess past the kill is not counted)",
+            Expect("aDPS", CombatLedger.Current.DealtWith(you, NoCard), 4m));
+
+        // The same killing blow into 5 block: the 5 counts, the 16 still does not.
+        CombatLedger.Current.Reset();
+        CombatLedger.Current.ApplyHit(
+            Swing(enemy, you, 25m),
+            new DamageResult(enemy, DamageProps.card) { UnblockedDamage = 4, OverkillDamage = 16, BlockedDamage = 5 });
+
+        bool withBlock = Report("Overkill through block (block counts, overkill does not)",
+            Expect("aDPS", CombatLedger.Current.DealtWith(you, NoCard), 9m));
+
+        return wasted && withBlock;
+    }
+
+    /// <summary>An unbuffed swing by <paramref name="you"/> for <paramref name="total"/>, with no teammate share.</summary>
+    private static HitAttribution Swing(Creature enemy, ulong you, decimal total)
+    {
+        return new HitAttribution
+        {
+            Target = enemy,
+            Total = total,
+            DealerNetId = you,
+            DealerCard = NoCard,
+            DealerPreBlock = total,
+            Externals = Array.Empty<ExternalContribution>(),
+        };
     }
 
     /// <summary>

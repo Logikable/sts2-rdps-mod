@@ -74,6 +74,8 @@ internal static class AutoHarness
         CharacterModel character = ModelDb.GetById<CharacterModel>(new ModelId("CHARACTER", "IRONCLAD"));
 
         // Pick a real registered monster encounter rather than hardcode an id; AllEncounters is populated at load.
+        // Keep this single-enemy: the scenarios are written against one enemy, and a multi-monster fight changes what
+        // the all-enemy effects (Outbreak) and the Doom kill do.
         EncounterModel encounter = ModelDb.AllEncounters.First(e => e.RoomType == RoomType.Monster);
         GD.Print($"[RdpsMeter] Harness: using encounter {encounter.Id}");
 

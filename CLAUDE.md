@@ -49,11 +49,17 @@ captured `sts2.dll` before shipping.
 
 The game's `DamageResult` splits a swing into three **disjoint** parts:
 `BlockedDamage`, `UnblockedDamage` (HP actually lost) and `OverkillDamage` (the
-excess on a killing blow). They sum to the post-modifier pre-block swing, which
-is also `HitAttribution.Total` — so booking all three means the pre-block
-attribution shares carry over unscaled. The meter counts all three: damage into
-block is damage dealt. Don't reach for the game's own `TotalDamage`, which is
-only `Blocked + Unblocked` and silently drops overkill.
+excess on a killing blow). All three together sum to the post-modifier pre-block
+swing, which is also `HitAttribution.Total`.
+
+The meter counts `Blocked + Unblocked` — damage into block is damage done;
+overkill is not. That happens to match the game's own `DamageResult.TotalDamage`,
+but keep computing it explicitly: the ledger's choice is a product decision, not
+a wrapper around whatever that property happens to mean.
+
+Because dealt then equals `Total` on every hit except a kill, the pre-block
+attribution shares normally carry over unchanged, and on a killing blow they all
+scale down in the same proportion as the wasted excess.
 
 ## Running the self-test in game
 
