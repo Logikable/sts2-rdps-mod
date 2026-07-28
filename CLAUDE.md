@@ -45,6 +45,16 @@ are plain `-c Release` (harness compiled out); `-p:Harness=true` enables the
 dev harness. Cross-version: run the binding verifier under `tools/` against each
 captured `sts2.dll` before shipping.
 
+## Damage accounting
+
+The game's `DamageResult` splits a swing into three **disjoint** parts:
+`BlockedDamage`, `UnblockedDamage` (HP actually lost) and `OverkillDamage` (the
+excess on a killing blow). They sum to the post-modifier pre-block swing, which
+is also `HitAttribution.Total` — so booking all three means the pre-block
+attribution shares carry over unscaled. The meter counts all three: damage into
+block is damage dealt. Don't reach for the game's own `TotalDamage`, which is
+only `Blocked + Unblocked` and silently drops overkill.
+
 ## Running the self-test in game
 
 It does work, contrary to an earlier conclusion. Build `-p:Harness=true`, copy

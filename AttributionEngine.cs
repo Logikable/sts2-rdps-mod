@@ -17,8 +17,9 @@ internal readonly record struct ExternalContribution(ulong ApplierNetId, string 
 
 /// <summary>
 /// The attributed decomposition of a single hit's pre-block damage: the dealer's own share plus each teammate's
-/// buff/debuff contribution. Amounts are pre-block (the value Hook.ModifyDamage returned); the ledger rescales them
-/// onto settled unblocked HP loss. Dealer share plus all contributions sum to <see cref="Total"/>.
+/// buff/debuff contribution. Amounts are pre-block (the value Hook.ModifyDamage returned), which is also what the
+/// ledger books, since damage absorbed by block still counts. Dealer share plus all contributions sum to
+/// <see cref="Total"/>.
 /// </summary>
 internal sealed class HitAttribution
 {

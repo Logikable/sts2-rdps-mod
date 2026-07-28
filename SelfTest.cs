@@ -93,6 +93,7 @@ internal static class SelfTest
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
+        all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
         all &= await FlexPotionScenario(context, dealer, enemy, applier2);
         all &= await MixedStrengthScenario(context, dealer, enemy, applier2);
@@ -196,6 +197,45 @@ internal static class SelfTest
             Expect("aDPS", l.DealtWith(you, NoCard), 9m),
             Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
             Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 3m));
+    }
+
+    /// <summary>
+    /// Damage a target's block absorbs still counts as damage dealt. First blocks a swing outright, so the enemy loses
+    /// no HP at all: the meter must still book the whole hit and still credit the teammate's share of it, where before
+    /// the hit was dropped entirely and a fight against a blocking enemy under-reported everyone. Then repeats against
+    /// partial block, where the swing is split between block and HP, to check the two halves are summed rather than
+    /// one of them standing in for the hit.
+    /// </summary>
+    private static async Task<bool> BlockScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        int hpBefore = enemy.CurrentHp;
+
+        // 50 block against a 9-damage swing (6, plus 3 from a teammate's Strength): nothing reaches HP.
+        await CreatureCmd.GainBlock(enemy, 50m, DamageProps.nonCardUnpowered, null);
+        await PowerCmd.Apply<StrengthPower>(ctx, dealer, 3m, applier2, null);
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool absorbed = Report("Block (fully absorbed)",
+            Expect("aDPS", l.DealtWith(you, NoCard), 9m),
+            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
+            Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 3m),
+            Expect("enemy lost no HP", enemy.CurrentHp, hpBefore));
+
+        // Leave exactly 4 block against the same 9-damage swing: 4 absorbed, 5 through to HP, and the ledger must add
+        // the whole 9 again rather than only the blocked or only the unblocked half.
+        await CreatureCmd.LoseBlock(ctx, enemy, enemy.Block - 4m, null);
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, null, null);
+
+        bool split = Report("Block (partly absorbed)",
+            Expect("aDPS", l.DealtWith(you, NoCard), 18m),
+            Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 6m),
+            Expect("enemy lost the unblocked 5", enemy.CurrentHp, hpBefore - 5));
+
+        return absorbed && split;
     }
 
     /// <summary>
@@ -733,6 +773,13 @@ internal static class SelfTest
         if (dealer.GetPower<OutbreakPower>() != null)
         {
             await PowerCmd.Remove<OutbreakPower>(dealer);
+        }
+
+        // Block left standing would silently soak the next scenario's swing and make it assert against the wrong
+        // number, so it is cleared alongside the HP reset. Only the block scenario ever leaves any.
+        if (enemy.Block > 0)
+        {
+            await CreatureCmd.LoseBlock(new NoOpChoiceContext(), enemy, enemy.Block, null);
         }
 
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);

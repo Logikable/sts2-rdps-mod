@@ -16,6 +16,9 @@ code-identical assembly, so one build covers both.
   externally-applied modifier removed; the difference is that modifier's
   contribution. If contributions overlap (stacked multipliers), they are
   scaled down proportionally so they sum to the total external gain.
+- Damage a target's block absorbs counts as damage dealt, as does overkill past
+  a killing blow, so a swing into a blocking enemy reads on the meter at its
+  full value rather than disappearing.
 - Personal buffs stay with the dealer; only modifiers applied by *another*
   player move on the meter.
 - When several players contributed stacks to one debuff (e.g. Vulnerable),

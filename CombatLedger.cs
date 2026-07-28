@@ -8,7 +8,7 @@ namespace RdpsMeter;
 ///
 ///   rDPS = aDPS + given - received
 ///
-/// where aDPS is the raw unblocked damage the player actually dealt (itemized by card), given is the damage their
+/// where aDPS is the damage the player dealt, block included (itemized by card), given is the damage their
 /// buffs/debuffs enabled on teammates' hits (itemized by effect and beneficiary), and received is the damage
 /// teammates' buffs enabled on this player's own hits (itemized by effect and applier). Every given entry has a
 /// matching received entry on the other player, so across the table given and received cancel and total rDPS equals
@@ -94,10 +94,12 @@ internal sealed class CombatLedger
     }
 
     /// <summary>
-    /// Folds one settled hit into the tallies. The attribution carries pre-block shares; here they are rescaled onto
-    /// the actual unblocked HP loss so block reduces every share by the same proportion. The dealer's full unblocked
-    /// damage counts as aDPS; each teammate contribution is booked as received (on the dealer) and given (on the
-    /// applier). Monster-dealt and fully-blocked hits contribute nothing.
+    /// Folds one settled hit into the tallies. Damage the target's block absorbed counts as damage dealt, the same as
+    /// damage that reached its HP: the swing landed and the block it chewed through is work done, so a hit into a
+    /// blocking enemy reads on the meter instead of vanishing. Dealt is therefore the whole swing - HP lost, overkill
+    /// past a killing blow, and the part block ate - which is what the attribution was decomposed from, so the
+    /// pre-block shares carry over unscaled. Each teammate contribution is booked as received (on the dealer) and
+    /// given (on the applier). Monster-dealt hits still contribute nothing.
     /// </summary>
     public void ApplyHit(HitAttribution attribution, DamageResult result)
     {
@@ -106,8 +108,8 @@ internal sealed class CombatLedger
             return;
         }
 
-        int unblocked = result.UnblockedDamage + result.OverkillDamage;
-        if (unblocked <= 0)
+        int dealt = result.UnblockedDamage + result.OverkillDamage + result.BlockedDamage;
+        if (dealt <= 0)
         {
             return;
         }
@@ -117,12 +119,12 @@ internal sealed class CombatLedger
             ulong dealerNetId = attribution.DealerNetId!.Value;
             PlayerLedger dealer = Ledger(dealerNetId);
             dealer.DealtByCard[attribution.DealerCard] =
-                dealer.DealtByCard.GetValueOrDefault(attribution.DealerCard) + unblocked;
+                dealer.DealtByCard.GetValueOrDefault(attribution.DealerCard) + dealt;
 
             decimal buffTotal = 0m;
             foreach (ExternalContribution contribution in attribution.Externals)
             {
-                decimal amount = unblocked * contribution.PreBlock / attribution.Total;
+                decimal amount = dealt * contribution.PreBlock / attribution.Total;
                 buffTotal += amount;
 
                 var received = (contribution.Effect, contribution.ApplierNetId);

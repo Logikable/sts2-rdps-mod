@@ -149,7 +149,7 @@ internal static class AttributionPatches
                     CombatLedger.Name(netId, PlayerIdentity.Name(netId));
                 }
 
-                CombatLedger.Record("Poison", shares, results.UnblockedDamage);
+                CombatLedger.Record("Poison", shares, results.UnblockedDamage + results.BlockedDamage);
             }
 
             return;
@@ -164,7 +164,7 @@ internal static class AttributionPatches
                     CombatLedger.Name(netId, PlayerIdentity.Name(netId));
                 }
 
-                CombatLedger.Record(sourceEffect, sourceShares, results.UnblockedDamage);
+                CombatLedger.Record(sourceEffect, sourceShares, results.UnblockedDamage + results.BlockedDamage);
             }
 
             return;
