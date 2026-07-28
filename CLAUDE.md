@@ -75,6 +75,16 @@ times — those are second-resolution, so two runs saved in the same second woul
 order arbitrarily and any test over them would flake. The mtime scan is only the
 fallback for a missing pointer.
 
+On the Run History page the meter follows the map point being looked at
+(`RunHistoryLink`). The two sides share **no key**: the ledger files a combat
+under act/coord/room, while a saved `RunHistory` keeps only map point types,
+rooms and monsters — no coordinates. What they share is **order**, so the nth
+fight of act N on the page is the nth combat the ledger recorded for act N.
+Count *combat rooms*, not map points (one point can hold several rooms), and
+count per act so a missing early fight doesn't shift later acts. A page showing
+a different run (`RunHistory.Seed != RunLedger.LoadedRunId`) never resolves to a
+combat — an empty meter beats another run's numbers.
+
 ## Damage accounting
 
 The game's `DamageResult` splits a swing into three **disjoint** parts:

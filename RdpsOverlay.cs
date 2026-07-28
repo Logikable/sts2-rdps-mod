@@ -46,10 +46,14 @@ internal static class RdpsOverlay
     /// map or back at the main menu. Only a run nothing has been recorded for yet - a fresh install, or a brand-new run
     /// before its first fight - draws no window, since there would be nothing in it. Deliberately asks the run rather
     /// than the picked view, so picking an empty fight cannot make the whole window vanish.
+    ///
+    /// The run history page is the one place an empty meter is worth drawing: a fight there whose numbers we do not
+    /// have is answered with an empty window under that fight's name, which says "nothing recorded" where no window at
+    /// all would just look broken.
     /// </summary>
     internal static bool ShouldShow(bool inCombat)
     {
-        return inCombat || RunLedger.HasData;
+        return inCombat || RunLedger.HasData || RunHistoryView.Fight != null;
     }
 }
 
@@ -378,6 +382,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // the run (a new run wiped it) silently falls back to the total, the same view the picker starts on.
     private IReadOnlyList<RdpsRow> SelectedView()
     {
+        // The run history page drives the meter while it is up: the fight being looked at wins over the picked view,
+        // and one whose numbers are not in memory shows as an empty meter under its own name rather than as somebody
+        // else's damage.
+        if (RunHistoryView.Fight is HistoryFight fight)
+        {
+            _menu.Text = fight.Caption;
+            return fight.Key is string fightKey ? RunLedger.SnapshotOf(fightKey) : Array.Empty<RdpsRow>();
+        }
+
         switch (_viewKind)
         {
             case ViewKind.Current:
@@ -404,6 +417,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// <summary>The panel's laid-out width, so the self-test can check that content never reflows it.</summary>
     internal float HarnessPanelWidth => _panel.Size.X;
 
+    /// <summary>
+    /// The rows the meter would draw right now, picking the view the same way a frame does (and captioning the picker
+    /// with it), so the self-test can check what is driving the meter rather than only what the ledger holds.
+    /// </summary>
+    internal IReadOnlyList<RdpsRow> HarnessSelectedView()
+    {
+        return SelectedView();
+    }
+
     /// <summary>The overlay living in the scene tree, or null if it has not been installed yet.</summary>
     internal static RdpsOverlayNode? HarnessInstance =>
         Engine.GetMainLoop() is SceneTree { Root: not null } tree
@@ -429,6 +451,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     private void OnViewPicked(long id)
     {
+        // Picking by hand outranks the run history page: whatever it had pinned steps aside until the next map point
+        // is focused, so the picker never looks stuck.
+        RunHistoryView.Release();
+
         if (id == IdTotal)
         {
             _viewKind = ViewKind.Total;

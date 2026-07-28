@@ -16,6 +16,9 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Potions;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Rooms;
+using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Runs.History;
 using MegaCrit.Sts2.Core.ValueProps;
 
 namespace RdpsMeter;
@@ -91,6 +94,7 @@ internal static class SelfTest
         all &= TwoRunsScenario();
         all &= PersistentOverlayScenario();
         all &= LastPlayedScenario();
+        all &= RunHistoryScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
@@ -880,6 +884,110 @@ internal static class SelfTest
             Expect("its own fight", fights.Count, 1m),
             Expect("its own fight name", fights.Count == 1 && fights[0].Label == "Newer" ? 1m : 0m, 1m),
             Expect("window comes up with it", shown ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// The run history page drives the meter. Builds a run of three fights across two acts and a page whose map points
+    /// match it, then checks that a map point resolves to the combat the ledger filed for it - skipping the shop, and
+    /// starting its count over in the second act - and that the overlay actually switches to it. A page showing some
+    /// other run resolves to no combat at all: the meter goes empty under the fight's own name rather than showing the
+    /// loaded run's damage, and stays on screen to say so.
+    /// </summary>
+    private static bool RunHistoryScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Run history drives the meter': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        const string runId = "selftest-run-history";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        string harnessLabel = RunLedger.Active.Label;
+
+        RunLedger.StartNewRun(runId);
+        Fought("0:1:2:0", "Alpha", 11);
+        Fought("0:3:4:0", "Beta", 22);
+        Fought("1:0:1:0", "Gamma", 33);
+
+        // The page's map points, in the order they were walked: a fight, a shop that is not one, an elite, then the
+        // next act starting over.
+        var act0 = new List<MapPointHistoryEntry>
+        {
+            Point(RoomType.Monster), Point(RoomType.Shop), Point(RoomType.Elite),
+        };
+        var act1 = new List<MapPointHistoryEntry> { Point(RoomType.Monster) };
+        var history = new RunHistory
+        {
+            Seed = runId,
+            MapPointHistory = new List<List<MapPointHistoryEntry>> { act0, act1 },
+        };
+
+        HistoryFight? first = RunHistoryLink.Locate(history, act0[0]);
+        HistoryFight? shop = RunHistoryLink.Locate(history, act0[1]);
+        HistoryFight? elite = RunHistoryLink.Locate(history, act0[2]);
+        HistoryFight? nextAct = RunHistoryLink.Locate(history, act1[0]);
+
+        // The overlay follows whatever the page picked out.
+        RunHistoryView.Show(elite ?? default);
+        decimal shownDamage = overlay.HarnessSelectedView().Sum(r => r.ADps);
+        string shownCaption = overlay.HarnessPickerCaption;
+
+        // A different run: same shape of page, nothing of it in memory.
+        var other = new RunHistory
+        {
+            Seed = "selftest-some-other-run",
+            MapPointHistory = new List<List<MapPointHistoryEntry>> { act0, act1 },
+        };
+        HistoryFight? foreign = RunHistoryLink.Locate(other, act0[0]);
+        RunHistoryView.Show(foreign ?? default);
+        int foreignRows = overlay.HarnessSelectedView().Count;
+        bool foreignStillShown = RdpsOverlay.ShouldShow(inCombat: false);
+
+        // ... and still shown with nothing loaded at all, which is the only case an empty window is worth drawing.
+        RunLedger.LoadDto(null);
+        bool shownOnEmptyLedger = RdpsOverlay.ShouldShow(inCombat: false);
+
+        // Closing the page hands the meter back to its own view.
+        RunHistoryView.Release();
+        overlay.HarnessSelectedView();
+        string releasedCaption = overlay.HarnessPickerCaption;
+
+        RunLedgerStore.Delete(runId);
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Run history drives the meter",
+            Expect("first fight of the act", first?.Key == "0:1:2:0" ? 1m : 0m, 1m),
+            Expect("the shop is not a fight", shop == null ? 1m : 0m, 1m),
+            Expect("the elite is the act's second fight", elite?.Key == "0:3:4:0" ? 1m : 0m, 1m),
+            Expect("the next act counts from zero", nextAct?.Key == "1:0:1:0" ? 1m : 0m, 1m),
+            Expect("overlay shows that fight", shownDamage, 22m),
+            Expect("captioned with its name", shownCaption == "Beta" ? 1m : 0m, 1m),
+            Expect("another run resolves to no combat", foreign is { Key: null } ? 1m : 0m, 1m),
+            Expect("and shows nothing", foreignRows, 0m),
+            Expect("but stays on screen", foreignStillShown ? 1m : 0m, 1m),
+            Expect("even with nothing loaded", shownOnEmptyLedger ? 1m : 0m, 1m),
+            Expect("released back to the total", releasedCaption == Loc.T("view.total") ? 1m : 0m, 1m));
+
+        void Fought(string key, string label, int damage)
+        {
+            RunLedger.BeginCombat(key, label);
+            RunLedger.Active.ApplyDot("Poison", share, damage);
+            RunLedger.EndCombat();
+        }
+    }
+
+    private static MapPointHistoryEntry Point(params RoomType[] rooms)
+    {
+        var point = new MapPointHistoryEntry();
+        foreach (RoomType room in rooms)
+        {
+            point.Rooms.Add(new MapPointRoomHistoryEntry { RoomType = room });
+        }
+
+        return point;
     }
 
     private static decimal TotalDealt(RunLedgerDto dto)

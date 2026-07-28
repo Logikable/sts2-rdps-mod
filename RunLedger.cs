@@ -208,6 +208,47 @@ internal static class RunLedger
         }
     }
 
+    /// <summary>Which run the loaded breakdown belongs to, so a caller can tell whether a run's numbers are in memory.</summary>
+    public static string LoadedRunId
+    {
+        get
+        {
+            lock (Lock)
+            {
+                return _runId;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The nth combat recorded in one act, or null when the act has no such fight. Combat keys lead with the act index
+    /// (see <see cref="RunContext.CombatKey"/>), so this counts within an act in entry order - what the run history page
+    /// needs to line its map points up against the ledger without a shared key. See <see cref="RunHistoryLink"/>.
+    /// </summary>
+    public static CombatInfo? FightInAct(int act, int ordinal)
+    {
+        string prefix = $"{act}:";
+        lock (Lock)
+        {
+            int seen = 0;
+            foreach (string key in Order)
+            {
+                if (!key.StartsWith(prefix, StringComparison.Ordinal)
+                    || !Combats.TryGetValue(key, out CombatLedger? combat))
+                {
+                    continue;
+                }
+
+                if (seen++ == ordinal)
+                {
+                    return new CombatInfo(key, combat.Label);
+                }
+            }
+
+            return null;
+        }
+    }
+
     public static bool HasCombat(string key)
     {
         lock (Lock)
