@@ -20,7 +20,12 @@ Every release ships to **all three**: GitHub, Steam Workshop, and Nexus Mods.
 Don't do only one — do all three, or say explicitly which is blocked and why.
 
 1. Bump `version` in `RdpsMeter.json`; update the `changeNote` in
-   `workshop/workshop.json`.
+   `workshop/workshop.json`. **Only** `changeNote` — every other field there is
+   `null` on purpose, which the Steam uploader reads as "leave unchanged". The
+   store listing (title, description, tags) is maintained on the Steam page
+   itself; filling one of those in here overwrites the web copy on next upload.
+   Nexus's page text is likewise web-only — `nexus/publish.sh` uploads a file
+   and bumps the version, and never touches the description.
 2. Commit + push to origin.
 3. **Nexus** (I can run this): `./nexus/publish.sh` (dry-run first with
    `--dry-run`). Fully automatable from WSL — uploader action + API key are

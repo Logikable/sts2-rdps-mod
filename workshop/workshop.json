@@ -1,9 +1,9 @@
 {
   "title": "rDPS Meter",
-  "description": "Like ACT from FFXIV, or Details from WoW.\nIn multiplayer, this tells you how much damage you're doing, plus how much damage you're contributing to other players, minus how much damage they're contributing to you.\nIn singleplayer, this tells you which cards/relics/potions your damage is coming from.\n\nWorks with Poison, Doom, and most powers. Tracks damage from potions, relics.\n\n[b]Please leave feedback![/b] This is a new mod and I'm actively working on it.\n\nAlso on Nexus Mods: https://www.nexusmods.com/slaythespire2/mods/1385",
+  "description": null,
   "visibility": null,
   "changeNote": "0.1.14 - damage counting fix: a hit into an enemy's block used to be recorded as nothing at all, so fights against blocking enemies under-reported everyone, and the teammate buff share on those swings vanished with them. Block now counts as damage dealt. Overkill - the excess past a killing blow - no longer counts, since the target was never there to take it. The meter now opens on the run total rather than the live combat; the picker still switches to the current fight or any earlier one. The window also holds one fixed width instead of changing with what it is showing, and text too long for its column is trimmed rather than stretching the window. Checked against game v0.109.1.",
-  "tags": [],
-  "dependencies": [],
-  "contentDescriptors": []
+  "tags": null,
+  "dependencies": null,
+  "contentDescriptors": null
 }

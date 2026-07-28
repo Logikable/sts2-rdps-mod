@@ -7,6 +7,13 @@
 # never deletes - so mod_id.txt, written by the first upload and needed by every
 # update, survives. That file is copied back here as a backup, since losing it
 # means the next upload publishes a second, unrelated Workshop item.
+#
+# The listing text is maintained on the Steam page itself, not here: description,
+# tags and the rest are null in workshop.json, which the uploader reads as "leave
+# unchanged". Filling one in would overwrite whatever was edited on the web the
+# next time this is uploaded - and an empty [] is not the same as null, it wipes.
+# Two exceptions stay in the repo: changeNote, which is per-release, and title,
+# which never changes and is kept only so the uploader has one non-null field.
 set -euo pipefail
 
 cd "$(dirname "$0")"
