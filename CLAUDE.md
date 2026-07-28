@@ -76,6 +76,14 @@ is a failed launch, not a failed test, so just retry until the log runs long.
 Afterwards remove the marker and redeploy a plain `-c Release` build, or normal
 play keeps auto-running the harness.
 
+Two things a new scenario must respect. The fight has **one** enemy, and killing
+it ends the combat — after which `CreatureCmd.Damage` stops running the hooks the
+ledger listens on, so every later scenario silently records nothing. A scenario
+needing a killing blow should hand a built `DamageResult` straight to
+`ApplyHit` instead. And don't switch the harness to a multi-monster encounter to
+get around that: the all-enemy effects (Outbreak) and the Doom kill are written
+against a single enemy and both break.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three
