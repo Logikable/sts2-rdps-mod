@@ -87,7 +87,8 @@ internal static class SelfTest
 
         // First, while the harness combat is still empty: this one hijacks the run ledger to play two runs against each
         // other, and puts the harness's own run back when it is done.
-        bool all = TwoRunsScenario();
+        bool all = DefaultViewScenario();
+        all &= TwoRunsScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
@@ -533,6 +534,32 @@ internal static class SelfTest
     /// The fight-picker labels: a single enemy keeps its full name (pluralized when there are several), while a mix is
     /// shortened toughest-first to about the length of one name so the dropdown stays readable.
     /// </summary>
+    /// <summary>
+    /// The meter must open on the run total, not the live combat. Reads the caption off the live overlay once the
+    /// harness is in a fight, so it covers the view the picker is built with and the one a new run resets it to - the
+    /// two places a default could regress independently.
+    /// </summary>
+    private static bool DefaultViewScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Opens on the run total': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        string expected = Loc.T("view.total");
+        string actual = overlay.HarnessPickerCaption;
+        bool ok = actual == expected;
+        GD.Print($"[RdpsMeter] Scenario 'Opens on the run total': {(ok ? "PASS" : "FAIL")}");
+        if (!ok)
+        {
+            GD.Print($"[RdpsMeter]     picker caption: got '{actual}', expected '{expected}'");
+        }
+
+        return ok;
+    }
+
     private static bool FightLabelScenario()
     {
         var cases = new (string[] Enemies, string Expected)[]

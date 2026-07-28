@@ -380,6 +380,20 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
     }
 
+#if RDPS_HARNESS
+    /// <summary>
+    /// The caption the view picker is currently showing, so the self-test can assert which view the meter opens on.
+    /// Harness-only: a shipped build has no reason to expose the picker's internals.
+    /// </summary>
+    internal string HarnessPickerCaption => _menu.Text;
+
+    /// <summary>The overlay living in the scene tree, or null if it has not been installed yet.</summary>
+    internal static RdpsOverlayNode? HarnessInstance =>
+        Engine.GetMainLoop() is SceneTree { Root: not null } tree
+            ? tree.Root.GetChildren().OfType<RdpsOverlayNode>().FirstOrDefault()
+            : null;
+#endif
+
     // Rebuilt each time the menu opens so it lists whatever fights the run has reached: Total, Live, then each fight by
     // name, in the order they were fought.
     private void RebuildMenu()

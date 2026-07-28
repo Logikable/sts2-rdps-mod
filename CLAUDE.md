@@ -45,6 +45,21 @@ are plain `-c Release` (harness compiled out); `-p:Harness=true` enables the
 dev harness. Cross-version: run the binding verifier under `tools/` against each
 captured `sts2.dll` before shipping.
 
+## Running the self-test in game
+
+It does work, contrary to an earlier conclusion. Build `-p:Harness=true`, copy
+the dll into the game's `mods/RdpsMeter/`, and drop an empty `autotest.marker`
+beside it; the mod then starts a run, enters a combat, runs every scenario and
+quits. Launch the game **directly** — `cd "<game dir>" && ./SlayTheSpire2.exe`
+from WSL — and read stdout for `HARNESS COMPLETE` / `HARNESS FAILED`.
+
+Two traps. `--headless` never reaches the main menu (exits 5 after ~2s), so the
+harness never fires. And the launch is flaky: roughly half of attempts exit at
+~3s having logged only ~65 lines, ending at the `SteamStatsManager` line — that
+is a failed launch, not a failed test, so just retry until the log runs long.
+Afterwards remove the marker and redeploy a plain `-c Release` build, or normal
+play keeps auto-running the harness.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three

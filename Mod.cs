@@ -14,11 +14,11 @@ public static class Mod
         GD.Print("[RdpsMeter] Initialized");
 
 #if RDPS_HARNESS
-        // Only a harness build carries the auto-run self-test; the marker decides whether this launch runs it.
+        // Only a harness build carries the auto-run self-test; the marker decides whether this launch runs it. The
+        // overlay still goes up alongside it, so the scenarios can assert against the real meter rather than a stub.
         if (DevMode.Enabled)
         {
             AutoHarness.Install();
-            return;
         }
 #endif
         RdpsOverlay.Install();
