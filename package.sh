@@ -13,7 +13,13 @@ export PATH="$DOTNET_ROOT:$PATH"
 export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
 OUT=".godot/mono/temp/bin/Release"
-DEST="${PACKAGE_DEST:-/mnt/c/Users/Sean/Downloads}"
+
+# Built artifacts stay in the repo's own gitignored dist/, not in anyone's
+# Downloads folder - nothing downstream needs a Windows path, and a release zip
+# is build output rather than something to keep. Override with PACKAGE_DEST.
+DEST="${PACKAGE_DEST:-dist}"
+mkdir -p "$DEST"
+DEST=$(cd "$DEST" && pwd)
 
 # The game version the mod is built against, read from the reference dll's own
 # game install rather than hardcoded, so the zip name can't drift from reality.
