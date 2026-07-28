@@ -9,7 +9,7 @@ namespace RdpsMeter;
 /// tree) so it draws on top of everything without inheriting the game's layout or theme. It shows one row per player in
 /// the combat - every player from the start, at zero, so the window's width is fixed and its height depends only on the
 /// party size - with the player's name, a bar tinted to their class colour, and their rDPS. The panel is a bordered
-/// window that starts near the top-right and can be dragged by its header; only the header (drag), its Live/Total
+/// window that starts near the top-right and can be dragged by its header; only the header (drag), its Total/Live
 /// button and the rows (hover) take the mouse, so the rest never intercepts a click meant for the game underneath.
 /// Hovering a row pops an instant styled breakdown of that player's damage - the same table-with-bars look. In a solo
 /// run there is nobody to credit, so the row and its hover collapse into one: the panel shows the breakdown directly
@@ -86,9 +86,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private string? _bodySignature;
     private bool _clampPending;
 
-    // The picked view. When Combat, _viewKey is the chosen fight's combat key; it falls back to Current if that fight
-    // is no longer in the run (e.g. a new run wiped it).
-    private ViewKind _viewKind = ViewKind.Current;
+    // The picked view, which starts on the run total. When Combat, _viewKey is the chosen fight's combat key; it falls
+    // back to the total if that fight is no longer in the run (e.g. a new run wiped it).
+    private ViewKind _viewKind = ViewKind.Total;
     private string? _viewKey;
 
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
@@ -156,7 +156,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // menu is rebuilt each time it opens, so it always lists the fights seen so far.
         _menu = new MenuButton
         {
-            Text = Loc.T("view.live"),
+            Text = Loc.T("view.total"),
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
             ClipText = true,
@@ -226,12 +226,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     public override void _Process(double delta)
     {
         // A new (or reloaded) run replaces the roster: drop the cached rows and player visuals so they rebuild for the
-        // character being played now instead of lingering as the previous run's, and return the picker to the live view.
+        // character being played now instead of lingering as the previous run's, and return the picker to the total.
         int generation = RunLedger.Generation;
         if (generation != _generation)
         {
             _generation = generation;
-            _viewKind = ViewKind.Current;
+            _viewKind = ViewKind.Total;
             _viewKey = null;
             _visuals.Clear();
             foreach (Node child in _list.GetChildren())
@@ -361,22 +361,22 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     }
 
     // The rows for the currently-picked view, updating the picker's caption to match. A picked fight that has since left
-    // the run (a new run wiped it) silently falls back to the live view.
+    // the run (a new run wiped it) silently falls back to the total, the same view the picker starts on.
     private IReadOnlyList<RdpsRow> SelectedView()
     {
         switch (_viewKind)
         {
-            case ViewKind.Total:
-                _menu.Text = Loc.T("view.total");
-                return RunLedger.TotalSnapshot();
+            case ViewKind.Current:
+                _menu.Text = Loc.T("view.live");
+                return RunLedger.CurrentSnapshot();
             case ViewKind.Combat when _viewKey is string key && RunLedger.HasCombat(key):
                 _menu.Text = CaptionFor(key);
                 return RunLedger.SnapshotOf(key);
             default:
-                _viewKind = ViewKind.Current;
+                _viewKind = ViewKind.Total;
                 _viewKey = null;
-                _menu.Text = Loc.T("view.live");
-                return RunLedger.CurrentSnapshot();
+                _menu.Text = Loc.T("view.total");
+                return RunLedger.TotalSnapshot();
         }
     }
 
@@ -439,7 +439,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             }
         }
 
-        return Loc.T("view.live");
+        return Loc.T("view.total");
     }
 
     // The solo body: the lone player's breakdown drawn straight into the panel, with their rDPS in the header (the row
@@ -718,7 +718,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         Loc.ApplyFont(_menu.GetPopup(), "font");
     }
 
-    // The header's Live/Total button: a faint rounded chip that brightens on hover and press.
+    // The header's Total/Live button: a faint rounded chip that brightens on hover and press.
     private static StyleBoxFlat ToggleStyle(float alpha)
     {
         return new StyleBoxFlat
