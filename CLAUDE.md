@@ -62,6 +62,19 @@ cannot influence it: each row is a plain `Control` whose children are anchored
 big number can overflow its column, but it can never reflow the window. Any
 width change is therefore something assigning `CustomMinimumSize`, not content.
 
+## Overlay persistence
+
+The window is not tied to combat. `RdpsOverlay.ShouldShow` asks the **run**
+(`RunLedger.HasData`), never the picked view — so ending a fight, walking into a
+shop, or picking a fight that happens to be empty must not make it vanish; only
+a run with nothing recorded yet draws no window. At startup `LoadLastPlayed`
+adopts the last run played, so the meter is readable from the main menu on.
+
+Which run that is comes from `rdps_meter/last-run.txt`, not from file modified
+times — those are second-resolution, so two runs saved in the same second would
+order arbitrarily and any test over them would flake. The mtime scan is only the
+fallback for a missing pointer.
+
 ## Damage accounting
 
 The game's `DamageResult` splits a swing into three **disjoint** parts:

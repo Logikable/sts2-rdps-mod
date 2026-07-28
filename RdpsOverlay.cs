@@ -14,8 +14,8 @@ namespace RdpsMeter;
 /// Hovering a row pops an instant styled breakdown of that player's damage - the same table-with-bars look. In a solo
 /// run there is nobody to credit, so the row and its hover collapse into one: the panel shows the breakdown directly
 /// and carries the rDPS total in its header. It stays up between fights, showing either this combat's damage or the
-/// running session total per the header toggle, and hides only before the first fight or when the shown tally is empty
-/// out of combat.
+/// running session total per the header toggle. Nothing short of an empty run takes it away - not ending a fight, not
+/// leaving the run for the main menu - so the numbers stay readable after the match; see <see cref="ShouldShow"/>.
 /// </summary>
 internal static class RdpsOverlay
 {
@@ -38,6 +38,18 @@ internal static class RdpsOverlay
         tree.Root.CallDeferred(Node.MethodName.AddChild, new RdpsOverlayNode());
         _installed = true;
         GD.Print("[RdpsMeter] Overlay installed");
+    }
+
+    /// <summary>
+    /// Whether the window should be on screen. Nothing about leaving a fight, a room or the run itself takes it away:
+    /// once the loaded run has recorded anybody, the meter stays up so its numbers can still be read at the shop, on the
+    /// map or back at the main menu. Only a run nothing has been recorded for yet - a fresh install, or a brand-new run
+    /// before its first fight - draws no window, since there would be nothing in it. Deliberately asks the run rather
+    /// than the picked view, so picking an empty fight cannot make the whole window vanish.
+    /// </summary>
+    internal static bool ShouldShow(bool inCombat)
+    {
+        return inCombat || RunLedger.HasData;
     }
 }
 
@@ -283,9 +295,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         _snapshot = SelectedView().ToDictionary(r => r.NetId);
 
-        // Stay up between fights: visible during combat, and afterwards for as long as the shown tally still holds
-        // damage. Only truly empty (before the first fight, or a wiped current tally out of combat) hides it.
-        bool visible = inCombat || _snapshot.Count > 0;
+        bool visible = RdpsOverlay.ShouldShow(inCombat);
         _panel.Visible = visible;
         if (!visible)
         {

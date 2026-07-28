@@ -56,6 +56,10 @@ internal static class RunLedgerStore
 {
     private const string Folder = "user://rdps_meter";
 
+    // Names the run whose breakdown was written last, so a launch can restore the run that was being played without
+    // guessing from file timestamps. Not a .json, so the per-run pruning never sees it.
+    private const string LastRunPath = $"{Folder}/last-run.txt";
+
     // Where the breakdown lived when the meter kept only one run's worth; adopted once, then removed.
     private const string LegacyPath = "user://rdps_meter_run.json";
 
@@ -90,6 +94,7 @@ internal static class RunLedgerStore
                 file.StoreString(Serialize(dto));
             }
 
+            WriteLastRunId(dto.RunId);
             DiscardLegacy(dto.RunId);
             Prune();
         }
@@ -112,6 +117,49 @@ internal static class RunLedgerStore
         return legacy != null && legacy.RunId == runId ? legacy : null;
     }
 
+    /// <summary>
+    /// The breakdown of the run that was played last, or null when nothing has been saved yet. Used at startup so the
+    /// meter comes up already showing that run rather than sitting empty until the next fight.
+    ///
+    /// Which run that is comes from the pointer file, not from comparing timestamps: modified times are only
+    /// second-resolution, so two runs saved in the same second would order arbitrarily. The newest file is the fallback
+    /// for when the pointer is missing or names a run whose breakdown has since been pruned.
+    /// </summary>
+    public static RunLedgerDto? LoadMostRecent()
+    {
+        try
+        {
+            if (ReadLastRunId() is string runId && Load(runId) is RunLedgerDto pointed)
+            {
+                return pointed;
+            }
+
+            using DirAccess? dir = DirAccess.Open(Folder);
+            IEnumerable<string> newestFirst = dir == null
+                ? Array.Empty<string>()
+                : dir.GetFiles()
+                    .Where(f => f.EndsWith(".json"))
+                    .OrderByDescending(f => FileAccess.GetModifiedTime($"{Folder}/{f}"));
+
+            // The first one that still parses. A file left half-written by a crash should cost its own run's breakdown,
+            // not the startup restore, so keep walking back through the older runs.
+            foreach (string name in newestFirst)
+            {
+                if (Read($"{Folder}/{name}") is RunLedgerDto saved)
+                {
+                    return saved;
+                }
+            }
+
+            return Read(LegacyPath);
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[RdpsMeter] Failed to find the last played run's breakdown: {ex}");
+            return null;
+        }
+    }
+
     /// <summary>Forgets one run's saved breakdown. For the self-test to clean up after itself.</summary>
     public static void Delete(string runId)
     {
@@ -127,6 +175,24 @@ internal static class RunLedgerStore
         {
             GD.PrintErr($"[RdpsMeter] Failed to delete a saved run breakdown: {ex}");
         }
+    }
+
+    private static void WriteLastRunId(string runId)
+    {
+        using FileAccess? file = FileAccess.Open(LastRunPath, FileAccess.ModeFlags.Write);
+        file?.StoreString(runId);
+    }
+
+    private static string? ReadLastRunId()
+    {
+        if (!FileAccess.FileExists(LastRunPath))
+        {
+            return null;
+        }
+
+        using FileAccess? file = FileAccess.Open(LastRunPath, FileAccess.ModeFlags.Read);
+        string? runId = file?.GetAsText().Trim();
+        return string.IsNullOrEmpty(runId) ? null : runId;
     }
 
     private static RunLedgerDto? Read(string path)

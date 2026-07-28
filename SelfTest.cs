@@ -89,6 +89,8 @@ internal static class SelfTest
         // other, and puts the harness's own run back when it is done.
         bool all = DefaultViewScenario();
         all &= TwoRunsScenario();
+        all &= PersistentOverlayScenario();
+        all &= LastPlayedScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
@@ -786,6 +788,98 @@ internal static class SelfTest
             Expect("run B damage", bDamage, 20m),
             Expect("run B fights", bFights.Count, 1m),
             Expect("run B fight name", bFights.Count == 1 && bFights[0].Label == "Beta" ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Nothing but an empty run may take the window away. Walks the states a player passes through around a fight -
+    /// before it, in it, after it, standing in a room with a fresh empty combat picked, and back again after quitting to
+    /// the menu and continuing - and checks the meter stays up for all of them once the run has recorded anybody.
+    /// Leaves the harness's own run in place afterwards.
+    /// </summary>
+    private static bool PersistentOverlayScenario()
+    {
+        const string runId = "selftest-persistent-overlay";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        string harnessLabel = RunLedger.Active.Label;
+
+        // A run with nothing recorded yet: there is genuinely nothing to draw out of combat, and the fight itself puts
+        // the window up. This is the only state that may hide it, and it is what makes the checks below non-vacuous.
+        RunLedger.StartNewRun(runId);
+        bool emptyOutOfCombat = RdpsOverlay.ShouldShow(inCombat: false);
+        bool emptyInCombat = RdpsOverlay.ShouldShow(inCombat: true);
+
+        RunLedger.BeginCombat("9:5:5:-", "Persistent");
+        RunLedger.Active.ApplyDot("Poison", share, 12);
+        RunLedger.EndCombat();
+        bool afterFight = RdpsOverlay.ShouldShow(inCombat: false);
+
+        // Walking into the next room begins nothing, but entering it does: the live view is empty again while the run
+        // total is not. The window must follow the run, not the picked view.
+        RunLedger.BeginCombat("9:6:6:-", "Next");
+        bool liveViewEmpty = RunLedger.CurrentSnapshot().Count == 0;
+        bool nextRoom = RdpsOverlay.ShouldShow(inCombat: false);
+
+        // Quit to the menu and continue: the resumed run comes back with its damage, so the window comes back with it.
+        RunLedger.ResumeRun(runId);
+        bool afterReload = RdpsOverlay.ShouldShow(inCombat: false);
+        decimal reloaded = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        RunLedgerStore.Delete(runId);
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Overlay outlives the fight",
+            Expect("hidden when the run is empty", emptyOutOfCombat ? 1m : 0m, 0m),
+            Expect("shown in combat regardless", emptyInCombat ? 1m : 0m, 1m),
+            Expect("shown after the fight ends", afterFight ? 1m : 0m, 1m),
+            Expect("live view really is empty", liveViewEmpty ? 1m : 0m, 1m),
+            Expect("shown in the next room", nextRoom ? 1m : 0m, 1m),
+            Expect("shown after quit and continue", afterReload ? 1m : 0m, 1m),
+            Expect("damage survived the reload", reloaded, 12m));
+    }
+
+    /// <summary>
+    /// Launching the game must bring back the run that was being played, so the meter has something to show from the
+    /// main menu on. Saves two runs in order, wipes the in-memory ledger the way a fresh launch starts, and checks the
+    /// restore picks the one saved last - not the other one, and not nothing.
+    /// </summary>
+    private static bool LastPlayedScenario()
+    {
+        const string older = "selftest-older-run";
+        const string newer = "selftest-newer-run";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        string harnessLabel = RunLedger.Active.Label;
+
+        RunLedger.StartNewRun(older);
+        RunLedger.BeginCombat("9:7:7:-", "Older");
+        RunLedger.Active.ApplyDot("Poison", share, 7);
+        RunLedger.EndCombat();
+
+        RunLedger.StartNewRun(newer);
+        RunLedger.BeginCombat("9:8:8:-", "Newer");
+        RunLedger.Active.ApplyDot("Poison", share, 33);
+        RunLedger.EndCombat();
+
+        // A fresh launch: nothing in memory, everything on disk.
+        RunLedger.LoadDto(null);
+        bool blankBeforeLoad = !RdpsOverlay.ShouldShow(inCombat: false);
+
+        RunLedger.LoadLastPlayed();
+        decimal restored = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+        IReadOnlyList<CombatInfo> fights = RunLedger.Fights();
+        bool shown = RdpsOverlay.ShouldShow(inCombat: false);
+
+        RunLedgerStore.Delete(older);
+        RunLedgerStore.Delete(newer);
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Last played run restored at launch",
+            Expect("blank before the restore", blankBeforeLoad ? 1m : 0m, 1m),
+            Expect("damage restored", restored, 33m),
+            Expect("its own fight", fights.Count, 1m),
+            Expect("its own fight name", fights.Count == 1 && fights[0].Label == "Newer" ? 1m : 0m, 1m),
+            Expect("window comes up with it", shown ? 1m : 0m, 1m));
     }
 
     private static decimal TotalDealt(RunLedgerDto dto)

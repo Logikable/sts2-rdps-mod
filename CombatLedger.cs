@@ -63,6 +63,18 @@ internal sealed class CombatLedger
     private readonly Dictionary<ulong, PlayerLedger> _ledgers = new();
     private readonly Dictionary<ulong, string> _names = new();
 
+    /// <summary>Whether this combat has recorded nobody yet, so there is genuinely nothing to draw for it.</summary>
+    public bool IsEmpty
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _ledgers.Count == 0;
+            }
+        }
+    }
+
     internal CombatLedger()
     {
     }

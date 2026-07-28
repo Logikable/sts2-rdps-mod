@@ -11,6 +11,10 @@ public static class Mod
     public static void Initialize()
     {
         ApplyPatches();
+
+        // Come up showing the run that was last played, so the meter is readable from the main menu on. Whichever run
+        // is then started or continued takes over.
+        RunLedger.LoadLastPlayed();
         GD.Print("[RdpsMeter] Initialized");
 
 #if RDPS_HARNESS

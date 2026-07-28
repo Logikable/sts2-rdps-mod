@@ -71,8 +71,63 @@ internal static class RunLedger
 
         lock (Lock)
         {
-            Restore(saved != null && saved.RunId == runId ? saved : null, runId);
+            if (saved == null && _runId == runId)
+            {
+                // Nothing readable on disk, but what is already in memory belongs to this same run - the breakdown
+                // loaded at startup, say, or one this session already tallied. Keep it rather than wiping good numbers
+                // over a missing file; only the active tally detaches, as a full restore would leave it.
+                _active = new CombatLedger();
+            }
+            else
+            {
+                Restore(saved != null && saved.RunId == runId ? saved : null, runId);
+            }
+
             Generation++;
+        }
+    }
+
+    /// <summary>
+    /// Startup: adopt the breakdown of whichever run was played last, so the meter is already showing something at the
+    /// main menu instead of coming up blank until the next fight starts. Whatever run the player then starts or
+    /// continues replaces this through <see cref="StartNewRun"/> or <see cref="ResumeRun"/>.
+    /// </summary>
+    public static void LoadLastPlayed()
+    {
+        RunLedgerDto? saved = RunLedgerStore.LoadMostRecent();
+        if (saved == null)
+        {
+            return;
+        }
+
+        lock (Lock)
+        {
+            Restore(saved, saved.RunId);
+            Generation++;
+        }
+    }
+
+    /// <summary>
+    /// Whether any combat in the loaded run recorded anybody. This is what decides that the meter has something worth
+    /// showing - deliberately not "does the picked view have rows", so switching to a fight that happens to be empty,
+    /// or leaving combat with the live view selected, never makes the window disappear out from under the player.
+    /// </summary>
+    public static bool HasData
+    {
+        get
+        {
+            lock (Lock)
+            {
+                foreach (CombatLedger combat in Combats.Values)
+                {
+                    if (!combat.IsEmpty)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
         }
     }
 
