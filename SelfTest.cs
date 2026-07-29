@@ -115,6 +115,7 @@ internal static class SelfTest
         all &= await BlockFourPlayerScenario(context, dealer, enemy, applier2, applier3, applier4);
         all &= await BlockReconcileScenario(context, dealer, enemy);
         all &= await BlockedMeterScenario();
+        all &= await EmptyTitleScenario();
         all &= await OverkillScenario(context, dealer, enemy);
         all &= await OverlayWidthScenario(dealer, enemy);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
@@ -603,6 +604,73 @@ internal static class SelfTest
             Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
 
         return trimmed && padded;
+    }
+
+    /// <summary>
+    /// A solo window with nothing to report still reports. Its headline carries the meter's own total, and carries it
+    /// at zero as well - "Damage: 0", not a bare "Damage" - so a fight nobody has swung in yet, or a shop between
+    /// fights, reads as an answer rather than as a window that has not finished loading.
+    ///
+    /// Checked on both meters the arrows reach, and against a player who is there but has done nothing: an empty run
+    /// and an idle player mean the same thing, so they must say the same thing.
+    /// </summary>
+    private static async Task<bool> EmptyTitleScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Empty solo title': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        var idle = new RdpsRow
+        {
+            NetId = 1uL,
+            Name = "Tester",
+            ADps = 0m,
+            Given = 0m,
+            Received = 0m,
+            Dealt = Array.Empty<(string, decimal, decimal)>(),
+            GivenBy = Array.Empty<(string, ulong, decimal)>(),
+            ReceivedBy = Array.Empty<(string, ulong, decimal)>(),
+        };
+
+        MeterMode entered = OverlayLayout.LoadMode();
+        var titles = new Dictionary<MeterMode, (string Empty, string Idle, string Name)>();
+        foreach (MeterMode mode in new[] { MeterMode.Rdps, MeterMode.Blocked })
+        {
+            for (int guard = 0; overlay.HarnessMode != mode && guard < 4; guard++)
+            {
+                overlay.HarnessStepMode(1, solo: true);
+            }
+
+            titles[mode] = (overlay.HarnessSoloTitle(null), overlay.HarnessSoloTitle(idle), overlay.HarnessModeName(solo: true));
+        }
+
+        OverlayLayout.SaveMode(entered);
+        for (int guard = 0; overlay.HarnessMode != entered && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        OverlayLayout.SaveMode(entered);
+        await Settle();
+
+        (string emptyDamage, string idleDamage, string damageName) = titles[MeterMode.Rdps];
+        (string emptyBlock, string idleBlock, string blockName) = titles[MeterMode.Blocked];
+
+        // Printed rather than asserted: the words themselves come from whichever language the game is set to, so the
+        // checks below are about the shape of the headline, and the log is where you read what it actually says.
+        GD.Print($"[RdpsMeter] Self-test: empty solo headlines = \"{emptyDamage}\", \"{emptyBlock}\"");
+
+        return Report("Empty solo title",
+            Expect("damage says zero, not just its name", emptyDamage != damageName ? 1m : 0m, 1m),
+            Expect("and ends in a zero", emptyDamage.EndsWith('0') ? 1m : 0m, 1m),
+            Expect("an idle player reads the same", emptyDamage == idleDamage ? 1m : 0m, 1m),
+            Expect("blocked says zero, not just its name", emptyBlock != blockName ? 1m : 0m, 1m),
+            Expect("and ends in a zero", emptyBlock.EndsWith('0') ? 1m : 0m, 1m),
+            Expect("an idle player reads the same", emptyBlock == idleBlock ? 1m : 0m, 1m),
+            Expect("the two meters are told apart", emptyDamage != emptyBlock ? 1m : 0m, 1m));
     }
 
     /// <summary>

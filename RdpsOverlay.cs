@@ -502,6 +502,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         StepMode(step);
     }
 
+    /// <summary>The headline a solo window would draw for this player - or, for a null row, for nobody at all.</summary>
+    internal string HarnessSoloTitle(RdpsRow? row)
+    {
+        return SoloTitle(row);
+    }
+
     /// <summary>What one player's bar is worth on the meter currently being read.</summary>
     internal decimal HarnessValue(RdpsRow row)
     {
@@ -693,7 +699,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         RdpsRow? row = netId is ulong id ? _snapshot.GetValueOrDefault(id) : null;
-        _title.Text = row == null ? ModeName() : Loc.T("title.value", ModeName(), Round(Value(row)));
+        _title.Text = SoloTitle(row);
 
         string signature = netId is ulong key ? Signature(key, row) : "empty";
         if (signature == _bodySignature)
@@ -706,6 +712,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             ? visual.Color
             : new Color(0.7f, 0.7f, 0.7f);
         RebuildBreakdown(_list, row, color, damageHeader: false);
+    }
+
+    /// <summary>
+    /// The solo header, which carries the meter's own total because the row that would have held it is gone. It carries
+    /// it at zero too, rather than falling back to the bare meter name: a window reading "Damage: 0" is telling you
+    /// there has been no damage, while one reading "Damage" looks like it has not finished loading. The zero is the
+    /// answer, so it is shown - which is what a fight nobody has swung in yet, or a shop between fights, looks like.
+    /// </summary>
+    private string SoloTitle(RdpsRow? row)
+    {
+        return Loc.T("title.value", ModeName(), Round(Value(row)));
     }
 
     private void UpdateTooltip()
