@@ -732,6 +732,12 @@ internal static class SelfTest
             overlay.HarnessToggleMinimized();
         }
 
+        // Somewhere with room on every side, so the checks below read the geometry rather than the screen edge the
+        // real window might happen to be parked against. Put back, config and all, before returning.
+        Vector2 origin = overlay.HarnessPanelPosition;
+        Vector2? storedPosition = OverlayLayout.LoadPosition();
+        overlay.HarnessPlace(new Vector2(240f, 200f));
+
         await Settle();
         (bool body, bool arrows, bool picker, bool title) open = overlay.HarnessVisibleParts;
         bool openIsPlus = overlay.HarnessGlyphIsPlus;
@@ -739,6 +745,8 @@ internal static class SelfTest
         decimal openWidth = (decimal)overlay.HarnessPanelWidth;
         decimal openHeight = (decimal)overlay.HarnessPanelHeight;
         decimal headerHeight = (decimal)overlay.HarnessHeaderHeight;
+        Vector2 markOpen = overlay.HarnessMarkCentre;
+        Vector2 positionOpen = overlay.HarnessPanelPosition;
 
         overlay.HarnessToggleMinimized();
         await Settle();
@@ -748,6 +756,8 @@ internal static class SelfTest
         decimal shutWidth = (decimal)overlay.HarnessPanelWidth;
         decimal shutHeight = (decimal)overlay.HarnessPanelHeight;
         bool remembered = OverlayLayout.LoadMinimized();
+        Vector2 markShut = overlay.HarnessMarkCentre;
+        Vector2 positionShut = overlay.HarnessPanelPosition;
 
         overlay.HarnessToggleMinimized();
         await Settle();
@@ -755,9 +765,20 @@ internal static class SelfTest
         decimal reopenedHeight = (decimal)overlay.HarnessPanelHeight;
         decimal reopenedWidth = (decimal)overlay.HarnessPanelWidth;
         bool forgotten = !OverlayLayout.LoadMinimized();
+        Vector2 markReopened = overlay.HarnessMarkCentre;
+        Vector2 positionReopened = overlay.HarnessPanelPosition;
+
+        overlay.HarnessPlace(origin);
+        if (storedPosition is Vector2 stored)
+        {
+            OverlayLayout.SavePosition(stored);
+        }
+
+        await Settle();
 
         GD.Print($"[RdpsMeter] Self-test: collapsed {openWidth}x{openHeight} -> {shutWidth}x{shutHeight} "
             + $"(header {headerHeight}px), mark off-centre by {shutOffCentre}px");
+        GD.Print($"[RdpsMeter] Self-test: mark {markOpen} -> {markShut}, window {positionOpen} -> {positionShut}");
 
         return Report("Minimize",
             Expect("opens with a body", open.body ? 1m : 0m, 1m),
@@ -779,6 +800,10 @@ internal static class SelfTest
             Expect("down to a square", shutWidth, shutHeight),
             Expect("half again the header it replaced, so it can be found",
                 shutHeight >= headerHeight * 1.5m && shutHeight <= headerHeight * 2m ? 1m : 0m, 1m),
+            Expect("the plus opens exactly where the minus was",
+                (decimal)(markShut - markOpen).Length() <= 1m ? 1m : 0m, 1m),
+            Expect("which took moving the window, not leaving it be",
+                (decimal)(positionShut - positionOpen).Length() > 1m ? 1m : 0m, 1m),
             Expect("collapsing is remembered", remembered ? 1m : 0m, 1m),
             Expect("reopening brings the body back", reopened.body ? 1m : 0m, 1m),
             Expect("and the arrows", reopened.arrows ? 1m : 0m, 1m),
@@ -786,6 +811,10 @@ internal static class SelfTest
             Expect("and the title", reopened.title ? 1m : 0m, 1m),
             Expect("and the height", reopenedHeight, openHeight),
             Expect("and the width", reopenedWidth, openWidth),
+            Expect("the minus comes back to where it was",
+                (decimal)(markReopened - markOpen).Length() <= 1m ? 1m : 0m, 1m),
+            Expect("and the window to where it started",
+                (decimal)(positionReopened - positionOpen).Length() <= 1m ? 1m : 0m, 1m),
             Expect("reopening is remembered too", forgotten ? 1m : 0m, 1m));
     }
 

@@ -14,7 +14,10 @@ meter and carries its number: your own alone, the party's summed in co-op.
 The minus at the right of the header collapses the whole window to a small
 square holding just a plus, which opens it again — so the meter can be pushed
 out of the way to a corner without being lost, and it comes back the way you
-left it next session. The square is draggable like the header it replaces.
+left it next session. The square appears centred on the minus you just clicked,
+so the plus is under the pointer rather than across the screen, and the window
+returns to exactly where it was when you reopen it. The square is draggable
+like the header it replaces.
 It opens on the running session total, toggling to the current combat or any
 single fight. It stays on screen once the run has recorded anything — through
 shops, the map, and quitting to the menu — and on launch it comes back up on

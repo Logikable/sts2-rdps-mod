@@ -213,7 +213,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             CornerRadiusTopLeft = 5,
             CornerRadiusTopRight = 5,
         });
-        _header.Init(_panel, OverlayLayout.SavePosition);
+        _header.Init(_panel, _ => OverlayLayout.SavePosition(OpenPosition));
 
         // Which meter is being read, between the two arrows that page through them: the header's headline, so it is the
         // one thing in the window drawn large and in colour. It sits in the space left of the view picker and clips
@@ -343,7 +343,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // Restore the last-used spot if there is one; otherwise the default top-right anchoring stands.
         if (OverlayLayout.LoadPosition() is Vector2 saved)
         {
-            FreePosition(_panel, saved);
+            FreePosition(_panel, saved + ShiftFrom(_minimized));
             _header.MarkDetached();
             _clampPending = true;
         }
@@ -596,6 +596,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     internal bool HarnessGlyphIsPlus => _glyph.IsPlus;
 
+    /// <summary>Where the mark is on screen, which a toggle must not move.</summary>
+    internal Vector2 HarnessMarkCentre => _minimize.GlobalPosition + _minimize.Size / 2f;
+
+    internal Vector2 HarnessPanelPosition => _panel.Position;
+
+    /// <summary>Puts the window somewhere known, so a position-sensitive check is not at the mercy of the real config.</summary>
+    internal void HarnessPlace(Vector2 position)
+    {
+        FreePosition(_panel, position);
+        _header.Detach();
+    }
+
     /// <summary>How far the drawn mark sits from the middle of the button it is drawn on - which must be nowhere.</summary>
     internal Vector2 HarnessGlyphOffCentre =>
         (_glyph.GlobalPosition + _glyph.Middle) - (_minimize.GlobalPosition + _minimize.Size / 2f);
@@ -689,11 +701,56 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// </summary>
     private void ToggleMinimized()
     {
+        // Free positioning first, so the move below is one subtraction in one coordinate system. Anchored, the panel's
+        // Position is derived from its size - collapsing pins the right edge and slides the left one 272px across - so
+        // reading a position, changing the size and writing the position back would be three different meanings of the
+        // same number.
+        _header.Detach();
+
+        Vector2 before = MarkOffset(_minimized);
         _minimized = !_minimized;
         OverlayLayout.SaveMinimized(_minimized);
         ApplyMinimized();
-        _clampPending |= !_minimized && _header.IsDetached;
+
+        // Move the window by exactly as much as the mark moved within it, so the mark itself does not move at all: the
+        // plus opens where the minus was, under the pointer that just clicked it, rather than the window keeping a
+        // corner and the button jumping most of the window's width away.
+        _panel.Position += before - MarkOffset(_minimized);
+        _clampPending = true;
+        OverlayLayout.SavePosition(OpenPosition);
     }
+
+    /// <summary>
+    /// Where the mark sits inside the panel, measured from the panel's top-left. Collapsed the button is the whole
+    /// square; open it is a slot at the right end of the header. The window border's thickness is read from the
+    /// stylebox rather than assumed, since it is the difference between the two states landing on each other and
+    /// landing a pixel apart.
+    /// </summary>
+    private Vector2 MarkOffset(bool minimized)
+    {
+        StyleBox border = _panel.GetThemeStylebox("panel");
+        float left = border.GetMargin(Side.Left);
+        float right = border.GetMargin(Side.Right);
+        float top = border.GetMargin(Side.Top);
+        float bottom = border.GetMargin(Side.Bottom);
+
+        return minimized
+            ? new Vector2((left + MinimizedSide - right) / 2f, (top + MinimizedSide - bottom) / 2f)
+            : new Vector2(Width - right - 6f - MinimizeWidth / 2f, top + HeaderHeight / 2f);
+    }
+
+    /// <summary>How far a window in this state sits from where the same window would sit open.</summary>
+    private Vector2 ShiftFrom(bool minimized)
+    {
+        return minimized ? MarkOffset(false) - MarkOffset(true) : Vector2.Zero;
+    }
+
+    /// <summary>
+    /// Where the open window would be right now. This, not the panel's own position, is what gets remembered: the two
+    /// states stand in different places, so storing whichever one happened to be showing would move the window a few
+    /// hundred pixels every time the game was quit collapsed and reopened.
+    /// </summary>
+    private Vector2 OpenPosition => _panel.Position - ShiftFrom(_minimized);
 
     // Collapsed, the window is a square holding one plus and nothing else - not the body, not the two header choices
     // that mean nothing without a body, and not the title either. Everything a 320px-wide strip would still have been
@@ -707,10 +764,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _menu.Visible = !_minimized;
         _title.Visible = !_minimized;
 
-        // Both the panel and the header are pinned, so the square holds whichever of the two the layout settles from -
-        // the panel's border makes them differ by a couple of pixels, and neither is allowed to decide the shape alone.
+        // Both the panel and the header are pinned, so the square holds whichever of the two the layout settles from,
+        // and neither is allowed to decide the shape alone. The header's share is the square less the window border,
+        // read from the stylebox so the square is exactly MinimizedSide however thick that border is.
+        StyleBox border = _panel.GetThemeStylebox("panel");
         _panel.CustomMinimumSize = _minimized ? new Vector2(MinimizedSide, MinimizedSide) : new Vector2(Width, 0f);
-        _header.CustomMinimumSize = new Vector2(0f, _minimized ? MinimizedSide - 2f : HeaderHeight);
+        _header.CustomMinimumSize = new Vector2(
+            0f,
+            _minimized ? MinimizedSide - border.GetMargin(Side.Top) - border.GetMargin(Side.Bottom) : HeaderHeight);
 
         // Open, the button is a slot at the right end of the header; collapsed, it is the whole square.
         _minimize.AnchorLeft = _minimized ? 0f : 1f;
@@ -1485,9 +1546,9 @@ internal sealed partial class DragHandle : Panel
         }
     }
 
-    // On the first drag, freeze the window's current anchored spot and switch to free positioning, so drags move it by
-    // Position instead of fighting the anchors.
-    private void Detach()
+    // Freeze the window's current anchored spot and switch to free positioning, so moving it means writing Position
+    // instead of fighting the anchors. Called on the first drag, and by the minimize button, which also moves it.
+    public void Detach()
     {
         if (_detached)
         {
