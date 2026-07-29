@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find damage the meter would file under "(none)".
+"""Find attribution the meter would get wrong: damage with no name, and block with the wrong owner.
 
 A hit with a real player dealer but no card source is named from the game's
 executing-model stack, which only holds anything if the hook dispatcher in
@@ -12,7 +12,7 @@ hand-maintained version has now been caught incomplete twice - Outbreak, then
 Sleight of Flesh. Run it after a game update:
 
     ilspycmd -p -o out -r lib lib/sts2.dll
-    tools/find-unnamed-damage.py out
+    tools/find-attribution-gaps.py out
 
 Anything it prints that UnpushedSourcePatches does not cover is either a new
 "(none)" row or a deliberate exclusion; the exclusions and why they are excluded
@@ -29,6 +29,11 @@ MODEL_DIRS = (
     "MegaCrit.Sts2.Core.Models.Relics",
     "MegaCrit.Sts2.Core.Models.Orbs",
 )
+
+BLOCK_DIRS = MODEL_DIRS + ("MegaCrit.Sts2.Core.Models.Potions",)
+
+# Block granted to one of these is the granter's own, so crediting the wearer is right and needs no patch.
+SELF_TARGETS = ("base.Owner", "base.Owner.Creature", "creature", "player.Creature")
 
 
 def hook_dispatchers(root):
@@ -77,6 +82,26 @@ def damaging_overrides(root, silent):
     return found
 
 
+def foreign_block_grants(root):
+    """Sources that put block on somebody other than their own owner.
+
+    Those are the ones whose credit cannot come from the wearer. A potion is fine either way - PotionSource knows the
+    thrower - so they are listed and marked rather than skipped, since it is the one distinction here that is a fact
+    about the file rather than about runtime.
+    """
+    found = []
+    for folder in BLOCK_DIRS:
+        kind = folder.rsplit(".", 1)[-1]
+        for path in sorted((root / folder).glob("*.cs")):
+            src = path.read_text()
+            for m in re.finditer(r"CreatureCmd\.GainBlock\(([^;]*?)\)\s*;", src, re.S):
+                args = " ".join(m.group(1).split())
+                target = args.split(",")[0].strip()
+                if target not in SELF_TARGETS:
+                    found.append((path.stem, kind, target))
+    return found
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "out")
     if not (root / HOOK).is_file():
@@ -95,8 +120,20 @@ def main():
         "  - a dealer of null is not this mechanism at all; SourceAttribution books those as DoTs\n"
         "  - whether the power sits on a player or an enemy, which decides whether the hit is booked\n"
         "    as damage dealt - and is a runtime fact, not something this script can read\n"
-        "  - whether an outer frame already pushed something (Thunder fires inside OrbCmd.Evoke's push,\n"
-        "    so it is misnamed after the orb rather than anonymous, and pushing here would not win)"
+        "  - whether an outer frame already pushed something, and if so whether the push is still standing\n"
+        "    when the hook runs - OrbCmd.Evoke pushes the evoked orb but pops it the line before dispatching,\n"
+        "    which is why Thunder was anonymous rather than named after the orb"
+    )
+
+    print("\nBlock granted to something other than the granter's own owner:")
+    for cls, kind, target in foreign_block_grants(root):
+        aside = "  (a potion - PotionSource already knows the thrower)" if kind == "Potions" else ""
+        print(f"  {cls:24s} [{kind}] target={target}{aside}")
+
+    print(
+        "\nThese cannot be credited to whoever wears the block. A potion is already handled; anything else\n"
+        "needs an entry in Patches/ForeignBlockPatches.cs, unless the receiver is an enemy (Rampart blocks\n"
+        "Turret Operators), whose block the meter does not report."
     )
 
 

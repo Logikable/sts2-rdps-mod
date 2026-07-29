@@ -20,7 +20,7 @@ namespace RdpsMeter.Patches;
 /// its damage - has fully settled. Wrapping the Task is what makes the pop reliable: a plain postfix on an async
 /// method runs when the Task is first returned, long before the damage lands.
 ///
-/// The list is derived, not remembered: `tools/find-unnamed-damage.py` asks a decompile which Hook.cs dispatchers lack
+/// The list is derived, not remembered: `tools/find-attribution-gaps.py` asks a decompile which Hook.cs dispatchers lack
 /// a PushModel call and which models deal damage out of one. Re-run it when the game updates - the hand-maintained
 /// version of this list has been caught short twice, by Outbreak and then by Sleight of Flesh.
 ///

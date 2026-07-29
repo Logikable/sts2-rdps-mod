@@ -111,6 +111,7 @@ internal static class SelfTest
         all &= await SleightOfFleshScenario(context, dealer, enemy);
         all &= await UnpushedRelicScenario(context, dealer, enemy);
         all &= await ThunderScenario(context, dealer, enemy);
+        all &= await BeaconOfHopeScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockFromRelicScenario(context, dealer, enemy);
@@ -545,6 +546,68 @@ internal static class SelfTest
             Expect("named after the power", l.DealtWith(you, expected), hit),
             Expect("not after the orb that set it off", l.DealtWith(you, orbName), 0m),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Beacon of Hope's block belongs to the player who gave it away, not the one wearing it. It sits on one player and
+    /// hands half of every block they gain to each teammate, arriving at the block funnel with no card - so the name came
+    /// off the call stack, which yields a prototype and therefore no owner, and the credit fell to the wearer. Every other
+    /// card-less source grants to its own owner or is a potion whose thrower is known, which is why that fallback held up
+    /// until this card.
+    ///
+    /// Two halves, because the fix is in two places. The first drives a foreign grant the way
+    /// <see cref="Patches.ForeignBlockPatches"/> does and follows it all the way through to a spend, which is where block
+    /// is actually booked: the 8 must land on the teammate who gave it and none of it on the wearer. Only a real spend
+    /// proves it, since block gained is never booked on its own.
+    ///
+    /// The second calls the real hook on a real Beacon, which is what verifies the patch rather than the mechanism: it
+    /// grants to nobody here (the harness combat has one player, and its fake teammates were never added to it), but the
+    /// prefix and the Task-wrapping pop still run, and leaving that stack unbalanced would put a giver's name on the next
+    /// player's block. Balance is the assertion a solo harness can make about it honestly.
+    /// </summary>
+    private static async Task<bool> BeaconOfHopeScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<BeaconOfHopePower>(ctx, dealer, 1m, dealer, null);
+        BeaconOfHopePower? beacon = dealer.GetPower<BeaconOfHopePower>();
+        if (beacon == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Beacon of Hope': FAIL (it did not apply)");
+            return false;
+        }
+
+        string expected = beacon.Title.GetFormattedText();
+
+        // A teammate's Beacon putting 8 block on you, as the patch records it: their name, their NetId, your block.
+        ForeignBlockGrant.Push(expected, 2uL);
+        try
+        {
+            await CreatureCmd.GainBlock(dealer, 8m, DamageProps.nonCardUnpowered, null);
+        }
+        finally
+        {
+            ForeignBlockGrant.Pop();
+        }
+
+        decimal worn = dealer.Block;
+        await CreatureCmd.Damage(ctx, new[] { dealer }, worn, DamageProps.card, enemy, null, null);
+
+        // Now the real hook, patch and all. Balanced afterwards is the point; it has no teammate to give to.
+        bool clearBefore = ForeignBlockGrant.Current == null;
+        await beacon.AfterBlockGained(dealer, 8m, DamageProps.nonCardUnpowered, null);
+        bool clearAfter = ForeignBlockGrant.Current == null;
+        await PowerCmd.Remove<BeaconOfHopePower>(dealer);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Beacon of Hope (block given to a teammate)",
+            Expect("the teammate's grant is what got worn", worn, 8m),
+            Expect("credited to the giver", l.BlockedWith(2uL, expected), 8m),
+            Expect("not to the wearer", l.BlockedWith(you, expected), 0m),
+            Expect("and the wearer keeps no block of their own", l.BlockedWith(you, NoCard), 0m),
+            Expect("the stack starts clean", clearBefore ? 1m : 0m, 1m),
+            Expect("and the real hook leaves it clean", clearAfter ? 1m : 0m, 1m));
     }
 
     /// <summary>

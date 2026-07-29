@@ -192,6 +192,16 @@ still standing (the rest of that method is async). Push and pop pair exactly
 because both sides run only for card-less gains, and a card preview — which
 always carries its card — never touches either.
 
+The call stack gives a **name but no owner** — it matches the frame's type against
+the model database, and a prototype belongs to nobody — so the credit falls back
+to whoever is *wearing* the block. That is right for every source that grants to
+its own owner (Plating, Rampart, Frost) and wrong for one that gives block away:
+Beacon of Hope hands half of your block to each teammate, and the giver is who
+the meter should show. `ForeignBlockGrant` carries the owner for the span of such
+a hook and outranks both other routes, being the innermost. Run
+`tools/find-attribution-gaps.py` after a game update — it lists every source that
+grants block to something other than its owner, which is the set that needs this.
+
 Dexterity is pooled the way Strength is: every source stacks into one
 `DexterityPower`, so `PowerOwnershipPatches.GrantedBy` records what granted each
 share and the meter can say "Dexterity Potion" instead of "Dexterity".

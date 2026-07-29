@@ -130,6 +130,10 @@ internal static class BlockPatches
 
         BlockPool.Clear();
         BlockSource.Clear();
+
+        // Balanced by its own postfix in the normal case; cleared here too so a hook that threw between the push and the
+        // pop cannot leave a giver's name attached to the next combat's block.
+        ForeignBlockGrant.Clear();
     }
 }
 

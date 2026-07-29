@@ -9,6 +9,69 @@ namespace RdpsMeter;
 internal readonly record struct BlockGranter(string? Name, ulong? OwnerNetId);
 
 /// <summary>
+/// A power or relic putting block on somebody other than its own owner, for as long as it is doing so.
+///
+/// Everything else that grants block without a card either grants it to the creature that owns it - Plating, Rampart,
+/// an orb's Frost - or is a potion, whose thrower <see cref="PotionSource"/> already knows. For those,
+/// <see cref="BlockAttributionEngine"/> can credit the wearer and be right, which is exactly what it does when nothing
+/// names an owner. Beacon of Hope is the case that breaks: it sits on one player and hands half of their block to their
+/// teammates, so crediting the wearer credits the wrong person - the block was a gift, and the giver is who the Blocked
+/// meter is meant to show.
+///
+/// The call stack cannot answer it. BlockSource's CallingModel recovers a *name* from the stack by matching
+/// the frame's declaring type against the model database, which yields the prototype - and a prototype has no owner. The
+/// live instance is only reachable from the hook itself, so a patch there records the owner while the grant runs.
+///
+/// One global stack rather than a dictionary per player, because the whole point is that the receiving player is not the
+/// key: the credited player is what this supplies. LIFO is safe because the game awaits each listener's hook in turn, so
+/// two players' Beacons are sequential rather than interleaved, and the pop happens only once the hook's own Task has
+/// settled.
+/// </summary>
+internal static class ForeignBlockGrant
+{
+    private static readonly Stack<(string Effect, ulong GiverNetId)> Granting = new();
+    private static readonly object Lock = new();
+
+    public static void Push(string effect, ulong giverNetId)
+    {
+        lock (Lock)
+        {
+            Granting.Push((effect, giverNetId));
+        }
+    }
+
+    public static void Pop()
+    {
+        lock (Lock)
+        {
+            if (Granting.Count > 0)
+            {
+                Granting.Pop();
+            }
+        }
+    }
+
+    public static (string Effect, ulong GiverNetId)? Current
+    {
+        get
+        {
+            lock (Lock)
+            {
+                return Granting.TryPeek(out (string Effect, ulong GiverNetId) top) ? top : null;
+            }
+        }
+    }
+
+    public static void Clear()
+    {
+        lock (Lock)
+        {
+            Granting.Clear();
+        }
+    }
+}
+
+/// <summary>
 /// Names the relic, power or potion behind a block gain that no card explains, so the Blocked breakdown reads
 /// "Orichalcum" or "Block Potion" rather than "(none)". A card is not this class's business: block from a card arrives
 /// at Hook.ModifyBlock with its CardModel attached and names itself.
@@ -44,7 +107,13 @@ internal static class BlockSource
     /// </summary>
     public static void Capture(Creature creature)
     {
-        BlockGranter granter = PotionSource.Sole() is (ulong netId, string title)
+        // A grant being made on someone else's behalf outranks both of the others, because it is the innermost of them
+        // and the only one that knows the block is not the receiver's own. Drink a Block Potion with Beacon of Hope up
+        // and both windows are open at once for the teammate's half: the potion named the gain that triggered Beacon,
+        // Beacon is what granted this one.
+        BlockGranter granter = ForeignBlockGrant.Current is (string effect, ulong giver)
+            ? new BlockGranter(effect, giver)
+            : PotionSource.Sole() is (ulong netId, string title)
             ? new BlockGranter(title, netId)
             : new BlockGranter(CallingModel(), null);
 
