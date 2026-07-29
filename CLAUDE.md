@@ -62,6 +62,20 @@ cannot influence it: each row is a plain `Control` whose children are anchored
 big number can overflow its column, but it can never reflow the window. Any
 width change is therefore something assigning `CustomMinimumSize`, not content.
 
+## Overlay drawing traps
+
+Two that cost a round trip each, both silent — the code looks right and the
+screen disagrees.
+
+A **`MenuButton` constructs itself flat**, and a flat button draws no stylebox
+at all. Style it however you like; nothing appears until `Flat = false`.
+
+**Two translucent layers don't composite to the same shade as one.** The
+breakdown's split bar draws its own segment over the fainter one behind it, so
+the same colour drawn as a single solid bar comes out duller. Where two modes
+must match, build the *same* bar and vary what is split off it — don't swap in
+`EffectBackground` for `SplitBackground`.
+
 ## Overlay persistence
 
 The window is not tied to combat. `RdpsOverlay.ShouldShow` asks the **run**
