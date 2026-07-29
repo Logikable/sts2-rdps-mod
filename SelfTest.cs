@@ -102,6 +102,7 @@ internal static class SelfTest
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await BlockSpentScenario(context, dealer, enemy);
+        all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockDexterityScenario(context, dealer, enemy, applier2);
         all &= await BlockProRataScenario(context, dealer, enemy, applier2, applier3);
         all &= await BlockedMeterScenario();
@@ -279,6 +280,39 @@ internal static class SelfTest
             Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
 
         return untouched && spent;
+    }
+
+    /// <summary>
+    /// Block from a power names itself. This is the one naming path nothing else reaches: a card arrives carrying its
+    /// own CardModel and a potion is announced by the potion tracker, but a relic or power grants block from a hook the
+    /// game keeps no record of, so the only thing that can say what granted it is the call stack at the synchronous
+    /// entry to CreatureCmd.GainBlock. Plating is applied to the dealer and its own end-of-turn hook driven directly -
+    /// which puts the same frame on the stack a real turn would, since a state machine's MoveNext is the caller either
+    /// way. The expected name is read off the live power and matched against what the meter recovered from the model
+    /// database, so this also pins the assumption that a model's prototype carries the same title as the run's copy.
+    /// </summary>
+    private static async Task<bool> BlockFromPowerScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<PlatingPower>(ctx, dealer, 6m, dealer, null);
+        PlatingPower? plating = dealer.GetPower<PlatingPower>();
+        if (plating == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Block from a power': FAIL (Plating did not apply)");
+            return false;
+        }
+
+        string expected = plating.Title.GetFormattedText();
+        await plating.BeforeSideTurnEndEarly(ctx, CombatSide.Player, new[] { dealer });
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 6m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Block from a power",
+            Expect("named after the power", l.BlockedWith(you, expected), 6m),
+            Expect("nothing left unnamed", l.BlockedWith(you, "(none)"), 0m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
     }
 
     /// <summary>
@@ -1360,6 +1394,12 @@ internal static class SelfTest
         if (dealer.GetPower<DexterityPower>() != null)
         {
             await PowerCmd.Remove<DexterityPower>(dealer);
+        }
+
+        // Plating grants block off its own hooks, so one left standing would quietly shield a later scenario.
+        if (dealer.GetPower<PlatingPower>() != null)
+        {
+            await PowerCmd.Remove<PlatingPower>(dealer);
         }
 
         // Block left standing would silently soak the next scenario's swing and make it assert against the wrong
