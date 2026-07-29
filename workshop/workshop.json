@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.17 - a fix for damage that was showing up under no name at all. A Defect orb's passive was credited to the orb only when it was evoked, or when a card triggered it; the passive that fires at the end of every turn - which is most of what Glass and Lightning ever deal - was landing unattributed. It now reads as the orb wherever it comes from. Block from an orb was never affected. Checked against game v0.109.1.",
+  "changeNote": "0.1.18 - the meter can now be got out of the way. The minus at the right of its header collapses the whole window to a small square holding just a plus, which opens it again; the square appears centred on the minus you clicked, so the button stays under the pointer, and reopening puts the window back exactly where it was. Collapsed or not is remembered between sessions. The title now always states a number rather than only naming the meter - \"Damage: 0\" where it used to read \"Damage\" - and in co-op it carries the party's total, which the meter had not shown anywhere before. Also fixes a window that could only ever grow: it kept the height of the tallest breakdown it had drawn, instead of shrinking back when a breakdown lost rows. Checked against game v0.109.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
