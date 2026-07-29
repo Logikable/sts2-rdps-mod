@@ -169,6 +169,25 @@ Dexterity is pooled the way Strength is: every source stacks into one
 `DexterityPower`, so `PowerOwnershipPatches.GrantedBy` records what granted each
 share and the meter can say "Dexterity Potion" instead of "Dexterity".
 
+## When a row says "(none)"
+
+Damage with a real dealer but no card is named from the game's executing-model
+stack (`PlayerChoiceContext.LastInvolvedModel`). The trap is that the game
+pushes onto that stack on **some routes and not others**, so the same effect can
+be named or anonymous depending on how it fired. Orbs are the clearest case:
+`OrbCmd` pushes when an orb is evoked and when a card triggers its passive, but
+the orb's own end-of-turn trigger pushes nothing, so Glass and Lightning were
+named only when evoked.
+
+So when a source reads "(none)", don't ask whether the *effect* is handled — ask
+whether **that route** pushes. The fix is always the same shape: push the model
+onto `ExecutingEffect` (the supplemental stack `EffectSource` falls back to) in a
+prefix, and pop it by wrapping the returned `Task`, never in a plain postfix —
+an async method returns its Task long before the damage lands.
+
+Block is immune to all of this: `BlockSource` reads the real call stack instead,
+which does not care what anybody pushed.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three
