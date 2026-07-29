@@ -16,6 +16,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Potions;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Runs.History;
@@ -82,10 +83,13 @@ internal static class SelfTest
             return false;
         }
 
-        // Two detached fake players, never added to combat, exist only to be effect appliers with NetIds distinct
-        // from the real dealer (NetId 1). Cross-player credit only happens when applier NetId != dealer NetId.
+        // Three detached fake players, never added to combat, exist only to be effect appliers with NetIds distinct
+        // from the real dealer (NetId 1). Cross-player credit only happens when applier NetId != dealer NetId. Three of
+        // them rather than two so a full four-player party can be assembled: the pro-rata splits are the only place the
+        // party size is load-bearing, and a two-way split can be right for reasons a three-way one is not.
         var applier2 = new Creature(Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 2uL), 1, 1);
         var applier3 = new Creature(Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 3uL), 1, 1);
+        var applier4 = new Creature(Player.CreateForNewRun(dealer.Player.Character, dealer.Player.UnlockState, 4uL), 1, 1);
         var context = new NoOpChoiceContext();
 
         // First, while the harness combat is still empty: this one hijacks the run ledger to play two runs against each
@@ -103,8 +107,13 @@ internal static class SelfTest
         all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
+        all &= await BlockFromRelicScenario(context, dealer, enemy);
+        all &= await BlockFromCardScenario(context, dealer, enemy, applier2);
+        all &= await BlockOwnDexterityScenario(context, dealer, enemy, applier2);
         all &= await BlockDexterityScenario(context, dealer, enemy, applier2);
         all &= await BlockProRataScenario(context, dealer, enemy, applier2, applier3);
+        all &= await BlockFourPlayerScenario(context, dealer, enemy, applier2, applier3, applier4);
+        all &= await BlockReconcileScenario(context, dealer, enemy);
         all &= await BlockedMeterScenario();
         all &= await OverkillScenario(context, dealer, enemy);
         all &= await OverlayWidthScenario(dealer, enemy);
@@ -316,6 +325,127 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// Block from a relic names itself. It reaches the meter down the same call-stack path a power's block does, but
+    /// out the other arm of the model lookup - a RelicModel's title is a different property from a PowerModel's - so a
+    /// green power scenario says nothing about a relic. Anchor is cloned mutable and handed the dealer's player as its
+    /// owner, then its own before-combat hook is driven directly; the clone is never added to their relics, so it
+    /// receives no further hooks and cannot shield a later scenario.
+    /// </summary>
+    private static async Task<bool> BlockFromRelicScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        var anchor = (Anchor)ModelDb.Relic<Anchor>().MutableClone();
+        anchor.Owner = dealer.Player!;
+        string expected = anchor.Title.GetFormattedText();
+
+        await anchor.BeforeCombatStart();
+        decimal granted = dealer.Block;
+        await CreatureCmd.Damage(ctx, new[] { dealer }, granted, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Block from a relic",
+            Expect("the relic granted its block", granted, 10m),
+            Expect("named after the relic", l.BlockedWith(you, expected), granted),
+            Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+    }
+
+    /// <summary>
+    /// A card names its own block, and in co-op it says whose block it is. Block arrives at Hook.ModifyBlock carrying
+    /// the CardModel that granted it, which is both the row's name and - through the card's owner - the player to
+    /// credit, so a teammate's Defend on you is theirs on the meter even though you are the one wearing it.
+    ///
+    /// The teammate half also pins the priority rule against a card rather than a Dexterity share: your own block is
+    /// spent first, and only the 3 it could not cover reaches what they played.
+    /// </summary>
+    private static async Task<bool> BlockFromCardScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        CardModel mine = Owned(dealer.Player!);
+        string myCard = mine.TitleLocString.GetFormattedText();
+        await CreatureCmd.GainBlock(dealer, 5m, BlockProps.card, Play(mine, dealer.Player!, dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 5m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool solo = Report("Block from your own card",
+            Expect("named after the card", l.BlockedWith(you, myCard), 5m),
+            Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
+            Expect("all of it yours", l.RBlockOf(you), 5m));
+
+        // Their card on you: 4 of your own underneath it, and a 7-damage hit that has to go through both.
+        await Prep(dealer, enemy);
+        CardModel theirs = Owned(applier2.Player!);
+        string theirCard = theirs.TitleLocString.GetFormattedText();
+        await Shield(dealer, 4m, you, "Block Potion");
+        await CreatureCmd.GainBlock(dealer, 6m, BlockProps.card, Play(theirs, applier2.Player!, dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 7m, DamageProps.card, enemy, null, null);
+
+        bool party = Report("Block from a teammate's card",
+            Expect("your own 4 goes first", l.BlockedWith(you, "Block Potion"), 4m),
+            Expect("then 3 of theirs", l.BlockedWith(you, theirCard), 3m),
+            Expect("given 2->you", l.BlockGivenTo(2uL, theirCard, you), 3m),
+            Expect("you stopped 4", l.RBlockOf(you), 4m),
+            Expect("they stopped 3", l.RBlockOf(2uL), 3m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        return solo && party;
+    }
+
+    /// <summary>
+    /// Your own Dexterity is itemized too, not folded into the card that spent it - which is the whole point of the
+    /// breakdown in a solo run, where every row is yours and "Defend 5, Speed Potion 3" is the only reading that says
+    /// anything. Nothing here crosses players, so it is the one block path a single-player game exercises in full.
+    ///
+    /// Then the other side of it: Dexterity can be negative, and a modifier that cost block rather than gave it has no
+    /// positive contribution to hand out. Crediting it with negative block would read as nonsense, so the whole
+    /// (already reduced) gain stays on the card that granted it.
+    /// </summary>
+    private static async Task<bool> BlockOwnDexterityScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CardModel card = Owned(dealer.Player!);
+        string cardName = card.TitleLocString.GetFormattedText();
+
+        PotionSource.Begin(you, "Speed Potion");
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 3m, dealer, null);
+        PotionSource.End(you);
+
+        await CreatureCmd.GainBlock(dealer, 5m, BlockProps.card, Play(card, dealer.Player!, dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool split = Report("Block from your own Dexterity",
+            Expect("the card's own 5", l.BlockedWith(you, cardName), 5m),
+            Expect("your Dexterity, under its potion", l.BlockedWith(you, "Speed Potion"), 3m),
+            Expect("never as a bare Dexterity row", l.BlockedWith(you, "Dexterity"), 0m),
+            Expect("all 8 yours", l.RBlockOf(you), 8m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        // A teammate's -2 Dexterity against the same 5-block card: 3 lands, and all 3 belongs to the card.
+        await Prep(dealer, enemy);
+        PotionSource.Begin(2uL, "Sour Potion");
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, -2m, applier2, null);
+        PotionSource.End(2uL);
+
+        await CreatureCmd.GainBlock(dealer, 5m, BlockProps.card, Play(card, dealer.Player!, dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 3m, DamageProps.card, enemy, null, null);
+
+        bool negative = Report("Block under negative Dexterity",
+            Expect("the reduced block stays on the card", l.BlockedWith(you, cardName), 3m),
+            Expect("nothing is credited to the debuff", l.BlockedWith(you, "Sour Potion"), 0m),
+            Expect("and none of it is theirs", l.RBlockOf(2uL), 0m));
+
+        return split && negative;
+    }
+
+    /// <summary>
     /// Block a teammate paid for is credited to them, and named after what granted it rather than after the pooled
     /// power it stacked into: a teammate's Dexterity Potion adds 3 to the dealer's 5-block card, and that 3 is theirs
     /// under the potion's own name, not under "Dexterity".
@@ -387,6 +517,92 @@ internal static class SelfTest
             Expect("given 3->you", l.BlockGivenTo(3uL, "Dexterity", you), 1m),
             Expect("you stopped none of it", l.RBlockOf(you), 0m),
             Expect("they stopped 2 and 1", l.RBlockOf(2uL) + l.RBlockOf(3uL), 3m));
+    }
+
+    /// <summary>
+    /// A full four-player party against one gain, which is where the two rules have to hold at once and where a
+    /// two-way split can look right for reasons a three-way one does not. The dealer's own 3-block potion is topped up
+    /// by Dexterity from all three teammates, 3:2:1, for 9 block standing.
+    ///
+    /// A 6-damage hit takes the dealer's own 3 first and leaves 3 for the teammates - half of the 6 they put in - so
+    /// each gives up half of their own stake rather than the split running down some order. The second hit then finds
+    /// only their block left and spends it out, so across the pair each teammate has stopped exactly what they added.
+    /// </summary>
+    private static async Task<bool> BlockFourPlayerScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3, Creature applier4)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 3m, applier2, null);
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 2m, applier3, null);
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 1m, applier4, null);
+        LogShares("Dexterity", dealer.GetPower<DexterityPower>());
+
+        await Shield(dealer, 3m, you, "Block Potion");
+        decimal standing = dealer.Block;
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 6m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool partial = Report("Block across four players",
+            Expect("three teammates topped up 3 to 9", standing, 9m),
+            Expect("your own 3 goes first", l.BlockedWith(you, "Block Potion"), 3m),
+            Expect("2 gives up half of 3", l.BlockGivenTo(2uL, "Dexterity", you), 1.5m),
+            Expect("3 gives up half of 2", l.BlockGivenTo(3uL, "Dexterity", you), 1m),
+            Expect("4 gives up half of 1", l.BlockGivenTo(4uL, "Dexterity", you), 0.5m),
+            Expect("you stopped your own 3", l.RBlockOf(you), 3m),
+            Expect("they stopped 3 between them", l.RBlockOf(2uL) + l.RBlockOf(3uL) + l.RBlockOf(4uL), 3m));
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 3m, DamageProps.card, enemy, null, null);
+
+        bool spentOut = Report("Block across four players (spent out)",
+            Expect("2 stopped all 3 they added", l.BlockGivenTo(2uL, "Dexterity", you), 3m),
+            Expect("3 stopped all 2 they added", l.BlockGivenTo(3uL, "Dexterity", you), 2m),
+            Expect("4 stopped all 1 they added", l.BlockGivenTo(4uL, "Dexterity", you), 1m),
+            Expect("your own is not spent twice", l.RBlockOf(you), 3m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        return partial && spentOut;
+    }
+
+    /// <summary>
+    /// The pool is squared against the creature's real Block before every read, which is what spares the meter a patch
+    /// for every path that moves block behind its back. Both directions are real and neither goes through the block
+    /// funnel: block the game simply takes away - the turn's own expiry, an enemy stripping it - and block that lands
+    /// without ever being granted.
+    ///
+    /// Losing it must come off the oldest gains, in the order they would have been spent: 10 block from two sources,
+    /// 6 of it taken away, and the 4 that is left is all the newer gain's. Gaining it unseen must not vanish from the
+    /// total either, so it is filed as the wearer's own under no name rather than dropped.
+    /// </summary>
+    private static async Task<bool> BlockReconcileScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await Shield(dealer, 5m, you, "Block Potion");
+        await Shield(dealer, 5m, you, "Second Wind");
+        await CreatureCmd.LoseBlock(ctx, dealer, 6m, null);
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool trimmed = Report("Block taken away unseen",
+            Expect("the oldest gain went with it", l.BlockedWith(you, "Block Potion"), 0m),
+            Expect("what survived is the newer gain", l.BlockedWith(you, "Second Wind"), 4m),
+            Expect("only the surviving 4 counts", l.RBlockOf(you), 4m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        // Block that never passed through the funnel: nothing named it, and nothing may swallow it either.
+        await Prep(dealer, enemy);
+        dealer.GainBlockInternal(5m);
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 5m, DamageProps.card, enemy, null, null);
+
+        bool padded = Report("Block gained unseen",
+            Expect("it still counts", l.RBlockOf(you), 5m),
+            Expect("filed under no name", l.BlockedWith(you, NoCard), 5m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        return trimmed && padded;
     }
 
     /// <summary>
@@ -477,6 +693,37 @@ internal static class SelfTest
         PotionSource.Begin(netId, source);
         await CreatureCmd.GainBlock(dealer, amount, BlockProps.card, null);
         PotionSource.End(netId);
+    }
+
+    /// <summary>
+    /// A card of this player's, stamped as theirs. A detached fake player's deck cards start unowned, and ownership is
+    /// what the block attribution reads to decide whose the block is, so it is set before the card is ever played.
+    /// </summary>
+    private static CardModel Owned(Player player)
+    {
+        CardModel card = player.Deck.Cards.First();
+        if (card.Owner != player)
+        {
+            card.Owner = player;
+        }
+
+        return card;
+    }
+
+    /// <summary>A card being played, which is all a block gain needs to name itself and say whose it is.</summary>
+    private static CardPlay Play(CardModel card, Player player, Creature target)
+    {
+        return new CardPlay
+        {
+            Card = card,
+            Player = player,
+            Target = target,
+            ResultPile = PileType.Discard,
+            Resources = default,
+            IsAutoPlay = false,
+            PlayIndex = 0,
+            PlayCount = 1,
+        };
     }
 
     /// <summary>
