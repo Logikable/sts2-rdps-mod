@@ -110,6 +110,7 @@ internal static class SelfTest
         all &= await SpeedsterPotionScenario(context, dealer, enemy);
         all &= await SleightOfFleshScenario(context, dealer, enemy);
         all &= await UnpushedRelicScenario(context, dealer, enemy);
+        all &= await ThunderScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockFromRelicScenario(context, dealer, enemy);
@@ -496,6 +497,53 @@ internal static class SelfTest
         return Report("Parrying Shield (a relic on an unpushed hook)",
             Expect("the relic hits for what it says", hit, 6m),
             Expect("named after the relic", l.DealtWith(you, expected), hit),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Thunder names itself, not the orb that set it off. Worth its own scenario because the orb is the plausible wrong
+    /// answer and the code invites it: OrbCmd.Evoke does push the evoked orb onto the model stack, so it reads as though
+    /// an evoke-triggered hook runs inside that push. It does not - the pop is the line before the hook is dispatched -
+    /// which is why Thunder was anonymous rather than misnamed, and why it belongs in the plain list of unpushed hooks.
+    ///
+    /// A Lightning orb is what the power checks for, so it gets one, owned by the dealer; the clone is never queued, so
+    /// it is only ever the argument to this hook and evokes nothing of its own.
+    /// </summary>
+    private static async Task<bool> ThunderScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<ThunderPower>(ctx, dealer, 7m, dealer, null);
+        ThunderPower? thunder = dealer.GetPower<ThunderPower>();
+        if (thunder == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Thunder': FAIL (it did not apply)");
+            return false;
+        }
+
+        var lightning = (LightningOrb)ModelDb.Orb<LightningOrb>().MutableClone();
+        lightning.Owner = dealer.Player!;
+
+        string expected = thunder.Title.GetFormattedText();
+        string orbName = lightning.Title.GetFormattedText();
+        decimal hit = thunder.Amount;
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {hit} off an evoked \"{orbName}\"");
+
+        try
+        {
+            await thunder.AfterOrbEvoked(ctx, lightning, new[] { enemy });
+        }
+        finally
+        {
+            await PowerCmd.Remove<ThunderPower>(dealer);
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Thunder (damage when a Lightning orb is evoked)",
+            Expect("it hits for what it says", hit, 7m),
+            Expect("named after the power", l.DealtWith(you, expected), hit),
+            Expect("not after the orb that set it off", l.DealtWith(you, orbName), 0m),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 

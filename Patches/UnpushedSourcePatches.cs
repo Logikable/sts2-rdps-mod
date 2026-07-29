@@ -24,16 +24,18 @@ namespace RdpsMeter.Patches;
 /// a PushModel call and which models deal damage out of one. Re-run it when the game updates - the hand-maintained
 /// version of this list has been caught short twice, by Outbreak and then by Sleight of Flesh.
 ///
-/// Four of that script's answers are deliberately not here, for three different reasons:
+/// Four of that script's answers are deliberately not here, for two reasons:
 ///
 /// - Demise, Poison and Magic Bomb never reach EffectSource. Their damage is dealer-less or dealt by the creature
 ///   carrying the power, and <see cref="SourceAttribution"/> books it against whoever applied the effect instead.
 /// - Constrict sits on the player and damages that same player, and the ledger books no hit whose target is a player,
-///   so there is no row to name.
-/// - Thunder is a real mis-attribution that this cannot fix. It fires from AfterOrbEvoked, inside the push OrbCmd.Evoke
-///   already did, so its damage reads as the evoked orb rather than as "(none)". LastInvolvedModel outranks
-///   ExecutingEffect, so pushing here would change nothing; fixing it means deciding which stack wins, which is a
-///   change to every case rather than an addition to this list.
+///   so there is no row to name. Nothing a player can play applies it, so that is the only way it occurs.
+///
+/// Thunder deserves a note because it looks like an exception and is not. It fires from AfterOrbEvoked, and OrbCmd.Evoke
+/// does push the evoked orb - so the natural reading is that its damage is misnamed after the orb rather than left
+/// anonymous, and that no push here could outrank that. But the push is popped on the line *before* the hook is
+/// dispatched (PushModel, await Evoke, PopModel, then Hook.AfterOrbEvoked), so nothing of the orb is standing by the
+/// time Thunder runs. It is an ordinary member of this list, and reads "(none)" without an entry like everything else.
 /// </summary>
 [HarmonyPatch]
 internal static class UnpushedSourcePatches
@@ -48,6 +50,7 @@ internal static class UnpushedSourcePatches
         yield return AccessTools.Method(typeof(NecroMasteryPower), nameof(NecroMasteryPower.AfterCurrentHpChanged));
         yield return AccessTools.Method(
             typeof(SmokestackPower), nameof(SmokestackPower.AfterCardGeneratedForCombat));
+        yield return AccessTools.Method(typeof(ThunderPower), nameof(ThunderPower.AfterOrbEvoked));
     }
 
     [HarmonyPrefix]
