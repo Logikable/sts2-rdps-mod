@@ -1018,18 +1018,23 @@ internal static class SelfTest
         await Settle();
         decimal rdpsValue = overlay.HarnessValue(row);
         (IReadOnlyList<string> Sections, bool SplitBars) rdps = overlay.HarnessBreakdown(row);
-        string rdpsTitle = overlay.HarnessTitle;
+        string rdpsTitle = overlay.HarnessModeName(solo: false);
 
         overlay.HarnessStepMode(1);
         await Settle();
         decimal adpsValue = overlay.HarnessValue(row);
         (IReadOnlyList<string> Sections, bool SplitBars) adps = overlay.HarnessBreakdown(row);
-        string adpsTitle = overlay.HarnessTitle;
+        string adpsTitle = overlay.HarnessModeName(solo: false);
         MeterMode remembered = OverlayLayout.LoadMode();
 
         // Two meters, so either arrow reaches the other one and the pair comes back around.
         overlay.HarnessStepMode(-1);
         MeterMode back = overlay.HarnessMode;
+
+        // Alone there is only one meter: it goes by the name the two share, and the arrows have nowhere to page to.
+        string soloTitle = overlay.HarnessModeName(solo: true);
+        overlay.HarnessStepMode(1, solo: true);
+        MeterMode parked = overlay.HarnessMode;
 
         OverlayLayout.SaveMode(entered);
         for (int guard = 0; overlay.HarnessMode != entered && guard < 4; guard++)
@@ -1053,7 +1058,10 @@ internal static class SelfTest
             Expect("aDPS bars are solid", adps.SplitBars ? 0m : 1m, 1m),
             Expect("aDPS titled", adpsTitle.StartsWith(Loc.T("mode.adps")) ? 1m : 0m, 1m),
             Expect("the meter is remembered", remembered == MeterMode.ADps ? 1m : 0m, 1m),
-            Expect("the other arrow comes back", back == MeterMode.Rdps ? 1m : 0m, 1m));
+            Expect("the other arrow comes back", back == MeterMode.Rdps ? 1m : 0m, 1m),
+            Expect("solo says DPS", soloTitle == Loc.T("mode.dps") ? 1m : 0m, 1m),
+            Expect("solo arrows page nowhere", parked == MeterMode.Rdps ? 1m : 0m, 1m),
+            Expect("the picker draws its chip", overlay.HarnessPickerDrawsChip ? 1m : 0m, 1m));
     }
 
     private static MapPointHistoryEntry Point(params RoomType[] rooms)

@@ -1,4 +1,5 @@
 {
+  "mode.dps": "DPS",
   "mode.rdps": "rDPS",
   "mode.adps": "aDPS",
   "title.value": "{0}：{1}",

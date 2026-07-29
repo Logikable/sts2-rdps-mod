@@ -133,6 +133,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // whichever one was last read rather than always on rDPS.
     private MeterMode _mode = OverlayLayout.LoadMode();
 
+    // Whether the run being shown has nobody to credit, recomputed each frame. A solo run has only one meter - with no
+    // teammates, rDPS and aDPS are the same number - so it is drawn under the one name they share and the arrows have
+    // nothing to page to. They stay on screen rather than disappearing: more meters are coming, and a control that
+    // vanishes and returns is worse than one that waits.
+    private bool _solo;
+
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
     private int _generation = -1;
 
@@ -216,6 +222,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _menu = new MenuButton
         {
             Text = Loc.T("view.total"),
+
+            // Godot's MenuButton constructs itself flat, and a flat button draws no stylebox at all - which is why the
+            // chip below was invisible however firmly it was styled. Turn that off before styling it.
+            Flat = false,
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
             ClipText = true,
@@ -389,8 +399,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
         // way. The panel becomes the breakdown itself, with the meter's total moved up into the header.
-        bool solo = RunContext.IsSingleplayer && ordered.Count <= 1;
-        if (solo)
+        _solo = RunContext.IsSingleplayer && ordered.Count <= 1;
+        if (_solo)
         {
             RenderBreakdownBody(ordered.Count > 0 ? ordered[0] : null);
             return;
@@ -474,10 +484,21 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// <summary>The meter being read, the headline it draws, and the arrows that page between them.</summary>
     internal MeterMode HarnessMode => _mode;
 
+    /// <summary>Whether the view picker is drawing its chip. Flat is Godot's default for a MenuButton and draws none.</summary>
+    internal bool HarnessPickerDrawsChip => !_menu.Flat;
+
     internal string HarnessTitle => _title.Text;
 
-    internal void HarnessStepMode(int step)
+    /// <summary>What the meter calls itself for a party run and for a solo one, without waiting for a frame to draw.</summary>
+    internal string HarnessModeName(bool solo)
     {
+        return ModeName(solo);
+    }
+
+    /// <summary>Drives the arrows against a run of the given shape, the way _Process would have decided it.</summary>
+    internal void HarnessStepMode(int step, bool solo = false)
+    {
+        _solo = solo;
         StepMode(step);
     }
 
@@ -505,10 +526,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             {
                 sections.AddRange(strip.GetChildren().OfType<Label>().Select(l => l.Text));
             }
-            else if (child is Control bar && bar.GetChildCount() > 0)
+            else if (child is Control bar && bar.GetChildCount() > 0 && bar.GetChild(0) is Control holder)
             {
-                // A row's background is its first child: one ProgressBar when solid, a holder of two when split.
-                split |= bar.GetChild(0) is not ProgressBar;
+                // A row's background is its first child. A split damage bar is a holder of two ProgressBars, the one
+                // behind reaching further than the one in front; that overhang is the faded part the eye picks up.
+                List<ProgressBar> bars = holder.GetChildren().OfType<ProgressBar>().ToList();
+                split |= bars.Count == 2 && bars[0].Value > bars[1].Value;
             }
         }
 
@@ -552,6 +575,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // it reads as "there is more than this one", and so a third meter needs no new control.
     private void StepMode(int step)
     {
+        if (_solo)
+        {
+            return;
+        }
+
         MeterMode[] modes = { MeterMode.Rdps, MeterMode.ADps };
         int index = Array.IndexOf(modes, _mode);
         _mode = modes[((index + step) % modes.Length + modes.Length) % modes.Length];
@@ -570,7 +598,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     private string ModeName()
     {
-        return Loc.T(_mode == MeterMode.ADps ? "mode.adps" : "mode.rdps");
+        return ModeName(_solo);
+    }
+
+    // What the meter on screen is called. rDPS and aDPS are only worth telling apart when there are teammates to move
+    // damage between; alone, both are simply the damage you did, so the run says DPS and means it.
+    private string ModeName(bool solo)
+    {
+        return solo
+            ? Loc.T("mode.dps")
+            : Loc.T(_mode == MeterMode.ADps ? "mode.adps" : "mode.rdps");
     }
 
     private void OnViewPicked(long id)
@@ -737,9 +774,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         foreach ((string card, decimal amount, decimal buff) in items)
         {
-            Control bar = split
-                ? SplitBackground(amount - buff, amount, max, color)
-                : EffectBackground(amount, max, color);
+            // Always the split bar, with nothing split off it on the aDPS meter. Drawing that one solid instead would
+            // tint it differently: the split bar's own segment sits over the fainter one behind it, and two translucent
+            // layers of a colour do not composite to the same shade as one.
+            Control bar = SplitBackground(split ? amount - buff : amount, amount, max, color);
             list.AddChild(BarRow(Loc.SourceName(card), Round(amount).ToString(), Percent(amount, total), bar));
         }
     }
