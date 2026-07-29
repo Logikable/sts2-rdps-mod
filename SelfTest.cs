@@ -16,6 +16,7 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Potions;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Runs;
@@ -105,6 +106,7 @@ internal static class SelfTest
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
+        all &= await OrbPassiveScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockFromRelicScenario(context, dealer, enemy);
@@ -323,6 +325,36 @@ internal static class SelfTest
             Expect("named after the power", l.BlockedWith(you, expected), 6m),
             Expect("nothing left unnamed", l.BlockedWith(you, "(none)"), 0m),
             Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+    }
+
+    /// <summary>
+    /// An orb's passive names itself when it fires the way it usually does: off the end of the turn, which is the one
+    /// route into a passive the game pushes nothing for. Glass is the orb to check, since its passive is damage - it
+    /// hits every enemy with the player as dealer and no card, so with nothing on the executing-model stack the whole
+    /// hit lands under "(none)".
+    ///
+    /// A mutable Glass is given the dealer's player as owner and its own end-of-turn hook driven directly, which is
+    /// the same call chain CombatManager walks: BeforeTurnEndOrbTrigger, then TriggerPassive on itself. The expected
+    /// name is read off the orb, so this pins whatever the game calls it rather than a guess.
+    /// </summary>
+    private static async Task<bool> OrbPassiveScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        var glass = (GlassOrb)ModelDb.Orb<GlassOrb>().MutableClone();
+        glass.Owner = dealer.Player!;
+        string expected = glass.Title.GetFormattedText();
+        decimal passive = glass.PassiveVal;
+
+        GD.Print($"[RdpsMeter] Self-test: glass orb title = \"{expected}\", passive = {passive}");
+        await glass.BeforeTurnEndOrbTrigger(ctx);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Orb passive at end of turn",
+            Expect("the orb's passive is worth something", passive, 4m),
+            Expect("named after the orb", l.DealtWith(you, expected), passive),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 
     /// <summary>
