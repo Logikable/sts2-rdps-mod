@@ -64,7 +64,7 @@ width change is therefore something assigning `CustomMinimumSize`, not content.
 
 ## Overlay drawing traps
 
-Two that cost a round trip each, both silent — the code looks right and the
+Three that cost a round trip each, all silent — the code looks right and the
 screen disagrees.
 
 A **`MenuButton` constructs itself flat**, and a flat button draws no stylebox
@@ -75,6 +75,18 @@ breakdown's split bar draws its own segment over the fainter one behind it, so
 the same colour drawn as a single solid bar comes out duller. Where two modes
 must match, build the *same* bar and vary what is split off it — don't swap in
 `EffectBackground` for `SplitBackground`.
+
+**The panel's height only ever grows.** Godot enlarges an anchored control to
+fit its minimum size but never shrinks it back, and the panel hangs off a
+`CanvasLayer`, so no container does it either. Left alone the window keeps the
+height of the tallest breakdown it has ever drawn. `_Process` therefore assigns
+`_panel.Size` down to `GetCombinedMinimumSize()` every frame — safe, because
+Godot clamps that back up, so it can only remove space nothing asked for.
+
+Note the asymmetry with the width above: width is pinned *by construction*
+(nothing can influence `CustomMinimumSize`), height is corrected *every frame*.
+Don't debug a stuck height by hunting for what set it — `Size` and
+`GetCombinedMinimumSize()` disagreeing is the whole bug, so print both.
 
 ## Overlay persistence
 

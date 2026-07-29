@@ -8,7 +8,13 @@ the team's with an instant hover breakdown. The arrows either side of its
 title page between meters — rDPS; aDPS, the damage a player dealt without any
 teammate credit; and Blocked, the damage their block stopped — and it reopens
 on whichever one you last read. Playing alone there is nobody to credit, so the
-first two are the same number and appear once, as Damage.
+first two are the same number and appear once, as Damage. The title names the
+meter and carries its number: your own alone, the party's summed in co-op.
+
+The minus at the right of the header collapses the window to that title, and
+becomes the plus that opens it again — so the meter can be pushed out of the
+way while still reporting its total, and it comes back the way you left it next
+session.
 It opens on the running session total, toggling to the current combat or any
 single fight. It stays on screen once the run has recorded anything — through
 shops, the map, and quitting to the menu — and on launch it comes back up on
