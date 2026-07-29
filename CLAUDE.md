@@ -203,6 +203,25 @@ an async method returns its Task long before the damage lands.
 Block is immune to all of this: `BlockSource` reads the real call stack instead,
 which does not care what anybody pushed.
 
+The mirror-image bug is a row named after the **wrong** thing rather than
+nothing, and it happens where two naming windows are open at once. A potion that
+draws a card runs the drawn card's triggers *inside* `OnUse`, so a Speedster hit
+arrives with both a potion name and an effect name available. **The inner one
+wins** — `EffectSource` before `PotionSource` in `AttributionEngine` — because
+the inner effect is what dealt the hit; the outer merely caused it. A relic doing
+the same draw was never wrong, so a working relic proves nothing about the potion
+path. That precedence is only safe because `EffectSource` is set *or cleared* in
+the prefix of the hit it names, so it can never be a leftover: a potion's own
+damage runs with the potion on top of the stack, which is not a power/relic/orb,
+and the entry clears.
+
+`BlockSource` deliberately goes the other way — a potion outranks the call stack
+there — and that is not the same call: block from a thrown potion must be
+credited to the *thrower*, and only `PotionSource` knows who that was. No
+draw-triggered effect grants block or Strength today, so the two orderings do not
+currently collide; a game update that adds one would need this thought through
+again.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three
