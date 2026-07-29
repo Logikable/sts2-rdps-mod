@@ -1,6 +1,7 @@
 {
-  "title": "rDPS",
-  "title.total": "rDPS: {0}",
+  "mode.rdps": "rDPS",
+  "mode.adps": "aDPS",
+  "title.value": "{0}: {1}",
 
   "view.total": "Total",
   "view.live": "Live",

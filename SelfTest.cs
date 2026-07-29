@@ -95,6 +95,7 @@ internal static class SelfTest
         all &= PersistentOverlayScenario();
         all &= LastPlayedScenario();
         all &= RunHistoryScenario();
+        all &= await MeterModeScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
@@ -977,6 +978,82 @@ internal static class SelfTest
             RunLedger.Active.ApplyDot("Poison", share, damage);
             RunLedger.EndCombat();
         }
+    }
+
+    /// <summary>
+    /// The arrows page between meters, and each meter draws its own thing. Against one player who dealt 100, was given
+    /// 30 by teammates and gave away 10: rDPS reads 120 and itemizes both, while aDPS reads the 100 they actually dealt
+    /// and drops the two teammate sections along with the faded segment on the damage bars - all three describe an
+    /// adjustment that meter does not make. Also checks the arrows land back where they started, and that the meter is
+    /// written down so the next session opens on it.
+    /// </summary>
+    private static async Task<bool> MeterModeScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Arrows page between meters': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        MeterMode entered = OverlayLayout.LoadMode();
+        var row = new RdpsRow
+        {
+            NetId = 1uL,
+            Name = "Tester",
+            ADps = 100m,
+            Given = 30m,
+            Received = 10m,
+            Dealt = new List<(string, decimal, decimal)> { ("Strike", 100m, 25m) },
+            GivenBy = new List<(string, ulong, decimal)> { ("VulnerablePower", 2uL, 30m) },
+            ReceivedBy = new List<(string, ulong, decimal)> { ("FlankingPower", 3uL, 10m) },
+        };
+
+        // Start from rDPS however the config left the meter, so the paging below is measured from a known place.
+        for (int guard = 0; overlay.HarnessMode != MeterMode.Rdps && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        await Settle();
+        decimal rdpsValue = overlay.HarnessValue(row);
+        (IReadOnlyList<string> Sections, bool SplitBars) rdps = overlay.HarnessBreakdown(row);
+        string rdpsTitle = overlay.HarnessTitle;
+
+        overlay.HarnessStepMode(1);
+        await Settle();
+        decimal adpsValue = overlay.HarnessValue(row);
+        (IReadOnlyList<string> Sections, bool SplitBars) adps = overlay.HarnessBreakdown(row);
+        string adpsTitle = overlay.HarnessTitle;
+        MeterMode remembered = OverlayLayout.LoadMode();
+
+        // Two meters, so either arrow reaches the other one and the pair comes back around.
+        overlay.HarnessStepMode(-1);
+        MeterMode back = overlay.HarnessMode;
+
+        OverlayLayout.SaveMode(entered);
+        for (int guard = 0; overlay.HarnessMode != entered && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        OverlayLayout.SaveMode(entered);
+        await Settle();
+
+        return Report("Arrows page between meters",
+            Expect("rDPS credits teammates", rdpsValue, 120m),
+            Expect("rDPS lists given", rdps.Sections.Contains(Loc.T("section.given")) ? 1m : 0m, 1m),
+            Expect("rDPS lists received", rdps.Sections.Contains(Loc.T("section.received")) ? 1m : 0m, 1m),
+            Expect("rDPS bars carry the buff segment", rdps.SplitBars ? 1m : 0m, 1m),
+            Expect("rDPS titled", rdpsTitle.StartsWith(Loc.T("mode.rdps")) ? 1m : 0m, 1m),
+            Expect("aDPS is the damage dealt", adpsValue, 100m),
+            Expect("aDPS drops given", adps.Sections.Contains(Loc.T("section.given")) ? 0m : 1m, 1m),
+            Expect("aDPS drops received", adps.Sections.Contains(Loc.T("section.received")) ? 0m : 1m, 1m),
+            Expect("aDPS keeps the damage itemized", adps.Sections.Contains(Loc.T("section.damage")) ? 1m : 0m, 1m),
+            Expect("aDPS bars are solid", adps.SplitBars ? 0m : 1m, 1m),
+            Expect("aDPS titled", adpsTitle.StartsWith(Loc.T("mode.adps")) ? 1m : 0m, 1m),
+            Expect("the meter is remembered", remembered == MeterMode.ADps ? 1m : 0m, 1m),
+            Expect("the other arrow comes back", back == MeterMode.Rdps ? 1m : 0m, 1m));
     }
 
     private static MapPointHistoryEntry Point(params RoomType[] rooms)

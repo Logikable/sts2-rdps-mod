@@ -5,17 +5,23 @@ using MegaCrit.Sts2.Core.Entities.Players;
 namespace RdpsMeter;
 
 /// <summary>
-/// The live in-combat rDPS meter. A self-owned CanvasLayer parented to the scene root (rather than the game's own UI
+/// The live in-combat damage meter. A self-owned CanvasLayer parented to the scene root (rather than the game's own UI
 /// tree) so it draws on top of everything without inheriting the game's layout or theme. It shows one row per player in
 /// the combat - every player from the start, at zero, so the window's width is fixed and its height depends only on the
-/// party size - with the player's name, a bar tinted to their class colour, and their rDPS. The panel is a bordered
-/// window that starts near the top-right and can be dragged by its header; only the header (drag), its Total/Live
-/// button and the rows (hover) take the mouse, so the rest never intercepts a click meant for the game underneath.
-/// Hovering a row pops an instant styled breakdown of that player's damage - the same table-with-bars look. In a solo
-/// run there is nobody to credit, so the row and its hover collapse into one: the panel shows the breakdown directly
-/// and carries the rDPS total in its header. It stays up between fights, showing either this combat's damage or the
-/// running session total per the header toggle. Nothing short of an empty run takes it away - not ending a fight, not
-/// leaving the run for the main menu - so the numbers stay readable after the match; see <see cref="ShouldShow"/>.
+/// party size - with the player's name, a bar tinted to their class colour, and their number. The panel is a bordered
+/// window that starts near the top-right and can be dragged by its header; only the header's controls and the rows
+/// (hover) take the mouse, so the rest never intercepts a click meant for the game underneath. Hovering a row pops an
+/// instant styled breakdown of that player's damage - the same table-with-bars look. In a solo run there is nobody to
+/// credit, so the row and its hover collapse into one: the panel shows the breakdown directly and carries the total in
+/// its header.
+///
+/// The header carries two independent choices. The arrows either side of the title page between meters (see
+/// <see cref="MeterMode"/>) - rDPS, which moves damage to whoever's buffs bought it, and aDPS, the damage the player
+/// themselves dealt - and the button on the right picks which tally to read it over: this combat, the run total, or one
+/// earlier fight. The meter is remembered between sessions; the tally resets to the run total with each run.
+///
+/// Nothing short of an empty run takes the window away - not ending a fight, not leaving the run for the main menu - so
+/// the numbers stay readable after the match; see <see cref="ShouldShow"/>.
 /// </summary>
 internal static class RdpsOverlay
 {
@@ -69,6 +75,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private const float ValueColumn = 56f;
     private const float PercentColumn = 44f;
 
+    // The header's two zones, measured in from the right edge: the view picker's own space, and, to the left of it, the
+    // meter title flanked by its arrows. Fixed sizes rather than a container, so neither a long fight name nor a long
+    // title can push the other around - or the window wider (see the Width note above).
+    private const float MenuWidth = 112f;
+    private const float ArrowWidth = 24f;
+
+    // Warm blue, bright enough to read on the translucent header at the title's size.
+    private static readonly Color TitleColor = new(0.541f, 0.706f, 0.973f);
+
     private sealed class Row
     {
         public required Control Container { get; init; }
@@ -95,6 +110,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private PanelContainer _panel = null!;
     private DragHandle _header = null!;
     private Label _title = null!;
+    private Button _prev = null!;
+    private Button _next = null!;
     private MenuButton _menu = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
@@ -111,6 +128,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // back to the total if that fight is no longer in the run (e.g. a new run wiped it).
     private ViewKind _viewKind = ViewKind.Total;
     private string? _viewKey;
+
+    // Which meter the arrows have landed on. Restored from the config on the first frame, so the window comes back on
+    // whichever one was last read rather than always on rDPS.
+    private MeterMode _mode = OverlayLayout.LoadMode();
 
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
     private int _generation = -1;
@@ -149,7 +170,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         var root = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         root.AddThemeConstantOverride("separation", 0);
 
-        _header = new DragHandle { CustomMinimumSize = new Vector2(0f, 24f) };
+        _header = new DragHandle { CustomMinimumSize = new Vector2(0f, 28f) };
         _header.AddThemeStyleboxOverride("panel", new StyleBoxFlat
         {
             BgColor = new Color(1f, 1f, 1f, 0.06f),
@@ -160,17 +181,34 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         });
         _header.Init(_panel, OverlayLayout.SavePosition);
 
+        // Which meter is being read, between the two arrows that page through them: the header's headline, so it is the
+        // one thing in the window drawn large and in colour. It sits in the space left of the view picker and clips
+        // rather than growing, like everything else here.
         _title = new Label
         {
-            Text = Loc.T("title"),
+            Text = ModeName(),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore,
+            ClipText = true,
+            AnchorLeft = 0f,
+            AnchorRight = 1f,
+            AnchorTop = 0f,
+            AnchorBottom = 1f,
+            OffsetLeft = 6f + ArrowWidth,
+            OffsetRight = -(MenuWidth + 6f + ArrowWidth),
         };
-        _title.AddThemeFontSizeOverride("font_size", 16);
-        _title.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        _title.AddThemeFontSizeOverride("font_size", 19);
+        _title.AddThemeColorOverride("font_color", TitleColor);
         _header.AddChild(_title);
-        _title.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        // The arrows page between meters. They take the mouse, so a click switches instead of starting a header drag.
+        _prev = ArrowButton("◀", left: true);
+        _next = ArrowButton("▶", left: false);
+        _prev.Pressed += () => StepMode(-1);
+        _next.Pressed += () => StepMode(1);
+        _header.AddChild(_prev);
+        _header.AddChild(_next);
 
         // View picker, pinned to the right of the header: Total, Live, then one entry per fight. It takes the mouse (so
         // a click opens the menu rather than starting a drag) while the rest of the header stays a drag surface. The
@@ -185,17 +223,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             AnchorRight = 1f,
             AnchorTop = 0.5f,
             AnchorBottom = 0.5f,
-            OffsetLeft = -128f,
+            OffsetLeft = -(MenuWidth + 6f),
             OffsetRight = -6f,
             OffsetTop = -11f,
             OffsetBottom = 11f,
         };
         _menu.AddThemeFontSizeOverride("font_size", 12);
-        _menu.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.85f));
+        _menu.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.9f));
         _menu.AddThemeColorOverride("font_hover_color", Colors.White);
-        _menu.AddThemeStyleboxOverride("normal", ToggleStyle(0.10f));
-        _menu.AddThemeStyleboxOverride("hover", ToggleStyle(0.18f));
-        _menu.AddThemeStyleboxOverride("pressed", ToggleStyle(0.24f));
+        _menu.AddThemeStyleboxOverride("normal", ToggleStyle(0.18f));
+        _menu.AddThemeStyleboxOverride("hover", ToggleStyle(0.26f));
+        _menu.AddThemeStyleboxOverride("pressed", ToggleStyle(0.32f));
 
         PopupMenu popup = _menu.GetPopup();
         popup.AddThemeStyleboxOverride("panel", WindowStyle(contentMargin: true));
@@ -205,6 +243,24 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         popup.AboutToPopup += RebuildMenu;
         popup.IdPressed += OnViewPicked;
         _header.AddChild(_menu);
+
+        // The dropdown caret, drawn inside the button's right padding rather than appended to its caption: the caption
+        // is the fight's name, which the self-test and the clipping both read, and neither wants a glyph glued to it.
+        var caret = new Label
+        {
+            Text = "▾",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            AnchorLeft = 0f,
+            AnchorRight = 1f,
+            AnchorTop = 0f,
+            AnchorBottom = 1f,
+            OffsetRight = -5f,
+        };
+        caret.AddThemeFontSizeOverride("font_size", 12);
+        caret.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.75f));
+        _menu.AddChild(caret);
 
         var body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         body.AddThemeConstantOverride("margin_left", 10);
@@ -327,12 +383,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         List<ulong> ordered = netIds
-            .OrderByDescending(id => _snapshot.TryGetValue(id, out RdpsRow? r) ? r.Rdps : 0m)
+            .OrderByDescending(id => Value(_snapshot.GetValueOrDefault(id)))
             .ThenBy(id => id)
             .ToList();
 
         // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
-        // way. The panel becomes the breakdown itself, with the rDPS total moved up into the header.
+        // way. The panel becomes the breakdown itself, with the meter's total moved up into the header.
         bool solo = RunContext.IsSingleplayer && ordered.Count <= 1;
         if (solo)
         {
@@ -340,19 +396,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        _title.Text = Loc.T("title");
+        _title.Text = ModeName();
 
         decimal max = 1m;
         decimal team = 0m;
         foreach (ulong id in ordered)
         {
-            if (_snapshot.TryGetValue(id, out RdpsRow? r))
+            decimal value = Value(_snapshot.GetValueOrDefault(id));
+            team += value;
+            if (value > max)
             {
-                team += r.Rdps;
-                if (r.Rdps > max)
-                {
-                    max = r.Rdps;
-                }
+                max = value;
             }
         }
 
@@ -362,10 +416,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         {
             seen.Add(id);
             Row widget = Ensure(id);
-            decimal rdps = _snapshot.TryGetValue(id, out RdpsRow? row) ? row.Rdps : 0m;
-            widget.Rdps.Text = Round(rdps).ToString();
-            widget.Percent.Text = team > 0m ? $"{Round(rdps / team * 100m)}%" : "0%";
-            widget.Bar.Value = (double)Math.Clamp(rdps / max, 0m, 1m);
+            decimal value = Value(_snapshot.GetValueOrDefault(id));
+            widget.Rdps.Text = Round(value).ToString();
+            widget.Percent.Text = team > 0m ? $"{Round(value / team * 100m)}%" : "0%";
+            widget.Bar.Value = (double)Math.Clamp(value / max, 0m, 1m);
             _list.MoveChild(widget.Container, index++);
         }
 
@@ -417,6 +471,51 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// <summary>The panel's laid-out width, so the self-test can check that content never reflows it.</summary>
     internal float HarnessPanelWidth => _panel.Size.X;
 
+    /// <summary>The meter being read, the headline it draws, and the arrows that page between them.</summary>
+    internal MeterMode HarnessMode => _mode;
+
+    internal string HarnessTitle => _title.Text;
+
+    internal void HarnessStepMode(int step)
+    {
+        StepMode(step);
+    }
+
+    /// <summary>What one player's bar is worth on the meter currently being read.</summary>
+    internal decimal HarnessValue(RdpsRow row)
+    {
+        return Value(row);
+    }
+
+    /// <summary>
+    /// The breakdown this meter would draw for one player: the sections it lists, and whether its damage bars carry the
+    /// fainter teammate-buff segment. Built through the real rebuild into a throwaway list, so the self-test reads what
+    /// a hover would actually show rather than a description of it.
+    /// </summary>
+    internal (IReadOnlyList<string> Sections, bool SplitBars) HarnessBreakdown(RdpsRow row)
+    {
+        var list = new VBoxContainer();
+        RebuildBreakdown(list, row, Colors.White, damageHeader: true);
+
+        var sections = new List<string>();
+        bool split = false;
+        foreach (Node child in list.GetChildren())
+        {
+            if (child is Panel strip)
+            {
+                sections.AddRange(strip.GetChildren().OfType<Label>().Select(l => l.Text));
+            }
+            else if (child is Control bar && bar.GetChildCount() > 0)
+            {
+                // A row's background is its first child: one ProgressBar when solid, a holder of two when split.
+                split |= bar.GetChild(0) is not ProgressBar;
+            }
+        }
+
+        list.Free();
+        return (sections, split);
+    }
+
     /// <summary>
     /// The rows the meter would draw right now, picking the view the same way a frame does (and captioning the picker
     /// with it), so the self-test can check what is driving the meter rather than only what the ledger holds.
@@ -447,6 +546,31 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         {
             popup.AddItem(FightName(fights[i]), i);
         }
+    }
+
+    // Page to the next meter and remember it. With two of them either arrow does the same thing; the pair is there so
+    // it reads as "there is more than this one", and so a third meter needs no new control.
+    private void StepMode(int step)
+    {
+        MeterMode[] modes = { MeterMode.Rdps, MeterMode.ADps };
+        int index = Array.IndexOf(modes, _mode);
+        _mode = modes[((index + step) % modes.Length + modes.Length) % modes.Length];
+        OverlayLayout.SaveMode(_mode);
+
+        // The rows and both breakdowns are drawn from the meter that was showing, so none of them survives the switch.
+        _bodySignature = null;
+        _tooltipSignature = null;
+    }
+
+    /// <summary>What one player's bar is worth on the meter being read.</summary>
+    private decimal Value(RdpsRow? row)
+    {
+        return row == null ? 0m : _mode == MeterMode.ADps ? row.ADps : row.Rdps;
+    }
+
+    private string ModeName()
+    {
+        return Loc.T(_mode == MeterMode.ADps ? "mode.adps" : "mode.rdps");
     }
 
     private void OnViewPicked(long id)
@@ -515,7 +639,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         RdpsRow? row = netId is ulong id ? _snapshot.GetValueOrDefault(id) : null;
-        _title.Text = row == null ? Loc.T("title") : Loc.T("title.total", Round(row.Rdps));
+        _title.Text = row == null ? ModeName() : Loc.T("title.value", ModeName(), Round(Value(row)));
 
         string signature = netId is ulong key ? Signature(key, row) : "empty";
         if (signature == _bodySignature)
@@ -565,7 +689,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     // The hover breakdown, FFXIV-style but as a table of bars: this player's raw damage by card, then the buffs they
     // gave other players, then the buffs other players gave them. Each section's bars are scaled to that section's own
-    // biggest entry, and tinted to the player's class colour. Name and rDPS are omitted - the hovered row shows them.
+    // biggest entry, and tinted to the player's class colour. Name and value are omitted - the hovered row shows them.
+    //
+    // On the aDPS meter the last two sections are gone and the damage bars are solid: teammate buffs neither add to nor
+    // subtract from that meter, so a section itemizing them, or the fainter segment marking the part of a card's damage
+    // they paid for, would be describing an adjustment the number on screen never had.
     private void RebuildBreakdown(VBoxContainer list, RdpsRow? row, Color color, bool damageHeader)
     {
         while (list.GetChildCount() > 0)
@@ -581,13 +709,19 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        AddDamageSection(list, row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color, damageHeader);
+        bool credited = _mode == MeterMode.Rdps;
+        AddDamageSection(list, row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color, damageHeader, credited);
+        if (!credited)
+        {
+            return;
+        }
+
         AddEffectSection(list, Loc.T("section.given"), Combine(row.GivenBy), "+", color);
         AddEffectSection(list, Loc.T("section.received"), Combine(row.ReceivedBy), "-", color);
     }
 
     private static void AddDamageSection(
-        VBoxContainer list, List<(string Card, decimal Amount, decimal Buff)> items, Color color, bool header)
+        VBoxContainer list, List<(string Card, decimal Amount, decimal Buff)> items, Color color, bool header, bool split)
     {
         if (items.Count == 0)
         {
@@ -603,7 +737,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         foreach ((string card, decimal amount, decimal buff) in items)
         {
-            list.AddChild(BarRow(Loc.SourceName(card), Round(amount).ToString(), Percent(amount, total), SplitBackground(amount - buff, amount, max, color)));
+            Control bar = split
+                ? SplitBackground(amount - buff, amount, max, color)
+                : EffectBackground(amount, max, color);
+            list.AddChild(BarRow(Loc.SourceName(card), Round(amount).ToString(), Percent(amount, total), bar));
         }
     }
 
@@ -645,11 +782,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     {
         if (row == null)
         {
-            return $"{netId}:none";
+            return $"{_mode}:{netId}:none";
         }
 
         var text = new System.Text.StringBuilder();
-        text.Append(netId);
+        text.Append(_mode).Append(':').Append(netId);
         foreach ((string card, decimal amount, decimal buff) in row.Dealt)
         {
             text.Append('|').Append(card).Append(Round(amount)).Append('b').Append(Round(buff));
@@ -773,6 +910,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     // The header's own controls, which are built once in _Ready and outlive a language change - unlike the rows and
     // breakdown, which are rebuilt from scratch and pick their font up as they are made.
+    // The arrows and the caret are deliberately left out: they carry glyphs rather than words, and a language's font is
+    // picked for its script, not for arrowheads - swapping one in risks drawing them as boxes in the languages that
+    // need it most, while the default font has them everywhere.
     private void ApplyLocaleFonts()
     {
         Loc.ApplyFont(_title, "font");
@@ -780,13 +920,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         Loc.ApplyFont(_menu.GetPopup(), "font");
     }
 
-    // The header's Total/Live button: a faint rounded chip that brightens on hover and press.
+    // The header's Total/Live button: a rounded chip that brightens on hover and press. Filled and outlined firmly
+    // enough to read as a control rather than as a second label, since what it carries - a fight's name - is text.
+    // The right margin leaves room for the caret drawn over it, so a long name clips before reaching the glyph.
     private static StyleBoxFlat ToggleStyle(float alpha)
     {
         return new StyleBoxFlat
         {
             BgColor = new Color(1f, 1f, 1f, alpha),
-            BorderColor = new Color(1f, 1f, 1f, 0.18f),
+            BorderColor = new Color(1f, 1f, 1f, 0.35f),
             BorderWidthLeft = 1,
             BorderWidthTop = 1,
             BorderWidthRight = 1,
@@ -796,10 +938,34 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             CornerRadiusBottomLeft = 3,
             CornerRadiusBottomRight = 3,
             ContentMarginLeft = 6,
-            ContentMarginRight = 6,
+            ContentMarginRight = 16,
             ContentMarginTop = 1,
             ContentMarginBottom = 1,
         };
+    }
+
+    // One of the two glyphs flanking the title. Flat - no chip of its own, so the header keeps one control in it - and
+    // pinned to its end of the title's space: the left one to the window's edge, the right one to the picker's.
+    private Button ArrowButton(string glyph, bool left)
+    {
+        var button = new Button
+        {
+            Text = glyph,
+            Flat = true,
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = left ? 0f : 1f,
+            AnchorRight = left ? 0f : 1f,
+            AnchorTop = 0f,
+            AnchorBottom = 1f,
+            OffsetLeft = left ? 6f : -(MenuWidth + 6f + ArrowWidth),
+            OffsetRight = left ? 6f + ArrowWidth : -(MenuWidth + 6f),
+        };
+        button.AddThemeFontSizeOverride("font_size", 17);
+        button.AddThemeColorOverride("font_color", TitleColor);
+        button.AddThemeColorOverride("font_hover_color", Colors.White);
+        button.AddThemeColorOverride("font_pressed_color", Colors.White);
+        return button;
     }
 
     private static StyleBoxFlat RowBarStyle(Color color)

@@ -2,14 +2,17 @@
 
 FFXIV-style rDPS damage meter for Slay the Spire 2 co-op. Damage gained from a
 teammate's buffs and debuffs (Vulnerable, Flanking, Poison, Doom, ...) is
-credited to the player who applied them, so support play shows up on the meter.
-A draggable in-combat overlay shows each player's rDPS and share of the team's
-damage with an instant hover breakdown; it opens on the running session total,
-toggling to the current combat or any single fight. It stays on screen once the
-run has recorded anything — through shops, the map, and quitting to the menu —
-and on launch it comes back up on the run you were last playing. On the run
-history page it follows the map point you are looking at, showing that fight's
-damage — or an empty window, for a fight it has no record of.
+credited to the player who applied them, so support play shows up on the
+meter. A draggable in-combat overlay shows each player's damage and share of
+the team's with an instant hover breakdown. The arrows either side of its
+title page between two meters — rDPS, and aDPS, the damage a player dealt
+without any teammate credit — and it reopens on whichever one you last read.
+It opens on the running session total, toggling to the current combat or any
+single fight. It stays on screen once the run has recorded anything — through
+shops, the map, and quitting to the menu — and on launch it comes back up on
+the run you were last playing. On the run history page it follows the map
+point you are looking at, showing that fight's damage — or an empty window,
+for a fight it has no record of.
 
 Built against **Slay the Spire 2 v0.109.1** (beta branch). v0.109.0 ships a
 code-identical assembly, so one build covers both.
