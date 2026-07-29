@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.15 - the meter stays on screen once a run has recorded anything: ending a fight, walking into a shop or quitting to the menu no longer takes it away, so the numbers can still be read after the match. On launch it comes back up showing the run you were last playing, rather than sitting blank until the next fight. On the run history page it now follows the map point you are looking at and shows that fight's damage; a fight it has no record of - an older run, or one from before the mod was installed - shows an empty window under that fight's name rather than another run's numbers. Checked against game v0.109.1.",
+  "changeNote": "0.1.16 - a new Blocked meter, and arrows either side of the title to page between meters. Blocked counts the damage your block actually stopped, so block nobody swung at scores nothing, and what did get hit is itemized by the card, potion, relic or power that paid for it - with Dexterity credited to whatever granted it, so a Speed Potion reads as \"Speed Potion\" rather than folding into one Dexterity row. In co-op, block or Dexterity you put on a teammate is credited to you, split pro-rata when several of you topped them up. Alongside it, aDPS shows the damage a player dealt without any teammate credit, and the meter reopens on whichever one you last read. Playing alone there is nobody to credit, so rDPS and aDPS are the same number and appear once, as Damage - and the header now shows its total even when that total is zero. Checked against game v0.109.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
