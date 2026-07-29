@@ -13,6 +13,15 @@ namespace RdpsMeter;
 /// teammates' buffs enabled on this player's own hits (itemized by effect and applier). Every given entry has a
 /// matching received entry on the other player, so across the table given and received cancel and total rDPS equals
 /// total damage dealt.
+///
+/// Block is tallied the same way and reads the same way:
+///
+///   rBlock = aBlock + given - received
+///
+/// where aBlock is the block that absorbed damage on this player's own body (itemized by what granted it, whoever that
+/// was), received is the part of that which a teammate paid for, and given is this player's block that absorbed damage
+/// on somebody else's. So aBlock is the damage you personally didn't take and rBlock is the damage you personally
+/// stopped, which is the one worth ranking a party by.
 /// </summary>
 internal sealed class PlayerLedger
 {
@@ -25,10 +34,20 @@ internal sealed class PlayerLedger
     public Dictionary<(string Effect, ulong Other), decimal> GivenBySource { get; } = new();
     public Dictionary<(string Effect, ulong Other), decimal> ReceivedBySource { get; } = new();
 
+    public Dictionary<string, decimal> BlockedBySource { get; } = new();
+    public Dictionary<string, decimal> BlockBuffBySource { get; } = new();
+    public Dictionary<(string Effect, ulong Other), decimal> BlockGivenBySource { get; } = new();
+    public Dictionary<(string Effect, ulong Other), decimal> BlockReceivedBySource { get; } = new();
+
     public decimal ADps => DealtByCard.Values.Sum();
     public decimal Given => GivenBySource.Values.Sum();
     public decimal Received => ReceivedBySource.Values.Sum();
     public decimal Rdps => ADps + Given - Received;
+
+    public decimal ABlock => BlockedBySource.Values.Sum();
+    public decimal BlockGiven => BlockGivenBySource.Values.Sum();
+    public decimal BlockReceived => BlockReceivedBySource.Values.Sum();
+    public decimal RBlock => ABlock + BlockGiven - BlockReceived;
 }
 
 /// <summary>
@@ -46,7 +65,24 @@ internal sealed class RdpsRow
     public required IReadOnlyList<(string Effect, ulong Other, decimal Amount)> GivenBy { get; init; }
     public required IReadOnlyList<(string Effect, ulong Other, decimal Amount)> ReceivedBy { get; init; }
 
+    // The block half of the line. Optional rather than required, because a row is built from whatever the tally holds
+    // and most of the ledger's callers - the harness rows, a saved run from before block was metered - have a damage
+    // story to tell and no block one; making them say so in six empty fields would be noise.
+    public decimal ABlock { get; init; }
+    public decimal BlockGiven { get; init; }
+    public decimal BlockReceived { get; init; }
+    public IReadOnlyList<(string Source, decimal Amount, decimal Buff)> Blocked { get; init; } =
+        Array.Empty<(string, decimal, decimal)>();
+
+    public IReadOnlyList<(string Effect, ulong Other, decimal Amount)> BlockGivenBy { get; init; } =
+        Array.Empty<(string, ulong, decimal)>();
+
+    public IReadOnlyList<(string Effect, ulong Other, decimal Amount)> BlockReceivedBy { get; init; } =
+        Array.Empty<(string, ulong, decimal)>();
+
     public decimal Rdps => ADps + Given - Received;
+
+    public decimal RBlock => ABlock + BlockGiven - BlockReceived;
 }
 
 internal sealed class CombatLedger
@@ -95,6 +131,12 @@ internal sealed class CombatLedger
     public static void Name(ulong netId, string name)
     {
         RunLedger.Active.RecordName(netId, name);
+    }
+
+    /// <summary>Folds the block one hit just ate into the active combat's tally.</summary>
+    public static void RecordBlock(ulong wearerNetId, IReadOnlyList<BlockStrand> spent)
+    {
+        RunLedger.Active.ApplyBlock(wearerNetId, spent);
     }
 
     public void Reset()
@@ -155,6 +197,77 @@ internal sealed class CombatLedger
                 dealer.BuffByCard[attribution.DealerCard] =
                     dealer.BuffByCard.GetValueOrDefault(attribution.DealerCard) + buffTotal;
             }
+        }
+    }
+
+    /// <summary>
+    /// Folds the block a single hit absorbed into the tallies. Only block that stopped something is here at all - the
+    /// pool hands over what a hit actually spent, so block that expired unhit was never worth anything and is never
+    /// seen. The wearer books all of it as their own aBlock, since it is damage that did not reach them whoever paid
+    /// for it, and any strand a teammate paid for is additionally booked as received on the wearer and given on the
+    /// teammate, so the two cancel across the table and the party's rBlock sums to the block the party actually spent.
+    /// </summary>
+    public void ApplyBlock(ulong wearerNetId, IReadOnlyList<BlockStrand> spent)
+    {
+        lock (_lock)
+        {
+            PlayerLedger wearer = Ledger(wearerNetId);
+            foreach ((ulong ownerNetId, string source, decimal amount) in spent)
+            {
+                if (amount <= 0m)
+                {
+                    continue;
+                }
+
+                wearer.BlockedBySource[source] = wearer.BlockedBySource.GetValueOrDefault(source) + amount;
+                if (ownerNetId == wearerNetId)
+                {
+                    continue;
+                }
+
+                wearer.BlockBuffBySource[source] = wearer.BlockBuffBySource.GetValueOrDefault(source) + amount;
+
+                var received = (source, ownerNetId);
+                wearer.BlockReceivedBySource[received] = wearer.BlockReceivedBySource.GetValueOrDefault(received) + amount;
+
+                PlayerLedger owner = Ledger(ownerNetId);
+                var given = (source, wearerNetId);
+                owner.BlockGivenBySource[given] = owner.BlockGivenBySource.GetValueOrDefault(given) + amount;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Block that absorbed damage on <paramref name="netId"/>'s own body, from <paramref name="source"/>. Zero if there
+    /// is no such entry. For the self-test harness to assert attribution.
+    /// </summary>
+    public decimal BlockedWith(ulong netId, string source)
+    {
+        lock (_lock)
+        {
+            return _ledgers.TryGetValue(netId, out PlayerLedger? l)
+                ? l.BlockedBySource.GetValueOrDefault(source)
+                : 0m;
+        }
+    }
+
+    /// <summary>Block <paramref name="netId"/> gave <paramref name="other"/> through <paramref name="source"/>.</summary>
+    public decimal BlockGivenTo(ulong netId, string source, ulong other)
+    {
+        lock (_lock)
+        {
+            return _ledgers.TryGetValue(netId, out PlayerLedger? l)
+                ? l.BlockGivenBySource.GetValueOrDefault((source, other))
+                : 0m;
+        }
+    }
+
+    /// <summary>What <paramref name="netId"/>'s Blocked bar is worth: the block they provided that stopped something.</summary>
+    public decimal RBlockOf(ulong netId)
+    {
+        lock (_lock)
+        {
+            return _ledgers.TryGetValue(netId, out PlayerLedger? l) ? l.RBlock : 0m;
         }
     }
 
@@ -244,6 +357,16 @@ internal sealed class CombatLedger
                         .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
                     ReceivedBy = kv.Value.ReceivedBySource
                         .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
+                    ABlock = kv.Value.ABlock,
+                    BlockGiven = kv.Value.BlockGiven,
+                    BlockReceived = kv.Value.BlockReceived,
+                    Blocked = kv.Value.BlockedBySource
+                        .Select(d => (d.Key, d.Value, kv.Value.BlockBuffBySource.GetValueOrDefault(d.Key)))
+                        .OrderByDescending(d => d.Value).ToList(),
+                    BlockGivenBy = kv.Value.BlockGivenBySource
+                        .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
+                    BlockReceivedBy = kv.Value.BlockReceivedBySource
+                        .Select(d => (d.Key.Effect, d.Key.Other, d.Value)).OrderByDescending(d => d.Value).ToList(),
                 })
                 .OrderByDescending(r => r.Rdps)
                 .ToList();
@@ -288,6 +411,17 @@ internal sealed class CombatLedger
                 {
                     GD.Print($"[RdpsMeter]     recv   {effect} <- {NameOf(other)} {Round(amount)}");
                 }
+
+                if (ledger.ABlock > 0m || ledger.BlockGiven > 0m)
+                {
+                    GD.Print($"[RdpsMeter]     block  aBlock {Round(ledger.ABlock)} + given {Round(ledger.BlockGiven)} "
+                        + $"- recv {Round(ledger.BlockReceived)} = rBlock {Round(ledger.RBlock)}");
+
+                    foreach ((string source, decimal amount) in ledger.BlockedBySource.OrderByDescending(kv => kv.Value))
+                    {
+                        GD.Print($"[RdpsMeter]       from {source} {Round(amount)}");
+                    }
+                }
             }
         }
     }
@@ -327,6 +461,26 @@ internal sealed class CombatLedger
                 {
                     into.ReceivedBySource[key] = into.ReceivedBySource.GetValueOrDefault(key) + amount;
                 }
+
+                foreach ((string block, decimal amount) in source.BlockedBySource)
+                {
+                    into.BlockedBySource[block] = into.BlockedBySource.GetValueOrDefault(block) + amount;
+                }
+
+                foreach ((string block, decimal amount) in source.BlockBuffBySource)
+                {
+                    into.BlockBuffBySource[block] = into.BlockBuffBySource.GetValueOrDefault(block) + amount;
+                }
+
+                foreach ((var key, decimal amount) in source.BlockGivenBySource)
+                {
+                    into.BlockGivenBySource[key] = into.BlockGivenBySource.GetValueOrDefault(key) + amount;
+                }
+
+                foreach ((var key, decimal amount) in source.BlockReceivedBySource)
+                {
+                    into.BlockReceivedBySource[key] = into.BlockReceivedBySource.GetValueOrDefault(key) + amount;
+                }
             }
 
             foreach ((ulong netId, string name) in _names)
@@ -355,6 +509,20 @@ internal sealed class CombatLedger
                         .Select(g => new SourceEntryDto { Effect = g.Key.Effect, Other = g.Key.Other, Amount = g.Value })
                         .ToList(),
                     Received = ledger.ReceivedBySource
+                        .Select(r => new SourceEntryDto { Effect = r.Key.Effect, Other = r.Key.Other, Amount = r.Value })
+                        .ToList(),
+                    Blocked = ledger.BlockedBySource
+                        .Select(b => new CardEntryDto
+                        {
+                            Card = b.Key,
+                            Amount = b.Value,
+                            Buff = ledger.BlockBuffBySource.GetValueOrDefault(b.Key),
+                        })
+                        .ToList(),
+                    BlockGiven = ledger.BlockGivenBySource
+                        .Select(g => new SourceEntryDto { Effect = g.Key.Effect, Other = g.Key.Other, Amount = g.Value })
+                        .ToList(),
+                    BlockReceived = ledger.BlockReceivedBySource
                         .Select(r => new SourceEntryDto { Effect = r.Key.Effect, Other = r.Key.Other, Amount = r.Value })
                         .ToList(),
                 });
@@ -389,6 +557,25 @@ internal sealed class CombatLedger
             foreach (SourceEntryDto received in player.Received)
             {
                 into.ReceivedBySource[(received.Effect, received.Other)] = received.Amount;
+            }
+
+            foreach (CardEntryDto block in player.Blocked)
+            {
+                into.BlockedBySource[block.Card] = block.Amount;
+                if (block.Buff != 0m)
+                {
+                    into.BlockBuffBySource[block.Card] = block.Buff;
+                }
+            }
+
+            foreach (SourceEntryDto given in player.BlockGiven)
+            {
+                into.BlockGivenBySource[(given.Effect, given.Other)] = given.Amount;
+            }
+
+            foreach (SourceEntryDto received in player.BlockReceived)
+            {
+                into.BlockReceivedBySource[(received.Effect, received.Other)] = received.Amount;
             }
         }
 

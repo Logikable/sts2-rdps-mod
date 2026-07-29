@@ -138,6 +138,37 @@ needing a killing blow should hand a built `DamageResult` straight to
 get around that: the all-enemy effects (Outbreak) and the Doom kill are written
 against a single enemy and both break.
 
+## Block accounting
+
+Block counts **only when something hits it**. Nothing is booked as it is gained
+— `BlockPool` just remembers the gain, itemized by who paid for it — and the
+meter moves in `Creature.DamageBlockInternal`, the one place block is spent.
+That is what makes overblock free: block still standing when the turn ends is
+dropped unbooked.
+
+Which gain gets the credit is two passes, in this order: the **wearer's own**
+block first, oldest gain first (alone, that is plain FIFO across the turn's
+cards, so the *later* excess is what goes uncounted); then whatever they could
+not cover themselves, split **pro-rata** among the teammates who topped them up.
+
+The pool is reconciled against the creature's real `Block` before every read, so
+every path that removes block without telling us — the turn's own expiry, Expose,
+Burrowed — needs no patch of its own.
+
+Naming a gain is the awkward part. A card names itself through `cardSource`. A
+potion comes from `PotionSource.Sole()`, because a thrown Block Potion reaches
+the funnel knowing only its *receiver*, and in co-op that is not the thrower. A
+relic or power has neither, and its hook is one the game never pushes onto its
+own executing-model stack — so `BlockSource` reads the **call stack** in the
+prefix of `CreatureCmd.GainBlock`, the last moment the granting model's frame is
+still standing (the rest of that method is async). Push and pop pair exactly
+because both sides run only for card-less gains, and a card preview — which
+always carries its card — never touches either.
+
+Dexterity is pooled the way Strength is: every source stacks into one
+`DexterityPower`, so `PowerOwnershipPatches.GrantedBy` records what granted each
+share and the meter can say "Dexterity Potion" instead of "Dexterity".
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three

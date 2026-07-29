@@ -16,9 +16,10 @@ namespace RdpsMeter;
 /// its header.
 ///
 /// The header carries two independent choices. The arrows either side of the title page between meters (see
-/// <see cref="MeterMode"/>) - rDPS, which moves damage to whoever's buffs bought it, and aDPS, the damage the player
-/// themselves dealt - and the button on the right picks which tally to read it over: this combat, the run total, or one
-/// earlier fight. The meter is remembered between sessions; the tally resets to the run total with each run.
+/// <see cref="MeterMode"/>) - rDPS, which moves damage to whoever's buffs bought it; aDPS, the damage the player
+/// themselves dealt; and Blocked, the damage their block stopped - and the button on the right picks which tally to read
+/// it over: this combat, the run total, or one earlier fight. The meter is remembered between sessions; the tally resets
+/// to the run total with each run.
 ///
 /// Nothing short of an empty run takes the window away - not ending a fight, not leaving the run for the main menu - so
 /// the numbers stay readable after the match; see <see cref="ShouldShow"/>.
@@ -133,10 +134,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // whichever one was last read rather than always on rDPS.
     private MeterMode _mode = OverlayLayout.LoadMode();
 
-    // Whether the run being shown has nobody to credit, recomputed each frame. A solo run has only one meter - with no
-    // teammates, rDPS and aDPS are the same number - so it is drawn under the one name they share and the arrows have
-    // nothing to page to. They stay on screen rather than disappearing: more meters are coming, and a control that
-    // vanishes and returns is worse than one that waits.
+    // Whether the run being shown has nobody to credit, recomputed each frame. With no teammates, rDPS and aDPS are the
+    // same number, so a solo run is offered one of them, drawn under the name they share, and the arrows page between
+    // that and Blocked rather than through all three.
     private bool _solo;
 
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
@@ -571,17 +571,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
     }
 
-    // Page to the next meter and remember it. With two of them either arrow does the same thing; the pair is there so
-    // it reads as "there is more than this one", and so a third meter needs no new control.
+    // Page to the next meter and remember it, wrapping at either end so both arrows always reach everything.
     private void StepMode(int step)
     {
-        if (_solo)
-        {
-            return;
-        }
-
-        MeterMode[] modes = { MeterMode.Rdps, MeterMode.ADps };
-        int index = Array.IndexOf(modes, _mode);
+        MeterMode[] modes = Modes(_solo);
+        int index = Math.Max(0, Array.IndexOf(modes, _mode));
         _mode = modes[((index + step) % modes.Length + modes.Length) % modes.Length];
         OverlayLayout.SaveMode(_mode);
 
@@ -590,10 +584,30 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _tooltipSignature = null;
     }
 
+    // The meters the arrows page through. Alone, rDPS and aDPS are the same number - there are no teammates to move
+    // damage between - so only one of them is offered, and the pair that would otherwise sit side by side collapses
+    // into the single meter they both describe.
+    private static MeterMode[] Modes(bool solo)
+    {
+        return solo
+            ? new[] { MeterMode.Rdps, MeterMode.Blocked }
+            : new[] { MeterMode.Rdps, MeterMode.ADps, MeterMode.Blocked };
+    }
+
     /// <summary>What one player's bar is worth on the meter being read.</summary>
     private decimal Value(RdpsRow? row)
     {
-        return row == null ? 0m : _mode == MeterMode.ADps ? row.ADps : row.Rdps;
+        if (row == null)
+        {
+            return 0m;
+        }
+
+        return _mode switch
+        {
+            MeterMode.ADps => row.ADps,
+            MeterMode.Blocked => row.RBlock,
+            _ => row.Rdps,
+        };
     }
 
     private string ModeName()
@@ -605,9 +619,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // damage between; alone, both are simply the damage you did, so the run says DPS and means it.
     private string ModeName(bool solo)
     {
-        return solo
-            ? Loc.T("mode.dps")
-            : Loc.T(_mode == MeterMode.ADps ? "mode.adps" : "mode.rdps");
+        return _mode switch
+        {
+            MeterMode.Blocked => Loc.T("mode.block"),
+            MeterMode.ADps when !solo => Loc.T("mode.adps"),
+            _ => Loc.T(solo ? "mode.dps" : "mode.rdps"),
+        };
     }
 
     private void OnViewPicked(long id)
@@ -731,6 +748,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // On the aDPS meter the last two sections are gone and the damage bars are solid: teammate buffs neither add to nor
     // subtract from that meter, so a section itemizing them, or the fainter segment marking the part of a card's damage
     // they paid for, would be describing an adjustment the number on screen never had.
+    //
+    // The Blocked meter is the same table over the other tally: where the block that stopped something came from, then
+    // the block this player put on teammates and the block teammates put on them. It credits like rDPS - a Defend you
+    // played for somebody else is yours - so it keeps both sections and the split bars, which alone simply come out
+    // empty and unsplit, there being nobody else involved.
     private void RebuildBreakdown(VBoxContainer list, RdpsRow? row, Color color, bool damageHeader)
     {
         while (list.GetChildCount() > 0)
@@ -740,14 +762,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             child.QueueFree();
         }
 
+        bool block = _mode == MeterMode.Blocked;
         if (row == null)
         {
-            list.AddChild(SectionHeader(Loc.T("empty")));
+            list.AddChild(SectionHeader(Loc.T(block ? "empty.block" : "empty")));
+            return;
+        }
+
+        if (block)
+        {
+            AddItemSection(list, Items(row.Blocked), color, damageHeader ? Loc.T("section.block") : null, split: true);
+            AddEffectSection(list, Loc.T("section.block.given"), Combine(row.BlockGivenBy), "+", color);
+            AddEffectSection(list, Loc.T("section.block.received"), Combine(row.BlockReceivedBy), "-", color);
             return;
         }
 
         bool credited = _mode == MeterMode.Rdps;
-        AddDamageSection(list, row.Dealt.Where(d => Round(d.Amount) != 0m).ToList(), color, damageHeader, credited);
+        AddItemSection(list, Items(row.Dealt), color, damageHeader ? Loc.T("section.damage") : null, credited);
         if (!credited)
         {
             return;
@@ -757,8 +788,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         AddEffectSection(list, Loc.T("section.received"), Combine(row.ReceivedBy), "-", color);
     }
 
-    private static void AddDamageSection(
-        VBoxContainer list, List<(string Card, decimal Amount, decimal Buff)> items, Color color, bool header, bool split)
+    // Drop the entries that round to nothing, so a sliver of a share never takes a row to say "0".
+    private static List<(string Name, decimal Amount, decimal Buff)> Items(
+        IReadOnlyList<(string Name, decimal Amount, decimal Buff)> items)
+    {
+        return items.Where(i => Round(i.Amount) != 0m).ToList();
+    }
+
+    private static void AddItemSection(
+        VBoxContainer list, List<(string Name, decimal Amount, decimal Buff)> items, Color color, string? header, bool split)
     {
         if (items.Count == 0)
         {
@@ -767,19 +805,27 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         decimal max = Math.Max(1m, items.Max(i => i.Amount));
         decimal total = items.Sum(i => i.Amount);
-        if (header)
+        if (header != null)
         {
-            list.AddChild(SectionHeader(Loc.T("section.damage")));
+            list.AddChild(SectionHeader(header));
         }
 
-        foreach ((string card, decimal amount, decimal buff) in items)
+        foreach ((string name, decimal amount, decimal buff) in items)
         {
             // Always the split bar, with nothing split off it on the aDPS meter. Drawing that one solid instead would
             // tint it differently: the split bar's own segment sits over the fainter one behind it, and two translucent
             // layers of a colour do not composite to the same shade as one.
             Control bar = SplitBackground(split ? amount - buff : amount, amount, max, color);
-            list.AddChild(BarRow(Loc.SourceName(card), Round(amount).ToString(), Percent(amount, total), bar));
+            list.AddChild(BarRow(SourceName(name), Round(amount).ToString(), Percent(amount, total), bar));
         }
+    }
+
+    // A row's label. Most sources arrive already localized from the game (a card, potion or relic title); a power the
+    // ledger stored under its own name is translated here, and the placeholder for a source nothing identified reads as
+    // "(none)" in the player's language.
+    private static string SourceName(string source)
+    {
+        return Loc.SourceName(Loc.PowerName(source));
     }
 
     // Sum an effect list across the players it went to / came from, so the breakdown shows one bar per effect rather
@@ -807,7 +853,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         list.AddChild(SectionHeader(title));
         foreach ((string effect, decimal amount) in items)
         {
-            list.AddChild(BarRow(Loc.PowerName(effect), sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
+            list.AddChild(BarRow(SourceName(effect), sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
         }
     }
 
@@ -825,17 +871,21 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         var text = new System.Text.StringBuilder();
         text.Append(_mode).Append(':').Append(netId);
-        foreach ((string card, decimal amount, decimal buff) in row.Dealt)
+
+        // Only the meter on screen is described: the breakdown is rebuilt whenever the arrows move, and folding the
+        // other tally in would redraw this one every time a number it isn't showing changed.
+        bool block = _mode == MeterMode.Blocked;
+        foreach ((string name, decimal amount, decimal buff) in block ? row.Blocked : row.Dealt)
         {
-            text.Append('|').Append(card).Append(Round(amount)).Append('b').Append(Round(buff));
+            text.Append('|').Append(name).Append(Round(amount)).Append('b').Append(Round(buff));
         }
 
-        foreach ((string effect, decimal amount) in Combine(row.GivenBy))
+        foreach ((string effect, decimal amount) in Combine(block ? row.BlockGivenBy : row.GivenBy))
         {
             text.Append("|g").Append(effect).Append(Round(amount));
         }
 
-        foreach ((string effect, decimal amount) in Combine(row.ReceivedBy))
+        foreach ((string effect, decimal amount) in Combine(block ? row.BlockReceivedBy : row.ReceivedBy))
         {
             text.Append("|r").Append(effect).Append(Round(amount));
         }

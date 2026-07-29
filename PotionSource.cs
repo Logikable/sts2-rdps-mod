@@ -36,6 +36,30 @@ internal static class PotionSource
         }
     }
 
+    /// <summary>
+    /// The one potion being resolved right now and who is resolving it, or null when that is not exactly one. Block
+    /// gained from a potion has no other way to name its thrower: unlike damage, which arrives with a dealer, a thrown
+    /// Block Potion reaches the block funnel knowing only who is receiving it - and in co-op that is not necessarily the
+    /// player who threw it. Two potions resolving at once would make the answer a guess, so it declines to give one.
+    /// </summary>
+    public static (ulong NetId, string Title)? Sole()
+    {
+        lock (Lock)
+        {
+            if (ByPlayer.Count != 1)
+            {
+                return null;
+            }
+
+            foreach ((ulong netId, string title) in ByPlayer)
+            {
+                return (netId, title);
+            }
+
+            return null;
+        }
+    }
+
     public static void Clear()
     {
         lock (Lock)

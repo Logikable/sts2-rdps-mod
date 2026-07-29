@@ -101,6 +101,10 @@ internal static class SelfTest
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
+        all &= await BlockSpentScenario(context, dealer, enemy);
+        all &= await BlockDexterityScenario(context, dealer, enemy, applier2);
+        all &= await BlockProRataScenario(context, dealer, enemy, applier2, applier3);
+        all &= await BlockedMeterScenario();
         all &= await OverkillScenario(context, dealer, enemy);
         all &= await OverlayWidthScenario(dealer, enemy);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
@@ -245,6 +249,200 @@ internal static class SelfTest
             Expect("enemy lost the unblocked 5", enemy.CurrentHp, hpBefore - 5));
 
         return absorbed && split;
+    }
+
+    /// <summary>
+    /// The Blocked meter counts block that stopped something, not block that was gained, and spends it oldest-first.
+    ///
+    /// Two 5-block gains from different sources, then a 4-damage hit: only the first source is credited, and only for
+    /// the 4 that actually landed. The other 6 is overblock - block nobody swung at - and must never appear, which is
+    /// the whole reason the meter waits for a hit before it moves at all.
+    /// </summary>
+    private static async Task<bool> BlockSpentScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await Shield(dealer, 5m, you, "Block Potion");
+        await Shield(dealer, 5m, you, "Second Wind");
+
+        CombatLedger l = CombatLedger.Current;
+        bool untouched = Report("Block (nothing spent yet)",
+            Expect("nothing booked for standing block", l.RBlockOf(you), 0m));
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+
+        bool spent = Report("Block spent oldest-first",
+            Expect("the first gain covers it", l.BlockedWith(you, "Block Potion"), 4m),
+            Expect("the later gain is untouched", l.BlockedWith(you, "Second Wind"), 0m),
+            Expect("only what landed counts", l.RBlockOf(you), 4m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        return untouched && spent;
+    }
+
+    /// <summary>
+    /// Block a teammate paid for is credited to them, and named after what granted it rather than after the pooled
+    /// power it stacked into: a teammate's Dexterity Potion adds 3 to the dealer's 5-block card, and that 3 is theirs
+    /// under the potion's own name, not under "Dexterity".
+    ///
+    /// Then the co-op priority rule: the wearer's own block goes first, so a hit small enough to be covered by it never
+    /// reaches - and never spends - what a teammate put on top.
+    /// </summary>
+    private static async Task<bool> BlockDexterityScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        // The teammate is mid-potion as they apply the Dexterity, which is how the stacks come to be named after it.
+        PotionSource.Begin(2uL, "Dexterity Potion");
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 3m, applier2, null);
+        PotionSource.End(2uL);
+
+        await Shield(dealer, 5m, you, "Block Potion");
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool split = Report("Block from a teammate's Dexterity",
+            Expect("own block", l.BlockedWith(you, "Block Potion"), 5m),
+            Expect("the teammate's Dexterity, by its potion", l.BlockedWith(you, "Dexterity Potion"), 3m),
+            Expect("given 2->you", l.BlockGivenTo(2uL, "Dexterity Potion", you), 3m),
+            Expect("you stopped your own 5", l.RBlockOf(you), 5m),
+            Expect("they stopped 3", l.RBlockOf(2uL), 3m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        // Same 8 block standing, but only 4 damage: your own 5 covers it outright.
+        await Prep(dealer, enemy);
+        PotionSource.Begin(2uL, "Dexterity Potion");
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 3m, applier2, null);
+        PotionSource.End(2uL);
+
+        await Shield(dealer, 5m, you, "Block Potion");
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+
+        bool priority = Report("Block (the wearer's own goes first)",
+            Expect("own block covers it", l.BlockedWith(you, "Block Potion"), 4m),
+            Expect("the teammate's is untouched", l.BlockedWith(you, "Dexterity Potion"), 0m));
+
+        return split && priority;
+    }
+
+    /// <summary>
+    /// Two teammates stack Dexterity 2:1 onto the dealer, who brings no block of their own. Nothing of the wearer's is
+    /// there to go first, so the whole 3 the hit spends is split between them in proportion to what each put in.
+    /// </summary>
+    private static async Task<bool> BlockProRataScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 2m, applier2, null);
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 1m, applier3, null);
+        LogShares("Dexterity", dealer.GetPower<DexterityPower>());
+
+        // A zero-block gain: everything standing is the teammates' Dexterity and none of it is the dealer's.
+        await CreatureCmd.GainBlock(dealer, 0m, BlockProps.card, null);
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 3m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Block pro-rata between teammates",
+            Expect("all of it is Dexterity", l.BlockedWith(you, "Dexterity"), 3m),
+            Expect("given 2->you", l.BlockGivenTo(2uL, "Dexterity", you), 2m),
+            Expect("given 3->you", l.BlockGivenTo(3uL, "Dexterity", you), 1m),
+            Expect("you stopped none of it", l.RBlockOf(you), 0m),
+            Expect("they stopped 2 and 1", l.RBlockOf(2uL) + l.RBlockOf(3uL), 3m));
+    }
+
+    /// <summary>
+    /// The Blocked tab: its bar is the block a player provided that stopped something, its breakdown is the block
+    /// tally rather than the damage one, and it is one of the meters the arrows reach - in a solo run as well as a
+    /// party one, where it is the second of two rather than the third of three.
+    /// </summary>
+    private static async Task<bool> BlockedMeterScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Blocked tab': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        MeterMode entered = OverlayLayout.LoadMode();
+        var row = new RdpsRow
+        {
+            NetId = 1uL,
+            Name = "Tester",
+            ADps = 100m,
+            Given = 30m,
+            Received = 10m,
+            Dealt = new List<(string, decimal, decimal)> { ("Strike", 100m, 25m) },
+            GivenBy = new List<(string, ulong, decimal)> { ("VulnerablePower", 2uL, 30m) },
+            ReceivedBy = new List<(string, ulong, decimal)> { ("FlankingPower", 3uL, 10m) },
+            ABlock = 40m,
+            BlockGiven = 12m,
+            BlockReceived = 5m,
+            Blocked = new List<(string, decimal, decimal)> { ("Defend", 40m, 5m) },
+            BlockGivenBy = new List<(string, ulong, decimal)> { ("Dexterity Potion", 2uL, 12m) },
+            BlockReceivedBy = new List<(string, ulong, decimal)> { ("Footwork", 3uL, 5m) },
+        };
+
+        // Walk round to Blocked from wherever the config left the meter; three steps reaches it from any of the three.
+        for (int guard = 0; overlay.HarnessMode != MeterMode.Blocked && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        await Settle();
+        decimal value = overlay.HarnessValue(row);
+        (IReadOnlyList<string> Sections, bool SplitBars) blocked = overlay.HarnessBreakdown(row);
+        string title = overlay.HarnessModeName(solo: false);
+        string soloTitle = overlay.HarnessModeName(solo: true);
+        MeterMode remembered = OverlayLayout.LoadMode();
+
+        // Solo offers two meters, so one step lands on Blocked and one more comes back; a party run has three.
+        overlay.HarnessStepMode(1, solo: true);
+        MeterMode soloNext = overlay.HarnessMode;
+        overlay.HarnessStepMode(1, solo: true);
+        MeterMode soloBack = overlay.HarnessMode;
+        overlay.HarnessStepMode(1);
+        MeterMode partyNext = overlay.HarnessMode;
+
+        OverlayLayout.SaveMode(entered);
+        for (int guard = 0; overlay.HarnessMode != entered && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        OverlayLayout.SaveMode(entered);
+        await Settle();
+
+        return Report("Blocked tab",
+            Expect("the bar is the block you provided", value, 47m),
+            Expect("it itemizes block", blocked.Sections.Contains(Loc.T("section.block")) ? 1m : 0m, 1m),
+            Expect("not damage", blocked.Sections.Contains(Loc.T("section.damage")) ? 0m : 1m, 1m),
+            Expect("it lists block given", blocked.Sections.Contains(Loc.T("section.block.given")) ? 1m : 0m, 1m),
+            Expect("it lists block received", blocked.Sections.Contains(Loc.T("section.block.received")) ? 1m : 0m, 1m),
+            Expect("its bars carry the teammate segment", blocked.SplitBars ? 1m : 0m, 1m),
+            Expect("titled", title == Loc.T("mode.block") ? 1m : 0m, 1m),
+            Expect("titled the same alone", soloTitle == Loc.T("mode.block") ? 1m : 0m, 1m),
+            Expect("the meter is remembered", remembered == MeterMode.Blocked ? 1m : 0m, 1m),
+            Expect("solo pages off it", soloNext == MeterMode.Rdps ? 1m : 0m, 1m),
+            Expect("and back to it", soloBack == MeterMode.Blocked ? 1m : 0m, 1m),
+            Expect("a party wraps to rDPS", partyNext == MeterMode.Rdps ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Gains the dealer block under a named source. Nothing about a harness call stack says where block came from, so
+    /// the name is supplied the way a potion supplies it in a real run - which is also the path a thrown Block Potion
+    /// takes, and the only one that can name a gain no card explains.
+    /// </summary>
+    private static async Task Shield(Creature dealer, decimal amount, ulong netId, string source)
+    {
+        PotionSource.Begin(netId, source);
+        await CreatureCmd.GainBlock(dealer, amount, BlockProps.card, null);
+        PotionSource.End(netId);
     }
 
     /// <summary>
@@ -1031,10 +1229,11 @@ internal static class SelfTest
         overlay.HarnessStepMode(-1);
         MeterMode back = overlay.HarnessMode;
 
-        // Alone there is only one meter: it goes by the name the two share, and the arrows have nowhere to page to.
+        // Alone, the two damage meters are the same number and are offered as the one name they share, so the arrows
+        // page from it straight to Blocked rather than through an aDPS that would read identically.
         string soloTitle = overlay.HarnessModeName(solo: true);
         overlay.HarnessStepMode(1, solo: true);
-        MeterMode parked = overlay.HarnessMode;
+        MeterMode soloNext = overlay.HarnessMode;
 
         OverlayLayout.SaveMode(entered);
         for (int guard = 0; overlay.HarnessMode != entered && guard < 4; guard++)
@@ -1060,7 +1259,7 @@ internal static class SelfTest
             Expect("the meter is remembered", remembered == MeterMode.ADps ? 1m : 0m, 1m),
             Expect("the other arrow comes back", back == MeterMode.Rdps ? 1m : 0m, 1m),
             Expect("solo says DPS", soloTitle == Loc.T("mode.dps") ? 1m : 0m, 1m),
-            Expect("solo arrows page nowhere", parked == MeterMode.Rdps ? 1m : 0m, 1m),
+            Expect("solo skips aDPS", soloNext == MeterMode.Blocked ? 1m : 0m, 1m),
             Expect("the picker draws its chip", overlay.HarnessPickerDrawsChip ? 1m : 0m, 1m));
     }
 
@@ -1158,13 +1357,31 @@ internal static class SelfTest
             await PowerCmd.Remove<OutbreakPower>(dealer);
         }
 
+        if (dealer.GetPower<DexterityPower>() != null)
+        {
+            await PowerCmd.Remove<DexterityPower>(dealer);
+        }
+
         // Block left standing would silently soak the next scenario's swing and make it assert against the wrong
-        // number, so it is cleared alongside the HP reset. Only the block scenario ever leaves any.
+        // number, so it is cleared alongside the HP reset. Only the block scenarios ever leave any - and theirs must go
+        // before the pool is reset below, or the pool would find block it cannot account for and file it as unknown.
         if (enemy.Block > 0)
         {
             await CreatureCmd.LoseBlock(new NoOpChoiceContext(), enemy, enemy.Block, null);
         }
 
+        if (dealer.Block > 0)
+        {
+            await CreatureCmd.LoseBlock(new NoOpChoiceContext(), dealer, dealer.Block, null);
+        }
+
+        // Cleared last: the removals above run block and power hooks, which can book more of both.
+        CombatLedger.Current.Reset();
+        Patches.AttributionPatches.ClearPending();
+
+        // The block scenarios swing at the dealer, so their health is restored alongside the enemy's - a scenario that
+        // fails must not go on to kill the player and end the combat every later scenario needs.
+        await CreatureCmd.SetCurrentHp(dealer, dealer.MaxHp);
         await CreatureCmd.SetCurrentHp(enemy, enemy.MaxHp);
     }
 

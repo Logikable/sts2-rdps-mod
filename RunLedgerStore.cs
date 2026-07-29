@@ -27,6 +27,12 @@ internal sealed class PlayerEntryDto
     public List<CardEntryDto> Dealt { get; set; } = new();
     public List<SourceEntryDto> Given { get; set; } = new();
     public List<SourceEntryDto> Received { get; set; } = new();
+
+    // The block half, added later: a file written before the Blocked meter existed simply has none of these, and the
+    // empty defaults are the right answer for it - that run recorded no block, and now never will.
+    public List<CardEntryDto> Blocked { get; set; } = new();
+    public List<SourceEntryDto> BlockGiven { get; set; } = new();
+    public List<SourceEntryDto> BlockReceived { get; set; } = new();
 }
 
 internal sealed class CardEntryDto

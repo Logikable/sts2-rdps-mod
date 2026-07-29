@@ -5,8 +5,9 @@ teammate's buffs and debuffs (Vulnerable, Flanking, Poison, Doom, ...) is
 credited to the player who applied them, so support play shows up on the
 meter. A draggable in-combat overlay shows each player's damage and share of
 the team's with an instant hover breakdown. The arrows either side of its
-title page between two meters — rDPS, and aDPS, the damage a player dealt
-without any teammate credit — and it reopens on whichever one you last read.
+title page between meters — rDPS; aDPS, the damage a player dealt without any
+teammate credit; and Blocked, the damage their block stopped — and it reopens
+on whichever one you last read.
 It opens on the running session total, toggling to the current combat or any
 single fight. It stays on screen once the run has recorded anything — through
 shops, the map, and quitting to the menu — and on launch it comes back up on
@@ -36,6 +37,19 @@ code-identical assembly, so one build covers both.
   Strength pool and the pool's name alone would not say who did what. Other
   effects are named after themselves — a Vulnerable share reads "Vulnerable"
   whichever card applied it.
+
+### Blocked
+
+Block counts only when something hits it, so overblock scores nothing: the
+meter waits for damage and books what the block actually absorbed. Where that
+block came from is itemized the same way damage is, by card, potion, relic and
+power — and Dexterity is credited to whatever granted it, so a Speed Potion
+reads as "Speed Potion" rather than folding into one "Dexterity" row.
+
+The wearer's own block is spent first, oldest gain first, so it is the later,
+never-needed block that goes uncounted. In co-op, block or Dexterity you put on
+a teammate is yours: what they could not cover themselves is credited to you,
+split pro-rata when several of you topped them up.
 
 ## Languages
 

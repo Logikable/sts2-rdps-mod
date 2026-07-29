@@ -189,6 +189,7 @@ internal static class AttributionPatches
         EffectSource.Clear();
         ExecutingEffect.Clear();
         ConcoctAttribution.Clear();
+        BlockPatches.Clear();
     }
 }
 

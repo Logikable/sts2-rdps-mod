@@ -2,6 +2,7 @@
   "mode.dps": "DPS",
   "mode.rdps": "rDPS",
   "mode.adps": "aDPS",
+  "mode.block": "格挡",
   "title.value": "{0}：{1}",
 
   "view.total": "总计",
@@ -11,6 +12,11 @@
   "section.given": "给予增益",
   "section.received": "受到增益",
   "empty": "暂无伤害",
+
+  "section.block": "格挡明细",
+  "section.block.given": "给予格挡",
+  "section.block.received": "受到格挡",
+  "empty.block": "暂无格挡",
 
   "combat": "战斗",
   "enemies.pair": "{0}与{1}",

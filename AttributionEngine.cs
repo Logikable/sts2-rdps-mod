@@ -285,9 +285,9 @@ internal static class AttributionEngine
     /// exception: every source of Strength stacks into one instance, so "Strength" alone would merge a teammate's
     /// Coordinate, their Blaze and their thrown Flex Potion into a single unattributable row. Where the granting card
     /// or potion was recorded (see <see cref="Patches.PowerOwnershipPatches"/>), that name is used for the share
-    /// instead, so each shows separately.
+    /// instead, so each shows separately. Dexterity pools the same way and is named the same way, for the Blocked meter.
     /// </summary>
-    private static IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)>? NamedShares(PowerModel power)
+    internal static IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)>? NamedShares(PowerModel power)
     {
         IReadOnlyList<(ulong NetId, string? Source, decimal Fraction)>? tracked =
             PowerOwnership.Instance.SourcedShares(power);

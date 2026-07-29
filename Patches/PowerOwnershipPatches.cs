@@ -40,18 +40,21 @@ internal static class PowerOwnershipPatches
     }
 
     /// <summary>
-    /// What granted these stacks, for a power whose own name would not say. Only Strength needs this: it is the one
-    /// damage power every source stacks into a single shared instance, so without it a teammate's Coordinate, Blaze
-    /// and thrown Flex Potion all merge into one "Strength" row. Every other power names its own effect - a
+    /// What granted these stacks, for a power whose own name would not say. Two powers need this, and for the same
+    /// reason: Strength and Dexterity are each a single shared instance every source stacks into, so without it a
+    /// teammate's Coordinate, Blaze and thrown Flex Potion all merge into one "Strength" row, and every source of
+    /// Dexterity into one "Dexterity" row - which is exactly the row the Blocked meter needs to break apart, since a
+    /// player wants to see that their block came from a Speed Potion. Every other power names its own effect - a
     /// Vulnerable share should read "Vulnerable", not "Bash" - so they record no source and are unchanged.
     ///
     /// The card is the direct source (Blaze applies Strength with itself as cardSource; Coordinate's own power passes
-    /// its card through when it re-applies Strength internally). A potion carries no cardSource, so it comes from the
-    /// potion being resolved, and a relic from the effect stack - the same two the damage rows are named from.
+    /// its card through when it re-applies Strength internally, and the temporary-Dexterity powers pass theirs through
+    /// to the plain Dexterity they grant). A potion carries no cardSource, so it comes from the potion being resolved,
+    /// and a relic from the effect stack - the same two the damage rows are named from.
     /// </summary>
     private static string? GrantedBy(PowerModel power, ulong applierNetId, CardModel? cardSource)
     {
-        if (power is not StrengthPower)
+        if (power is not (StrengthPower or DexterityPower))
         {
             return null;
         }

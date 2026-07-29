@@ -2,6 +2,7 @@
   "mode.dps": "DPS",
   "mode.rdps": "rDPS",
   "mode.adps": "aDPS",
+  "mode.block": "Blocked",
   "title.value": "{0}: {1}",
 
   "view.total": "Total",
@@ -11,6 +12,11 @@
   "section.given": "Given",
   "section.received": "Received",
   "empty": "No damage yet.",
+
+  "section.block": "Block Breakdown",
+  "section.block.given": "Given",
+  "section.block.received": "Received",
+  "empty.block": "No block spent yet.",
 
   "combat": "Combat",
   "enemies.pair": "{0} & {1}",
