@@ -600,12 +600,17 @@ internal static class SelfTest
         bool clearAfter = ForeignBlockGrant.Current == null;
         await PowerCmd.Remove<BeaconOfHopePower>(dealer);
 
+        // Which player the block belongs to is RBlockOf - the Blocked meter's own bar. BlockedWith is the *wearer's*
+        // breakdown of what stopped the hit, so it naming Beacon is correct in either world and says nothing about
+        // ownership; getting those two the wrong way round is what made the first version of this scenario fail.
         CombatLedger l = CombatLedger.Current;
         return Report("Beacon of Hope (block given to a teammate)",
             Expect("the teammate's grant is what got worn", worn, 8m),
-            Expect("credited to the giver", l.BlockedWith(2uL, expected), 8m),
-            Expect("not to the wearer", l.BlockedWith(you, expected), 0m),
-            Expect("and the wearer keeps no block of their own", l.BlockedWith(you, NoCard), 0m),
+            Expect("the giver's meter is what moves", l.RBlockOf(2uL), 8m),
+            Expect("and the wearer's does not", l.RBlockOf(you), 0m),
+            Expect("recorded as given 2->you", l.BlockGivenTo(2uL, expected, you), 8m),
+            Expect("the wearer's breakdown still names it", l.BlockedWith(you, expected), 8m),
+            Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
             Expect("the stack starts clean", clearBefore ? 1m : 0m, 1m),
             Expect("and the real hook leaves it clean", clearAfter ? 1m : 0m, 1m));
     }
