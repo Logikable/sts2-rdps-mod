@@ -107,6 +107,7 @@ internal static class SelfTest
         all &= await StrengthScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await OrbPassiveScenario(context, dealer, enemy);
+        all &= await SpeedsterPotionScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockFromRelicScenario(context, dealer, enemy);
@@ -355,6 +356,65 @@ internal static class SelfTest
         return Report("Orb passive at end of turn",
             Expect("the orb's passive is worth something", passive, 4m),
             Expect("named after the orb", l.DealtWith(you, expected), passive),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Damage a drawn card triggers belongs to the effect that dealt it, even when a potion caused the draw. Speedster
+    /// hits every enemy on each card drawn, so a potion that draws (Cure All, Clarity, Swift Potion, Glowwater Potion,
+    /// Bottled Potential, Snecko Oil) has its own naming window open while Speedster's hook runs inside it - two names
+    /// available for one hit, and only the inner one dealt it.
+    ///
+    /// A relic that draws (Iron Club) never had this problem: no potion window is open, so the effect name was the only
+    /// candidate. That is exactly why the potion case is the one worth a scenario - and why the assertion that matters
+    /// is the negative one, that the potion took none of it.
+    ///
+    /// Driven through the real CardPileCmd.Draw rather than by calling Speedster's hook directly, because the push this
+    /// depends on is the game's: Hook.AfterCardDrawn puts each listening model on the choice context around its own
+    /// call. Imitating that push here would test the harness's idea of it instead of the game's.
+    /// </summary>
+    private static async Task<bool> SpeedsterPotionScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<SpeedsterPower>(ctx, dealer, 5m, dealer, null);
+        SpeedsterPower? speedster = dealer.GetPower<SpeedsterPower>();
+        if (speedster == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Speedster under a potion': FAIL (Speedster did not apply)");
+            return false;
+        }
+
+        string effect = speedster.Title.GetFormattedText();
+        string potion = ModelDb.Potion<CureAll>().Title.GetFormattedText();
+        decimal hit = speedster.Amount;
+        GD.Print($"[RdpsMeter] Self-test: \"{effect}\" for {hit} drawn under \"{potion}\"");
+
+        try
+        {
+            // The window PotionModel.OnUseWrapper opens in real play, opened by hand around the draw the potion does.
+            PotionSource.Begin(you, potion);
+            try
+            {
+                await CardPileCmd.Draw(ctx, 1m, dealer.Player!);
+            }
+            finally
+            {
+                PotionSource.End(you);
+            }
+        }
+        finally
+        {
+            // Removed even if the draw threw: Speedster left standing would deal a stray hit on any later card draw.
+            await PowerCmd.Remove<SpeedsterPower>(dealer);
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Speedster triggered by a potion's card draw",
+            Expect("Speedster hits for what it says", hit, 5m),
+            Expect("named after Speedster", l.DealtWith(you, effect), hit),
+            Expect("not after the potion that drew", l.DealtWith(you, potion), 0m),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 

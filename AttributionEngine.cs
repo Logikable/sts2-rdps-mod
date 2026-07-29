@@ -71,7 +71,16 @@ internal static class AttributionEngine
         // power/relic (Thorns, a retaliation relic, ...); name it by whichever the player is resolving so its damage
         // reads "Fire Potion" or "Thorns" rather than the "(none)" a null card source would leave behind.
         string? cardName = cardSource?.TitleLocString.GetFormattedText();
-        string? sourceName = dealerNetId is ulong id ? PotionSource.Current(id) ?? EffectSource.Current(id) : null;
+        // The effect outranks the potion, because it is the inner one. A potion that draws a card (Cure All, Clarity,
+        // Swift Potion, ...) runs Speedster's own hook inside its OnUse, so both windows are open at once and only the
+        // innermost names the hit that Speedster actually dealt - the potion merely caused the draw.
+        //
+        // Safe in the other direction too: EffectSource is set - or cleared - in the prefix of this very hit, from
+        // whatever power/relic/orb the game had on top of its model stack. A potion's own damage runs with the potion
+        // itself on top, which is none of those, so the entry is cleared and the potion name still wins. And its other
+        // supplier, ExecutingEffect, is pushed only around the end-of-turn power hooks, during which no potion can be
+        // drunk.
+        string? sourceName = dealerNetId is ulong id ? EffectSource.Current(id) ?? PotionSource.Current(id) : null;
         string dealerCard = cardName ?? sourceName ?? UnknownSource;
 
         // A modifier is a credit candidate if it is a power with at least one owner who is not the dealer. Ownership
