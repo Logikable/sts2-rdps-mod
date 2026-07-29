@@ -5,29 +5,49 @@ using System.Threading.Tasks;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Models.Relics;
 
 namespace RdpsMeter.Patches;
 
 /// <summary>
-/// Names damage from player buffs that deal it from a hook the game does not push onto its executing-model stack, so
-/// their hits read as the power ("Hailstorm", "The Bomb", "Outbreak") instead of "(none)". These powers sit on the
-/// player and deal to every enemy with the player as dealer but no card source, from a hook whose dispatcher does not
-/// push (BeforeSideTurnEnd for the end-of-turn bombs, AfterPowerAmountChanged for Outbreak's every-third-poison burst),
-/// so <see cref="EffectSource"/> cannot recover them from LastInvolvedModel.
+/// Names damage from a player's powers that deal it out of a hook the game does not push onto its executing-model
+/// stack, so those hits read as the power ("Hailstorm", "Sleight of Flesh", "Juggernaut") instead of "(none)". The
+/// power sits on the player and deals with the player as dealer but no card source, and its hook's dispatcher in
+/// Hook.cs pushes nothing, so <see cref="EffectSource"/> has nothing to recover from LastInvolvedModel.
 ///
 /// A prefix pushes the power onto <see cref="ExecutingEffect"/> (which EffectSource consults as a fallback) for the
 /// span of the hook, and the postfix wraps the returned Task so the matching pop runs only after the async hook - and
 /// its damage - has fully settled. Wrapping the Task is what makes the pop reliable: a plain postfix on an async
 /// method runs when the Task is first returned, long before the damage lands.
+///
+/// The list is derived, not remembered: `tools/find-unnamed-damage.py` asks a decompile which Hook.cs dispatchers lack
+/// a PushModel call and which models deal damage out of one. Re-run it when the game updates - the hand-maintained
+/// version of this list has been caught short twice, by Outbreak and then by Sleight of Flesh.
+///
+/// Four of that script's answers are deliberately not here, for three different reasons:
+///
+/// - Demise, Poison and Magic Bomb never reach EffectSource. Their damage is dealer-less or dealt by the creature
+///   carrying the power, and <see cref="SourceAttribution"/> books it against whoever applied the effect instead.
+/// - Constrict sits on the player and damages that same player, and the ledger books no hit whose target is a player,
+///   so there is no row to name.
+/// - Thunder is a real mis-attribution that this cannot fix. It fires from AfterOrbEvoked, inside the push OrbCmd.Evoke
+///   already did, so its damage reads as the evoked orb rather than as "(none)". LastInvolvedModel outranks
+///   ExecutingEffect, so pushing here would change nothing; fixing it means deciding which stack wins, which is a
+///   change to every case rather than an addition to this list.
 /// </summary>
 [HarmonyPatch]
-internal static class EndOfTurnSourcePatches
+internal static class UnpushedSourcePatches
 {
     private static IEnumerable<MethodBase> TargetMethods()
     {
         yield return AccessTools.Method(typeof(HailstormPower), nameof(HailstormPower.BeforeSideTurnEnd));
         yield return AccessTools.Method(typeof(TheBombPower), nameof(TheBombPower.BeforeSideTurnEnd));
         yield return AccessTools.Method(typeof(OutbreakPower), nameof(OutbreakPower.AfterPowerAmountChanged));
+        yield return AccessTools.Method(typeof(SleightOfFleshPower), nameof(SleightOfFleshPower.AfterPowerAmountChanged));
+        yield return AccessTools.Method(typeof(JuggernautPower), nameof(JuggernautPower.AfterBlockGained));
+        yield return AccessTools.Method(typeof(NecroMasteryPower), nameof(NecroMasteryPower.AfterCurrentHpChanged));
+        yield return AccessTools.Method(
+            typeof(SmokestackPower), nameof(SmokestackPower.AfterCardGeneratedForCombat));
     }
 
     [HarmonyPrefix]
@@ -59,6 +79,44 @@ internal static class EndOfTurnSourcePatches
         finally
         {
             ExecutingEffect.Pop(playerNetId);
+        }
+    }
+}
+
+/// <summary>
+/// The same, for the relics that deal damage out of an unpushed hook: Parrying Shield when you end a turn still
+/// holding block, Screaming Flagon on an empty hand, Stone Calendar on its turn. All three read "(none)" without this.
+///
+/// A separate class from the powers above only because of the type: a relic's Owner is the Player itself, where a
+/// power's is that player's Creature, so the prefix cannot be shared even though everything it does is the same.
+/// </summary>
+[HarmonyPatch]
+internal static class RelicSourcePatches
+{
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        yield return AccessTools.Method(typeof(ParryingShield), nameof(ParryingShield.AfterSideTurnEnd));
+        yield return AccessTools.Method(typeof(ScreamingFlagon), nameof(ScreamingFlagon.BeforeSideTurnEnd));
+        yield return AccessTools.Method(typeof(StoneCalendar), nameof(StoneCalendar.BeforeSideTurnEnd));
+    }
+
+    [HarmonyPrefix]
+    private static void Prefix(RelicModel __instance, out ulong? __state)
+    {
+        __state = null;
+        if (__instance.Owner is { } player)
+        {
+            __state = player.NetId;
+            ExecutingEffect.Push(player.NetId, __instance.Title.GetFormattedText());
+        }
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(ulong? __state, ref Task __result)
+    {
+        if (__state is ulong netId && __result != null)
+        {
+            __result = UnpushedSourcePatches.PopAfter(__result, netId);
         }
     }
 }
@@ -124,7 +182,7 @@ internal static class OrbPassiveSourcePatches
     {
         if (__state is ulong netId && __result != null)
         {
-            __result = EndOfTurnSourcePatches.PopAfter(__result, netId);
+            __result = UnpushedSourcePatches.PopAfter(__result, netId);
         }
     }
 }

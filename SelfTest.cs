@@ -108,6 +108,8 @@ internal static class SelfTest
         all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await OrbPassiveScenario(context, dealer, enemy);
         all &= await SpeedsterPotionScenario(context, dealer, enemy);
+        all &= await SleightOfFleshScenario(context, dealer, enemy);
+        all &= await UnpushedRelicScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockFromRelicScenario(context, dealer, enemy);
@@ -416,6 +418,84 @@ internal static class SelfTest
             Expect("Speedster hits for what it says", hit, 5m),
             Expect("named after Speedster", l.DealtWith(you, effect), hit),
             Expect("not after the potion that drew", l.DealtWith(you, potion), 0m),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Sleight of Flesh names itself. It hits an enemy every time you land a debuff on them, out of
+    /// AfterPowerAmountChanged - a hook whose dispatcher pushes nothing onto the game's model stack, so the hit arrived
+    /// with a player dealer, no card, and nothing to name it, and the whole thing read "(none)".
+    ///
+    /// The debuff is applied by the dealer themselves, because that is the power's own condition (applier == owner). A
+    /// real card would be on the model stack at that moment in play, which is exactly why this cannot be recovered from
+    /// LastInvolvedModel: a CardModel is not one of the three kinds EffectSource reads, so the stack's top is useless
+    /// here even when it is occupied.
+    ///
+    /// Removed afterwards without fail - left standing, it would add a stray hit to every later scenario that applies a
+    /// debuff, which is most of them.
+    /// </summary>
+    private static async Task<bool> SleightOfFleshScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<SleightOfFleshPower>(ctx, dealer, 9m, dealer, null);
+        SleightOfFleshPower? sleight = dealer.GetPower<SleightOfFleshPower>();
+        if (sleight == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Sleight of Flesh': FAIL (it did not apply)");
+            return false;
+        }
+
+        string expected = sleight.Title.GetFormattedText();
+        decimal hit = sleight.Amount;
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {hit} on landing a debuff");
+
+        try
+        {
+            // A real debuff, applied by the dealer to the enemy: the power checks all three of those.
+            await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, dealer, null);
+        }
+        finally
+        {
+            await PowerCmd.Remove<SleightOfFleshPower>(dealer);
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Sleight of Flesh (damage on landing a debuff)",
+            Expect("it hits for what it says", hit, 9m),
+            Expect("named after the power", l.DealtWith(you, expected), hit),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// A relic in the same position names itself too, which the powers above do not prove: a relic's Owner is the Player
+    /// where a power's is that player's Creature, so it needs a patch of its own and could be broken while every power
+    /// works. Parrying Shield is the one of the three that the harness can actually trigger - Screaming Flagon wants an
+    /// empty hand and Stone Calendar a particular turn number, neither of which a scenario can arrange cheaply.
+    ///
+    /// Block is granted first because that is the relic's condition (it fires only if you end the turn still holding
+    /// enough), and the clone is never added to the player's relics, so it takes no further hooks.
+    /// </summary>
+    private static async Task<bool> UnpushedRelicScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        var shield = (ParryingShield)ModelDb.Relic<ParryingShield>().MutableClone();
+        shield.Owner = dealer.Player!;
+        string expected = shield.Title.GetFormattedText();
+        decimal hit = shield.DynamicVars.Damage.BaseValue;
+        decimal needed = shield.DynamicVars.Block.BaseValue;
+
+        await CreatureCmd.GainBlock(dealer, needed, DamageProps.nonCardUnpowered, null);
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {hit} behind {needed} block (dealer has {dealer.Block})");
+        await shield.AfterSideTurnEnd(ctx, CombatSide.Player, new[] { dealer });
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Parrying Shield (a relic on an unpushed hook)",
+            Expect("the relic hits for what it says", hit, 6m),
+            Expect("named after the relic", l.DealtWith(you, expected), hit),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 
