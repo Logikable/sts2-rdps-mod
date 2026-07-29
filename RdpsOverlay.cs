@@ -23,10 +23,11 @@ namespace RdpsMeter;
 /// alone, the party's summed in co-op - so the header states the answer and the body breaks it down.
 ///
 /// Hard against the right edge, the minus collapses the window and becomes the plus that opens it again. Collapsed,
-/// the window is that plus and nothing else: a small square, half again the header's height so it is easy to spot and
-/// to hit, which is also still the drag handle. Everything else goes - the body, the arrows, the tally picker, and the
-/// title too, since a title the window is too narrow to finish is worse than none. That state is remembered between
-/// sessions, safely, because what is left on screen is the button that brings it all back.
+/// the window is that plus and nothing else: a square the height of the header it replaces, which is also still the
+/// drag handle. Everything else goes - the body, the arrows, the tally picker, and the title too, since a title the
+/// window is too narrow to finish is worse than none. The square opens centred on the mark that was clicked, so the
+/// button stays under the pointer. That state is remembered between sessions, safely, because what is left on screen
+/// is the button that brings it all back.
 ///
 /// Nothing short of an empty run takes the window away - not ending a fight, not leaving the run for the main menu - so
 /// the numbers stay readable after the match; see <see cref="ShouldShow"/>.
@@ -98,10 +99,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     private const float HeaderHeight = 28f;
 
-    // Collapsed, the whole window is this square and nothing else. Comfortably larger than the header it replaces
-    // (~1.7x) on purpose: a collapsed window has no title to catch the eye, so the one thing left has to be big enough
-    // to find and to hit without aiming.
-    private const float MinimizedSide = 48f;
+    // Collapsed, the whole window is this square and nothing else - as tall as the header it replaces, so collapsing
+    // reads as the window shrinking to its own button rather than swapping in a differently-sized one.
+    private const float MinimizedSide = HeaderHeight;
 
     // Warm blue, bright enough to read on the translucent header at the title's size.
     private static readonly Color TitleColor = new(0.541f, 0.706f, 0.973f);
@@ -430,10 +430,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // the window has a measured size.
         if (_clampPending && _panel.Size.X > 0f)
         {
-            // Against the size the window is about to be, not the one it still has. Godot takes a frame to grow a
-            // control to a minimum size that just went up, and opening a collapsed window puts it up by 272px - so
-            // clamping against the square's own size would leave the reopened window hanging off the screen edge.
-            Vector2 extent = _panel.Size.Max(_panel.GetCombinedMinimumSize());
+            // The size the window is about to be, which is its minimum - GetCombinedMinimumSize recomputes on demand,
+            // so it is already the new value in both directions, while Size lags a frame behind in both.
+            //
+            // Not the larger of the two, which is what this was and was wrong: collapsing leaves Size at the open
+            // window's 320px for a frame, so the clamp held the 28px square inside a 320px allowance and dragged it
+            // left by the difference. That only bit near the right edge, and faded to nothing about a window-and-a-
+            // shift's width in from it - which is the "only on the right, and worse the further right" shape of it.
+            Vector2 extent = _panel.GetCombinedMinimumSize();
             Vector2 view = _panel.GetViewportRect().Size;
             _panel.Position = new Vector2(
                 Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, view.X - extent.X)),
@@ -600,6 +604,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     internal Vector2 HarnessMarkCentre => _minimize.GlobalPosition + _minimize.Size / 2f;
 
     internal Vector2 HarnessPanelPosition => _panel.Position;
+
+    /// <summary>The mark's drawn size, which must not depend on which state is showing.</summary>
+    internal Vector2 HarnessMarkSize => _glyph.MarkSize;
+
+    internal Vector2 HarnessViewport => _panel.GetViewportRect().Size;
 
     /// <summary>Puts the window somewhere known, so a position-sensitive check is not at the mercy of the real config.</summary>
     internal void HarnessPlace(Vector2 position)
@@ -779,7 +788,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _minimize.OffsetLeft = _minimized ? 0f : -(MinimizeWidth + 6f);
         _minimize.OffsetRight = _minimized ? 0f : -6f;
 
-        _glyph.Configure(plus: _minimized, arm: _minimized ? 22f : 13f, thickness: _minimized ? 3f : 2f);
+        _glyph.SetPlus(_minimized);
     }
 
     // Page to the next meter and remember it, wrapping at either end so both arrows always reach everything.
@@ -1444,18 +1453,21 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 /// </summary>
 internal sealed partial class MinimizeGlyph : Control
 {
+    // One size for both marks: the plus is the minus with a second bar through it, not a larger stamp for the larger
+    // state, so collapsing and opening do not change how big the mark looks.
+    private const float Arm = 13f;
+    private const float Thickness = 2f;
+
     private bool _plus;
-    private float _arm = 12f;
-    private float _thickness = 2f;
     private Color _color = new(0.541f, 0.706f, 0.973f);
 
-    public void Configure(bool plus, float arm, float thickness)
+    public void SetPlus(bool plus)
     {
         _plus = plus;
-        _arm = arm;
-        _thickness = thickness;
         QueueRedraw();
     }
+
+    public Vector2 MarkSize => new(Arm, Thickness);
 
     public void Tint(Color color)
     {
@@ -1471,16 +1483,17 @@ internal sealed partial class MinimizeGlyph : Control
 
     public override void _Draw()
     {
-        // Rounded to whole pixels: a bar landing on a half-pixel is drawn blurred across two, which on a 2px-thick
-        // mark is the difference between a crisp line and a grey smudge.
+        // Every edge rounded to a whole pixel: a bar landing on a half-pixel is drawn blurred across two, which on a
+        // 2px-thick mark is the difference between a crisp line and a grey smudge. The arm is odd, so rounding the
+        // centre alone would not have been enough - the corners are what have to land on the grid.
         Vector2 middle = (Size / 2f).Round();
-        float arm = Mathf.Round(_arm);
-        float thickness = Mathf.Round(_thickness);
 
-        DrawRect(new Rect2(middle.X - arm / 2f, middle.Y - thickness / 2f, arm, thickness), _color);
+        DrawRect(new Rect2(
+            Mathf.Round(middle.X - Arm / 2f), Mathf.Round(middle.Y - Thickness / 2f), Arm, Thickness), _color);
         if (_plus)
         {
-            DrawRect(new Rect2(middle.X - thickness / 2f, middle.Y - arm / 2f, thickness, arm), _color);
+            DrawRect(new Rect2(
+                Mathf.Round(middle.X - Thickness / 2f), Mathf.Round(middle.Y - Arm / 2f), Thickness, Arm), _color);
         }
     }
 }

@@ -747,6 +747,7 @@ internal static class SelfTest
         decimal headerHeight = (decimal)overlay.HarnessHeaderHeight;
         Vector2 markOpen = overlay.HarnessMarkCentre;
         Vector2 positionOpen = overlay.HarnessPanelPosition;
+        Vector2 markSizeOpen = overlay.HarnessMarkSize;
 
         overlay.HarnessToggleMinimized();
         await Settle();
@@ -758,6 +759,7 @@ internal static class SelfTest
         bool remembered = OverlayLayout.LoadMinimized();
         Vector2 markShut = overlay.HarnessMarkCentre;
         Vector2 positionShut = overlay.HarnessPanelPosition;
+        Vector2 markSizeShut = overlay.HarnessMarkSize;
 
         overlay.HarnessToggleMinimized();
         await Settle();
@@ -767,6 +769,23 @@ internal static class SelfTest
         bool forgotten = !OverlayLayout.LoadMinimized();
         Vector2 markReopened = overlay.HarnessMarkCentre;
         Vector2 positionReopened = overlay.HarnessPanelPosition;
+
+        // Again with the window pushed against the right edge of the screen, which is its own case: the collapsed
+        // square is clamped into the viewport, and a clamp measured against the size the window still has rather than
+        // the size it is becoming pulls the square left - the further right, the harder. Nothing about the arithmetic
+        // above notices, because it runs where there is room on every side.
+        Vector2 viewport = overlay.HarnessViewport;
+        overlay.HarnessPlace(new Vector2(viewport.X - 324f, 200f));
+        await Settle();
+        Vector2 markOpenEdge = overlay.HarnessMarkCentre;
+
+        overlay.HarnessToggleMinimized();
+        await Settle();
+        Vector2 markShutEdge = overlay.HarnessMarkCentre;
+
+        overlay.HarnessToggleMinimized();
+        await Settle();
+        Vector2 markReopenedEdge = overlay.HarnessMarkCentre;
 
         overlay.HarnessPlace(origin);
         if (storedPosition is Vector2 stored)
@@ -779,6 +798,7 @@ internal static class SelfTest
         GD.Print($"[RdpsMeter] Self-test: collapsed {openWidth}x{openHeight} -> {shutWidth}x{shutHeight} "
             + $"(header {headerHeight}px), mark off-centre by {shutOffCentre}px");
         GD.Print($"[RdpsMeter] Self-test: mark {markOpen} -> {markShut}, window {positionOpen} -> {positionShut}");
+        GD.Print($"[RdpsMeter] Self-test: at the right edge, mark {markOpenEdge} -> {markShutEdge} (viewport {viewport})");
 
         return Report("Minimize",
             Expect("opens with a body", open.body ? 1m : 0m, 1m),
@@ -798,8 +818,9 @@ internal static class SelfTest
             Expect("the window got smaller", shutWidth * shutHeight < openWidth * openHeight ? 1m : 0m, 1m),
             Expect("much narrower", shutWidth < openWidth ? 1m : 0m, 1m),
             Expect("down to a square", shutWidth, shutHeight),
-            Expect("half again the header it replaced, so it can be found",
-                shutHeight >= headerHeight * 1.5m && shutHeight <= headerHeight * 2m ? 1m : 0m, 1m),
+            Expect("as tall as the header it replaced", shutHeight, headerHeight),
+            Expect("the plus is drawn the same size as the minus",
+                (decimal)(markSizeShut - markSizeOpen).Length(), 0m),
             Expect("the plus opens exactly where the minus was",
                 (decimal)(markShut - markOpen).Length() <= 1m ? 1m : 0m, 1m),
             Expect("which took moving the window, not leaving it be",
@@ -815,7 +836,11 @@ internal static class SelfTest
                 (decimal)(markReopened - markOpen).Length() <= 1m ? 1m : 0m, 1m),
             Expect("and the window to where it started",
                 (decimal)(positionReopened - positionOpen).Length() <= 1m ? 1m : 0m, 1m),
-            Expect("reopening is remembered too", forgotten ? 1m : 0m, 1m));
+            Expect("reopening is remembered too", forgotten ? 1m : 0m, 1m),
+            Expect("against the right edge of the screen, the plus still opens on the minus",
+                (decimal)(markShutEdge - markOpenEdge).Length() <= 1m ? 1m : 0m, 1m),
+            Expect("and the minus still comes back to it",
+                (decimal)(markReopenedEdge - markOpenEdge).Length() <= 1m ? 1m : 0m, 1m));
     }
 
     /// <summary>
