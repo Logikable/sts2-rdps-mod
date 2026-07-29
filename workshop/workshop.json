@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.16 - a new Blocked meter, and arrows either side of the title to page between meters. Blocked counts the damage your block actually stopped, so block nobody swung at scores nothing, and what did get hit is itemized by the card, potion, relic or power that paid for it - with Dexterity credited to whatever granted it, so a Speed Potion reads as \"Speed Potion\" rather than folding into one Dexterity row. In co-op, block or Dexterity you put on a teammate is credited to you, split pro-rata when several of you topped them up. Alongside it, aDPS shows the damage a player dealt without any teammate credit, and the meter reopens on whichever one you last read. Playing alone there is nobody to credit, so rDPS and aDPS are the same number and appear once, as Damage - and the header now shows its total even when that total is zero. Checked against game v0.109.1.",
+  "changeNote": "0.1.17 - a fix for damage that was showing up under no name at all. A Defect orb's passive was credited to the orb only when it was evoked, or when a card triggered it; the passive that fires at the end of every turn - which is most of what Glass and Lightning ever deal - was landing unattributed. It now reads as the orb wherever it comes from. Block from an orb was never affected. Checked against game v0.109.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
