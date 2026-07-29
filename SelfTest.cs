@@ -707,14 +707,15 @@ internal static class SelfTest
     }
 
     /// <summary>
-    /// Collapsing the window to its header and opening it again. What has to go is the body and the two header choices
-    /// that mean nothing without one - the meter arrows and the fight picker. What has to stay is the title, still
-    /// carrying the meter's number, since a collapsed window that reports is worth leaving collapsed and a bare name is
-    /// not. The button flips to the inverse of what it just did, the choice is written to the config so it survives a
-    /// restart, and the fixed width holds through both states - only the height is allowed to move.
+    /// Collapsing the window to its square and opening it again. Collapsed, everything goes - the body, the meter
+    /// arrows, the fight picker and the title - leaving a square big enough to find, which is checked as a square
+    /// rather than merely as something smaller: it has to be as wide as it is tall, and half again the header it
+    /// replaced. The mark flips to the inverse of what the button just did and is drawn on the button's own centre,
+    /// which is the part a font got wrong. The choice is written to the config so it survives a restart, and opening
+    /// restores the window's full width and height exactly.
     ///
     /// Every check is made against the real header: the scenario presses the button rather than describing what it
-    /// would do, and reads back the controls' own visibility.
+    /// would do, and reads back the controls' own visibility and geometry.
     /// </summary>
     private static async Task<bool> MinimizeScenario()
     {
@@ -733,50 +734,58 @@ internal static class SelfTest
 
         await Settle();
         (bool body, bool arrows, bool picker, bool title) open = overlay.HarnessVisibleParts;
-        string openGlyph = overlay.HarnessMinimizeGlyph;
-        string openTitle = overlay.HarnessTitle;
+        bool openIsPlus = overlay.HarnessGlyphIsPlus;
+        decimal openOffCentre = (decimal)overlay.HarnessGlyphOffCentre.Length();
         decimal openWidth = (decimal)overlay.HarnessPanelWidth;
         decimal openHeight = (decimal)overlay.HarnessPanelHeight;
+        decimal headerHeight = (decimal)overlay.HarnessHeaderHeight;
 
         overlay.HarnessToggleMinimized();
         await Settle();
         (bool body, bool arrows, bool picker, bool title) shut = overlay.HarnessVisibleParts;
-        string shutGlyph = overlay.HarnessMinimizeGlyph;
-        string shutTitle = overlay.HarnessTitle;
+        bool shutIsPlus = overlay.HarnessGlyphIsPlus;
+        decimal shutOffCentre = (decimal)overlay.HarnessGlyphOffCentre.Length();
         decimal shutWidth = (decimal)overlay.HarnessPanelWidth;
         decimal shutHeight = (decimal)overlay.HarnessPanelHeight;
-        decimal headerHeight = (decimal)overlay.HarnessHeaderHeight;
         bool remembered = OverlayLayout.LoadMinimized();
 
         overlay.HarnessToggleMinimized();
         await Settle();
         (bool body, bool arrows, bool picker, bool title) reopened = overlay.HarnessVisibleParts;
         decimal reopenedHeight = (decimal)overlay.HarnessPanelHeight;
+        decimal reopenedWidth = (decimal)overlay.HarnessPanelWidth;
         bool forgotten = !OverlayLayout.LoadMinimized();
 
-        GD.Print($"[RdpsMeter] Self-test: header collapsed to \"{shutTitle}\", {openHeight}px -> {shutHeight}px (header {headerHeight}px)");
+        GD.Print($"[RdpsMeter] Self-test: collapsed {openWidth}x{openHeight} -> {shutWidth}x{shutHeight} "
+            + $"(header {headerHeight}px), mark off-centre by {shutOffCentre}px");
 
         return Report("Minimize",
             Expect("opens with a body", open.body ? 1m : 0m, 1m),
             Expect("opens with its arrows", open.arrows ? 1m : 0m, 1m),
             Expect("opens with its fight picker", open.picker ? 1m : 0m, 1m),
-            Expect("open, the button offers to collapse", openGlyph == "−" ? 1m : 0m, 1m),
+            Expect("opens with its title", open.title ? 1m : 0m, 1m),
+            Expect("open, the button offers to collapse", openIsPlus ? 1m : 0m, 0m),
+            Expect("open, the mark sits on the button's centre", openOffCentre <= 1m ? 1m : 0m, 1m),
             Expect("collapsed, the body is gone", shut.body ? 1m : 0m, 0m),
             Expect("collapsed, the arrows are gone", shut.arrows ? 1m : 0m, 0m),
             Expect("collapsed, the fight picker is gone", shut.picker ? 1m : 0m, 0m),
-            Expect("collapsed, the title stays", shut.title ? 1m : 0m, 1m),
-            Expect("and still says what it said", shutTitle == openTitle ? 1m : 0m, 1m),
-            Expect("which is more than the meter's name", shutTitle != overlay.HarnessModeName(solo: true) ? 1m : 0m, 1m),
-            Expect("collapsed, the button offers to open", shutGlyph == "+" ? 1m : 0m, 1m),
-            Expect("the window got shorter", shutHeight < openHeight ? 1m : 0m, 1m),
-            Expect("down to the header and the window's own border, with no blank strip left under it",
-                shutHeight <= headerHeight + 2m ? 1m : 0m, 1m),
-            Expect("but no narrower", shutWidth, openWidth),
+            Expect("collapsed, the title is gone too", shut.title ? 1m : 0m, 0m),
+            Expect("collapsed, the button offers to open", shutIsPlus ? 1m : 0m, 1m),
+            Expect("collapsed, the mark still sits on the button's centre", shutOffCentre <= 1m ? 1m : 0m, 1m),
+            // Smaller by area, not shorter: the square is a fixed size, so against a nearly-empty open window it is
+            // legitimately the taller of the two. Width is where collapsing always wins, and by a lot.
+            Expect("the window got smaller", shutWidth * shutHeight < openWidth * openHeight ? 1m : 0m, 1m),
+            Expect("much narrower", shutWidth < openWidth ? 1m : 0m, 1m),
+            Expect("down to a square", shutWidth, shutHeight),
+            Expect("half again the header it replaced, so it can be found",
+                shutHeight >= headerHeight * 1.5m && shutHeight <= headerHeight * 2m ? 1m : 0m, 1m),
             Expect("collapsing is remembered", remembered ? 1m : 0m, 1m),
             Expect("reopening brings the body back", reopened.body ? 1m : 0m, 1m),
             Expect("and the arrows", reopened.arrows ? 1m : 0m, 1m),
             Expect("and the fight picker", reopened.picker ? 1m : 0m, 1m),
+            Expect("and the title", reopened.title ? 1m : 0m, 1m),
             Expect("and the height", reopenedHeight, openHeight),
+            Expect("and the width", reopenedWidth, openWidth),
             Expect("reopening is remembered too", forgotten ? 1m : 0m, 1m));
     }
 

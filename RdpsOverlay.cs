@@ -22,10 +22,11 @@ namespace RdpsMeter;
 /// to the run total with each run. The title between them names the meter and carries its number - the player's own
 /// alone, the party's summed in co-op - so the header states the answer and the body breaks it down.
 ///
-/// Hard against the right edge, the minus collapses the window to that header and becomes the plus that opens it again.
-/// Collapsed, the arrows and the tally picker go with the body, since neither means anything without one; the title
-/// stays, so a collapsed window is still reporting rather than merely out of the way. That too is remembered between
-/// sessions - safely, because what is left on screen is the button that brings it back.
+/// Hard against the right edge, the minus collapses the window and becomes the plus that opens it again. Collapsed,
+/// the window is that plus and nothing else: a small square, half again the header's height so it is easy to spot and
+/// to hit, which is also still the drag handle. Everything else goes - the body, the arrows, the tally picker, and the
+/// title too, since a title the window is too narrow to finish is worse than none. That state is remembered between
+/// sessions, safely, because what is left on screen is the button that brings it all back.
 ///
 /// Nothing short of an empty run takes the window away - not ending a fight, not leaving the run for the main menu - so
 /// the numbers stay readable after the match; see <see cref="ShouldShow"/>.
@@ -95,6 +96,13 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // and a hair of space so the picker's chip does not touch it.
     private const float MenuInset = 6f + MinimizeWidth + 2f;
 
+    private const float HeaderHeight = 28f;
+
+    // Collapsed, the whole window is this square and nothing else. Comfortably larger than the header it replaces
+    // (~1.7x) on purpose: a collapsed window has no title to catch the eye, so the one thing left has to be big enough
+    // to find and to hit without aiming.
+    private const float MinimizedSide = 48f;
+
     // Warm blue, bright enough to read on the translucent header at the title's size.
     private static readonly Color TitleColor = new(0.541f, 0.706f, 0.973f);
 
@@ -128,6 +136,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private Button _next = null!;
     private MenuButton _menu = null!;
     private Button _minimize = null!;
+    private MinimizeGlyph _glyph = null!;
     private MarginContainer _body = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
@@ -195,7 +204,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         var root = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         root.AddThemeConstantOverride("separation", 0);
 
-        _header = new DragHandle { CustomMinimumSize = new Vector2(0f, 28f) };
+        _header = new DragHandle { CustomMinimumSize = new Vector2(0f, HeaderHeight) };
         _header.AddThemeStyleboxOverride("panel", new StyleBoxFlat
         {
             BgColor = new Color(1f, 1f, 1f, 0.06f),
@@ -291,26 +300,28 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         caret.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.75f));
         _menu.AddChild(caret);
 
-        // Collapse to the header and back, hard against the window's right edge. It carries a glyph rather than a word
-        // so it needs no translation, and it swaps that glyph for the inverse of whatever it just did - the minus that
-        // took the window away becomes the plus that brings it back.
+        // Collapse the window and open it again. It shows the inverse of whatever it just did - the minus that took
+        // the window away becomes the plus that brings it back.
+        //
+        // The button carries no text: its mark is drawn as bars by MinimizeGlyph, centred on the button's own middle.
+        // Set as a font glyph it was not centred and could not straightforwardly be made so - a font centres a line
+        // box, not the ink inside it, and "+" and "-" sit differently within theirs, which is why the plus read as
+        // high while the minus looked settled. Drawing it also sidesteps the question of whether the font has a real
+        // minus sign at all.
         _minimize = new Button
         {
             Flat = true,
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
-            AnchorLeft = 1f,
-            AnchorRight = 1f,
             AnchorTop = 0f,
             AnchorBottom = 1f,
-            OffsetLeft = -(MinimizeWidth + 6f),
-            OffsetRight = -6f,
         };
-        _minimize.AddThemeFontSizeOverride("font_size", 20);
-        _minimize.AddThemeColorOverride("font_color", TitleColor);
-        _minimize.AddThemeColorOverride("font_hover_color", Colors.White);
-        _minimize.AddThemeColorOverride("font_pressed_color", Colors.White);
         _minimize.Pressed += ToggleMinimized;
+        _glyph = new MinimizeGlyph { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _minimize.AddChild(_glyph);
+        _glyph.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        _minimize.MouseEntered += () => _glyph.Tint(Colors.White);
+        _minimize.MouseExited += () => _glyph.Tint(TitleColor);
         _header.AddChild(_minimize);
 
         _body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -419,22 +430,27 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // the window has a measured size.
         if (_clampPending && _panel.Size.X > 0f)
         {
+            // Against the size the window is about to be, not the one it still has. Godot takes a frame to grow a
+            // control to a minimum size that just went up, and opening a collapsed window puts it up by 272px - so
+            // clamping against the square's own size would leave the reopened window hanging off the screen edge.
+            Vector2 extent = _panel.Size.Max(_panel.GetCombinedMinimumSize());
             Vector2 view = _panel.GetViewportRect().Size;
             _panel.Position = new Vector2(
-                Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, view.X - _panel.Size.X)),
-                Mathf.Clamp(_panel.Position.Y, 0f, Mathf.Max(0f, view.Y - _panel.Size.Y)));
+                Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, view.X - extent.X)),
+                Mathf.Clamp(_panel.Position.Y, 0f, Mathf.Max(0f, view.Y - extent.Y)));
             _clampPending = false;
         }
 
         // Godot grows a control to fit its minimum size but never shrinks it back when that minimum falls - and the
         // panel hangs off a CanvasLayer, so no container does it for us. Left alone, the window keeps the height of the
-        // longest breakdown it has ever shown (and, collapsed, the height of the body it just dropped) as dead space.
-        // Assigning the height every frame is what makes it track: Godot clamps the value back up to the minimum, so
-        // this can only ever take away space nothing is asking for.
-        float wanted = _panel.GetCombinedMinimumSize().Y;
-        if (_panel.Size.Y > wanted)
+        // longest breakdown it has ever shown, and stays 320px wide after collapsing to a square. Assigning the size
+        // every frame is what makes it track: Godot clamps the value back up to the minimum, so this can only ever
+        // take away space nothing is asking for. It is not a second opinion on the width - the minimum is still the
+        // panel's own CustomMinimumSize, which no content can reach - only the means of letting it fall.
+        Vector2 wanted = _panel.GetCombinedMinimumSize();
+        if (_panel.Size.X > wanted.X || _panel.Size.Y > wanted.Y)
         {
-            _panel.Size = new Vector2(_panel.Size.X, wanted);
+            _panel.Size = wanted;
         }
 
         // Show every player with a tally, plus any live player yet to deal damage, so the party appears at zero from
@@ -578,7 +594,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// <summary>Whether the window is collapsed to its header, and the button that collapses it.</summary>
     internal bool HarnessMinimized => _minimized;
 
-    internal string HarnessMinimizeGlyph => _minimize.Text;
+    internal bool HarnessGlyphIsPlus => _glyph.IsPlus;
+
+    /// <summary>How far the drawn mark sits from the middle of the button it is drawn on - which must be nowhere.</summary>
+    internal Vector2 HarnessGlyphOffCentre =>
+        (_glyph.GlobalPosition + _glyph.Middle) - (_minimize.GlobalPosition + _minimize.Size / 2f);
 
     internal void HarnessToggleMinimized()
     {
@@ -675,19 +695,30 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _clampPending |= !_minimized && _header.IsDetached;
     }
 
-    // Everything the collapsed window gives up: the body, and the two choices in the header that only make sense
-    // against a body - which meter is being read, and which fight it is read over. The title stays, and widens to the
-    // space they leave, matched to the minimize button on the other side so it sits centred rather than shunted left.
+    // Collapsed, the window is a square holding one plus and nothing else - not the body, not the two header choices
+    // that mean nothing without a body, and not the title either. Everything a 320px-wide strip would still have been
+    // is given up, because a collapsed meter's whole job is to be small and findable, and a title it is too narrow to
+    // finish reading is neither. The square is the drag handle as well, so it can still be moved where it suits.
     private void ApplyMinimized()
     {
         _body.Visible = !_minimized;
         _prev.Visible = !_minimized;
         _next.Visible = !_minimized;
         _menu.Visible = !_minimized;
+        _title.Visible = !_minimized;
 
-        _minimize.Text = _minimized ? "+" : "−";
-        _title.OffsetLeft = _minimized ? MenuInset : 6f + ArrowWidth;
-        _title.OffsetRight = _minimized ? -MenuInset : -(MenuWidth + MenuInset + ArrowWidth);
+        // Both the panel and the header are pinned, so the square holds whichever of the two the layout settles from -
+        // the panel's border makes them differ by a couple of pixels, and neither is allowed to decide the shape alone.
+        _panel.CustomMinimumSize = _minimized ? new Vector2(MinimizedSide, MinimizedSide) : new Vector2(Width, 0f);
+        _header.CustomMinimumSize = new Vector2(0f, _minimized ? MinimizedSide - 2f : HeaderHeight);
+
+        // Open, the button is a slot at the right end of the header; collapsed, it is the whole square.
+        _minimize.AnchorLeft = _minimized ? 0f : 1f;
+        _minimize.AnchorRight = 1f;
+        _minimize.OffsetLeft = _minimized ? 0f : -(MinimizeWidth + 6f);
+        _minimize.OffsetRight = _minimized ? 0f : -6f;
+
+        _glyph.Configure(plus: _minimized, arm: _minimized ? 22f : 13f, thickness: _minimized ? 3f : 2f);
     }
 
     // Page to the next meter and remember it, wrapping at either end so both arrows always reach everything.
@@ -1337,6 +1368,59 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private static decimal Round(decimal value)
     {
         return Math.Round(value, MidpointRounding.AwayFromZero);
+    }
+}
+
+/// <summary>
+/// The minimize button's mark, drawn rather than typed: a horizontal bar for the minus, plus a vertical one for the
+/// plus, both centred on the control's own middle.
+///
+/// Drawn because a font would not centre it. Text is placed by its line box - ascent above the baseline, descent
+/// below - and the ink of "+" and "-" sits differently within that box, so centring the box leaves the mark itself
+/// off-centre by an amount that depends on the glyph and the font, which is exactly what showed up as a high plus over
+/// a settled-looking minus. Two rects measured from <see cref="Control.Size"/> have no such gap between what is
+/// centred and what is seen, and they carry no risk of the font lacking a true minus sign and drawing a box instead.
+/// </summary>
+internal sealed partial class MinimizeGlyph : Control
+{
+    private bool _plus;
+    private float _arm = 12f;
+    private float _thickness = 2f;
+    private Color _color = new(0.541f, 0.706f, 0.973f);
+
+    public void Configure(bool plus, float arm, float thickness)
+    {
+        _plus = plus;
+        _arm = arm;
+        _thickness = thickness;
+        QueueRedraw();
+    }
+
+    public void Tint(Color color)
+    {
+        _color = color;
+        QueueRedraw();
+    }
+
+    /// <summary>Which mark is drawn, for the self-test - the button itself carries no text to read back.</summary>
+    public bool IsPlus => _plus;
+
+    /// <summary>The point the mark is drawn around, so the self-test can check it against the button's own centre.</summary>
+    public Vector2 Middle => (Size / 2f).Round();
+
+    public override void _Draw()
+    {
+        // Rounded to whole pixels: a bar landing on a half-pixel is drawn blurred across two, which on a 2px-thick
+        // mark is the difference between a crisp line and a grey smudge.
+        Vector2 middle = (Size / 2f).Round();
+        float arm = Mathf.Round(_arm);
+        float thickness = Mathf.Round(_thickness);
+
+        DrawRect(new Rect2(middle.X - arm / 2f, middle.Y - thickness / 2f, arm, thickness), _color);
+        if (_plus)
+        {
+            DrawRect(new Rect2(middle.X - thickness / 2f, middle.Y - arm / 2f, thickness, arm), _color);
+        }
     }
 }
 

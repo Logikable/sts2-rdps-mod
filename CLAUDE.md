@@ -53,7 +53,10 @@ captured `sts2.dll` before shipping.
 ## Overlay width
 
 Both windows are one fixed width (`Width` in `RdpsOverlay.cs`). Text too long
-for its space is cut short — never widen the window to fit content.
+for its space is cut short — never widen the window to fit content. The one
+exception is deliberate and content-independent: minimized, the panel's
+`CustomMinimumSize` is reassigned to a `MinimizedSide` square. That is a mode
+switch, not content reflow, which is the thing the rule forbids.
 
 The width comes **only** from the panel's `CustomMinimumSize`. Row content
 cannot influence it: each row is a plain `Control` whose children are anchored
