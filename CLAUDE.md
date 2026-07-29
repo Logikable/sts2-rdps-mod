@@ -42,6 +42,18 @@ inline in the UI code. Chinese (`zhs`) is the language that matters most after
 English. Run `tools/check-localization.sh` after touching a table. Any new
 `Label` needs `Loc.ApplyFont(label, "font")`, or non-Latin text draws as boxes.
 
+**Icons are drawn, never typed.** Every mark in the chrome — the arrowheads, the
+picker's caret, the minimize plus and minus — is a polygon or a rect, because a
+character is only as portable as the font behind it: those arrows were U+25C0 /
+U+25B6 / U+25BE until a Linux install turned all three into hex-code boxes.
+Don't reach for `Font.HasChar` to detect it: measured on Windows, where those
+three characters drew as perfectly good arrowheads, it reports `False` for all
+three — it answers for the font object you ask and not for the fallback chain
+Godot draws through. A fallback conditioned on it would have fired on machines
+that were fine. Drawing removes the dependency instead of detecting it, which is
+the only reliable move. Keep `eng.json` pure ASCII for the same reason; non-Latin
+text belongs in the other tables, where the game's substitute font does the work.
+
 ## Building
 
 Set `DOTNET_ROOT=$HOME/.dotnet`, `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`, and

@@ -99,7 +99,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     // The drawn arrowheads and caret, in pixels rather than in font sizes - these are polygons now, not characters.
     // Sized to sit alongside the minimize mark's 13px arm without either looking like the bigger control.
-    private const float ArrowGlyphWidth = 9f;
+    private const float ArrowGlyphWidth = 11f;
     private const float ArrowGlyphHeight = 12f;
 
     // Wider than tall: a dropdown caret is a flat wedge, where a paging arrow is a sharp one.
@@ -670,15 +670,20 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     }
 
     /// <summary>
-    /// Whether the font the game would have drawn the old arrow characters with actually has them. This is the check
-    /// that would have caught the bug on the machine that had it - and the reason it went unnoticed, since it answers
-    /// yes on Windows and no on some Linux installs. Reported rather than asserted: the marks are polygons now, so the
-    /// answer no longer changes what is on screen.
+    /// Whether the font behind the old arrow characters reports having them - and a standing demonstration that the
+    /// answer cannot be trusted. Measured on Windows, where those characters visibly drew as correct arrowheads, this
+    /// prints U+25C0=False U+25B6=False U+25BE=False: HasChar answers for the font object asked and not for the
+    /// fallback chain Godot actually draws through, so it is a false alarm here, and asking the title label's font or
+    /// the engine fallback gives the same wrong answer.
+    ///
+    /// That is why the fix is polygons rather than a HasChar-driven swap to ASCII: a conditional fallback built on this
+    /// would have fired on machines that were rendering perfectly well. Kept as a diagnostic, asserted nowhere - the
+    /// marks are drawn now, so the answer changes nothing on screen.
     /// </summary>
     internal string HarnessFontCoverage()
     {
-        // Asked of the arrow button's own font rather than the engine fallback, because that is the one that would have
-        // been drawing them.
+        // U+2212 is the minus the minimize mark would have used, kept in the list as the control: it reports True, so
+        // the False answers above are not simply this font reporting False for everything.
         int[] codepoints = { 0x25C0, 0x25B6, 0x25BE, 0x2212 };
         Font? font = _prev.GetThemeFont("font") ?? ThemeDB.FallbackFont;
         if (font == null)
