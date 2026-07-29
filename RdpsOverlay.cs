@@ -97,6 +97,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // and a hair of space so the picker's chip does not touch it.
     private const float MenuInset = 6f + MinimizeWidth + 2f;
 
+    // The drawn arrowheads and caret, in pixels rather than in font sizes - these are polygons now, not characters.
+    // Sized to sit alongside the minimize mark's 13px arm without either looking like the bigger control.
+    private const float ArrowGlyphWidth = 9f;
+    private const float ArrowGlyphHeight = 12f;
+
+    // Wider than tall: a dropdown caret is a flat wedge, where a paging arrow is a sharp one.
+    private const float CaretGlyphWidth = 9f;
+    private const float CaretGlyphHeight = 5f;
+
     private const float HeaderHeight = 28f;
 
     // Collapsed, the whole window is this square and nothing else - as tall as the header it replaces, so collapsing
@@ -137,6 +146,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private MenuButton _menu = null!;
     private Button _minimize = null!;
     private MinimizeGlyph _glyph = null!;
+    private TriangleGlyph _caret = null!;
     private MarginContainer _body = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
@@ -237,8 +247,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         _header.AddChild(_title);
 
         // The arrows page between meters. They take the mouse, so a click switches instead of starting a header drag.
-        _prev = ArrowButton("◀", left: true);
-        _next = ArrowButton("▶", left: false);
+        _prev = ArrowButton(GlyphDirection.Left, left: true);
+        _next = ArrowButton(GlyphDirection.Right, left: false);
         _prev.Pressed += () => StepMode(-1);
         _next.Pressed += () => StepMode(1);
         _header.AddChild(_prev);
@@ -284,21 +294,19 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         // The dropdown caret, drawn inside the button's right padding rather than appended to its caption: the caption
         // is the fight's name, which the self-test and the clipping both read, and neither wants a glyph glued to it.
-        var caret = new Label
+        // Anchored to its own slot in that padding rather than right-aligned across the whole button: a drawn glyph
+        // centres itself in the box it is given, so the box is what places it.
+        _caret = new TriangleGlyph(
+            GlyphDirection.Down, CaretGlyphWidth, CaretGlyphHeight, new Color(1f, 1f, 1f, 0.75f))
         {
-            Text = "▾",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            AnchorLeft = 0f,
+            AnchorLeft = 1f,
             AnchorRight = 1f,
             AnchorTop = 0f,
             AnchorBottom = 1f,
+            OffsetLeft = -(5f + CaretGlyphWidth),
             OffsetRight = -5f,
         };
-        caret.AddThemeFontSizeOverride("font_size", 12);
-        caret.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.75f));
-        _menu.AddChild(caret);
+        _menu.AddChild(_caret);
 
         // Collapse the window and open it again. It shows the inverse of whatever it just did - the minus that took
         // the window away becomes the plus that brings it back.
@@ -632,6 +640,54 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// <summary>What a collapsed window has to have given up: the body, and the header's two choices.</summary>
     internal (bool Body, bool Arrows, bool Picker, bool Title) HarnessVisibleParts =>
         (_body.Visible, _prev.Visible && _next.Visible, _menu.Visible, _title.Visible);
+
+    /// <summary>
+    /// The text on the three controls whose marks are drawn - all of which must be carrying none. A character here is a
+    /// character whose glyph some machine's font may not have, which is the whole failure this replaced.
+    /// </summary>
+    internal string HarnessGlyphChromeText => _prev.Text + _next.Text + _minimize.Text;
+
+    /// <summary>Which way each drawn mark points, since there is no text to read it off.</summary>
+    internal (GlyphDirection Prev, GlyphDirection Next, GlyphDirection Caret) HarnessGlyphDirections =>
+        (Arrowhead(_prev).Direction, Arrowhead(_next).Direction, _caret.Direction);
+
+    /// <summary>How far each arrowhead sits from the middle of its own button - which must be nowhere.</summary>
+    internal (Vector2 Prev, Vector2 Next) HarnessArrowOffCentre =>
+        (OffCentre(_prev, Arrowhead(_prev)), OffCentre(_next, Arrowhead(_next)));
+
+    /// <summary>The caret's box, to check it lands inside the picker rather than over its caption or past its edge.</summary>
+    internal (Rect2 Caret, Rect2 Picker) HarnessCaretPlacement =>
+        (new Rect2(_caret.GlobalPosition, _caret.Size), new Rect2(_menu.GlobalPosition, _menu.Size));
+
+    private static TriangleGlyph Arrowhead(Button button)
+    {
+        return button.GetChildren().OfType<TriangleGlyph>().First();
+    }
+
+    private static Vector2 OffCentre(Control button, TriangleGlyph glyph)
+    {
+        return (glyph.GlobalPosition + glyph.Middle) - (button.GlobalPosition + button.Size / 2f);
+    }
+
+    /// <summary>
+    /// Whether the font the game would have drawn the old arrow characters with actually has them. This is the check
+    /// that would have caught the bug on the machine that had it - and the reason it went unnoticed, since it answers
+    /// yes on Windows and no on some Linux installs. Reported rather than asserted: the marks are polygons now, so the
+    /// answer no longer changes what is on screen.
+    /// </summary>
+    internal string HarnessFontCoverage()
+    {
+        // Asked of the arrow button's own font rather than the engine fallback, because that is the one that would have
+        // been drawing them.
+        int[] codepoints = { 0x25C0, 0x25B6, 0x25BE, 0x2212 };
+        Font? font = _prev.GetThemeFont("font") ?? ThemeDB.FallbackFont;
+        if (font == null)
+        {
+            return "no font to ask";
+        }
+
+        return string.Join(", ", codepoints.Select(c => $"U+{c:X4}={font.HasChar(c)}"));
+    }
 
     /// <summary>What one player's bar is worth on the meter currently being read.</summary>
     internal decimal HarnessValue(RdpsRow row)
@@ -1230,9 +1286,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     // The header's own controls, which are built once in _Ready and outlive a language change - unlike the rows and
     // breakdown, which are rebuilt from scratch and pick their font up as they are made.
-    // The arrows and the caret are deliberately left out: they carry glyphs rather than words, and a language's font is
-    // picked for its script, not for arrowheads - swapping one in risks drawing them as boxes in the languages that
-    // need it most, while the default font has them everywhere.
+    // The arrows and the caret are not here because there is nothing to apply a font to: their marks are drawn
+    // polygons. Nor would a font help - a language's font is picked for its script, not for arrowheads. This used to
+    // say the default font carried them everywhere, which turned out to be false on some Linux installs, where all
+    // three drew as missing-glyph boxes; that is what made them polygons.
     private void ApplyLocaleFonts()
     {
         Loc.ApplyFont(_title, "font");
@@ -1266,11 +1323,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     // One of the two glyphs flanking the title. Flat - no chip of its own, so the header keeps one control in it - and
     // pinned to its end of the title's space: the left one to the window's edge, the right one to the picker's.
-    private Button ArrowButton(string glyph, bool left)
+    /// <summary>
+    /// One paging arrow. It carries no text: the arrowhead is a drawn triangle, so it cannot come out as a
+    /// missing-glyph box on a machine whose font lacks U+25C0/U+25B6 (see <see cref="TriangleGlyph"/>). The hover and
+    /// press brightening that theme colours used to do for free is wired by hand for the same reason - there is no
+    /// glyph left for a font colour to apply to.
+    /// </summary>
+    private Button ArrowButton(GlyphDirection direction, bool left)
     {
         var button = new Button
         {
-            Text = glyph,
             Flat = true,
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop,
@@ -1281,10 +1343,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             OffsetLeft = left ? 6f : -(MenuWidth + MenuInset + ArrowWidth),
             OffsetRight = left ? 6f + ArrowWidth : -(MenuWidth + MenuInset),
         };
-        button.AddThemeFontSizeOverride("font_size", 17);
-        button.AddThemeColorOverride("font_color", TitleColor);
-        button.AddThemeColorOverride("font_hover_color", Colors.White);
-        button.AddThemeColorOverride("font_pressed_color", Colors.White);
+
+        var glyph = new TriangleGlyph(direction, ArrowGlyphWidth, ArrowGlyphHeight, TitleColor);
+        button.AddChild(glyph);
+        glyph.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+
+        // Held rather than hovered still counts as hovered, so pressing does not need its own pair.
+        button.MouseEntered += () => glyph.Tint(Colors.White);
+        button.MouseExited += () => glyph.Tint(TitleColor);
         return button;
     }
 
@@ -1451,6 +1517,90 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 /// a settled-looking minus. Two rects measured from <see cref="Control.Size"/> have no such gap between what is
 /// centred and what is seen, and they carry no risk of the font lacking a true minus sign and drawing a box instead.
 /// </summary>
+/// <summary>Which way a <see cref="TriangleGlyph"/> points.</summary>
+internal enum GlyphDirection
+{
+    Left,
+    Right,
+    Down,
+}
+
+/// <summary>
+/// The paging arrowheads and the picker's caret, drawn rather than typed. These were the characters U+25C0, U+25B6 and
+/// U+25BE set as button text, which is fine only for as long as the font behind them has those codepoints - and on some
+/// Linux installs it does not, so all three came out as the hex-code box that a missing glyph draws. Nothing about that
+/// is detectable from the strings themselves; it depends on the machine.
+///
+/// Swapping in ASCII "&lt;", "&gt;" and "v" would render everywhere, but a lowercase v reads as a letter next to real
+/// letters and the angle brackets sit on the text baseline rather than centred. Three triangles are a few lines of
+/// polygon, so the glyphs stop depending on a font at all - the same reasoning that made the minimize mark a pair of
+/// drawn bars (see <see cref="MinimizeGlyph"/>), and they now match it in weight.
+/// </summary>
+internal sealed partial class TriangleGlyph : Control
+{
+    private readonly GlyphDirection _direction;
+    private readonly float _width;
+    private readonly float _height;
+
+    private Color _color;
+
+    public TriangleGlyph(GlyphDirection direction, float width, float height, Color color)
+    {
+        _direction = direction;
+        _width = width;
+        _height = height;
+        _color = color;
+        MouseFilter = MouseFilterEnum.Ignore;
+    }
+
+    public void Tint(Color color)
+    {
+        _color = color;
+        QueueRedraw();
+    }
+
+    /// <summary>Which way it points, for the self-test - the button carries no text to read back.</summary>
+    public GlyphDirection Direction => _direction;
+
+    /// <summary>The point it is drawn around, so the self-test can check it against its button's own centre.</summary>
+    public Vector2 Middle => (Size / 2f).Round();
+
+    public override void _Draw()
+    {
+        // Rounded to whole pixels for the same reason the minimize bars are: at this size a half-pixel edge is a
+        // visible smudge rather than an edge.
+        Vector2 middle = (Size / 2f).Round();
+        float halfW = Mathf.Round(_width / 2f);
+        float halfH = Mathf.Round(_height / 2f);
+
+        // Two corners on the flat side, one on the point. Wound consistently; DrawColoredPolygon fills either winding,
+        // so the order only has to describe the shape.
+        Vector2[] points = _direction switch
+        {
+            GlyphDirection.Left => new[]
+            {
+                new Vector2(middle.X + halfW, middle.Y - halfH),
+                new Vector2(middle.X + halfW, middle.Y + halfH),
+                new Vector2(middle.X - halfW, middle.Y),
+            },
+            GlyphDirection.Right => new[]
+            {
+                new Vector2(middle.X - halfW, middle.Y - halfH),
+                new Vector2(middle.X - halfW, middle.Y + halfH),
+                new Vector2(middle.X + halfW, middle.Y),
+            },
+            _ => new[]
+            {
+                new Vector2(middle.X - halfW, middle.Y - halfH),
+                new Vector2(middle.X + halfW, middle.Y - halfH),
+                new Vector2(middle.X, middle.Y + halfH),
+            },
+        };
+
+        DrawColoredPolygon(points, _color);
+    }
+}
+
 internal sealed partial class MinimizeGlyph : Control
 {
     // One size for both marks: the plus is the minus with a second bar through it, not a larger stamp for the larger

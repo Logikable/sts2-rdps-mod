@@ -120,6 +120,7 @@ internal static class SelfTest
         all &= await BlockedMeterScenario();
         all &= await EmptyTitleScenario();
         all &= await MinimizeScenario();
+        all &= await DrawnGlyphScenario();
         all &= await OverkillScenario(context, dealer, enemy);
         all &= await OverlayWidthScenario(dealer, enemy);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
@@ -901,6 +902,55 @@ internal static class SelfTest
                 (decimal)(markShutEdge - markOpenEdge).Length() <= 1m ? 1m : 0m, 1m),
             Expect("and the minus still comes back to it",
                 (decimal)(markReopenedEdge - markOpenEdge).Length() <= 1m ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Every mark in the header is drawn, not typed. The paging arrows and the picker's caret were the characters
+    /// U+25C0, U+25B6 and U+25BE, which draw as a hex-code box on a machine whose font lacks them - reported on Linux,
+    /// invisible on Windows, and nothing about the source says which machine you are on. Polygons have no such
+    /// dependency, so the guard worth keeping is that none of these controls has gone back to carrying text.
+    ///
+    /// The directions are checked because a drawn mark cannot be eyeballed in a log the way "left arrow says U+25C0"
+    /// could, and the centring because a triangle is placed by the box it is given rather than by a font's line box -
+    /// the same thing that made the minimize mark sit high when it was a character.
+    ///
+    /// Also prints whether this machine's font actually has those codepoints: the check that would have caught the bug,
+    /// kept as a diagnostic rather than an assertion since the answer no longer changes what is drawn.
+    /// </summary>
+    private static async Task<bool> DrawnGlyphScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Marks are drawn, not typed': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        // Open, or the arrows and picker it measures are hidden and sized to nothing.
+        if (overlay.HarnessMinimized)
+        {
+            overlay.HarnessToggleMinimized();
+        }
+
+        await Settle();
+        GD.Print($"[RdpsMeter] Self-test: font coverage of the old glyphs = {overlay.HarnessFontCoverage()}");
+
+        string text = overlay.HarnessGlyphChromeText;
+        (GlyphDirection prev, GlyphDirection next, GlyphDirection caret) = overlay.HarnessGlyphDirections;
+        (Vector2 prevOff, Vector2 nextOff) = overlay.HarnessArrowOffCentre;
+        (Rect2 caretBox, Rect2 picker) = overlay.HarnessCaretPlacement;
+
+        return Report("Marks are drawn, not typed",
+            Expect("no text left on the marks to need a font", text.Length, 0m),
+            Expect("the left arrow points left", prev == GlyphDirection.Left ? 1m : 0m, 1m),
+            Expect("the right arrow points right", next == GlyphDirection.Right ? 1m : 0m, 1m),
+            Expect("the caret points down", caret == GlyphDirection.Down ? 1m : 0m, 1m),
+            Expect("the left arrowhead is centred on its button",
+                (decimal)prevOff.Length() <= 1m ? 1m : 0m, 1m),
+            Expect("the right arrowhead is centred on its button",
+                (decimal)nextOff.Length() <= 1m ? 1m : 0m, 1m),
+            Expect("the caret is drawn inside the picker",
+                picker.Encloses(caretBox) ? 1m : 0m, 1m));
     }
 
     /// <summary>
