@@ -118,6 +118,7 @@ internal static class SelfTest
         all &= await BlockReconcileScenario(context, dealer, enemy);
         all &= await BlockedMeterScenario();
         all &= await EmptyTitleScenario();
+        all &= await MinimizeScenario();
         all &= await OverkillScenario(context, dealer, enemy);
         all &= await OverlayWidthScenario(dealer, enemy);
         all &= await CoordinateScenario(context, dealer, enemy, applier2);
@@ -676,7 +677,7 @@ internal static class SelfTest
                 overlay.HarnessStepMode(1, solo: true);
             }
 
-            titles[mode] = (overlay.HarnessSoloTitle(null), overlay.HarnessSoloTitle(idle), overlay.HarnessModeName(solo: true));
+            titles[mode] = (overlay.HarnessHeaderTitle(null), overlay.HarnessHeaderTitle(idle), overlay.HarnessModeName(solo: true));
         }
 
         OverlayLayout.SaveMode(entered);
@@ -703,6 +704,80 @@ internal static class SelfTest
             Expect("and ends in a zero", emptyBlock.EndsWith('0') ? 1m : 0m, 1m),
             Expect("an idle player reads the same", emptyBlock == idleBlock ? 1m : 0m, 1m),
             Expect("the two meters are told apart", emptyDamage != emptyBlock ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Collapsing the window to its header and opening it again. What has to go is the body and the two header choices
+    /// that mean nothing without one - the meter arrows and the fight picker. What has to stay is the title, still
+    /// carrying the meter's number, since a collapsed window that reports is worth leaving collapsed and a bare name is
+    /// not. The button flips to the inverse of what it just did, the choice is written to the config so it survives a
+    /// restart, and the fixed width holds through both states - only the height is allowed to move.
+    ///
+    /// Every check is made against the real header: the scenario presses the button rather than describing what it
+    /// would do, and reads back the controls' own visibility.
+    /// </summary>
+    private static async Task<bool> MinimizeScenario()
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Minimize': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        // Start open, whatever this machine's config was last left on.
+        if (overlay.HarnessMinimized)
+        {
+            overlay.HarnessToggleMinimized();
+        }
+
+        await Settle();
+        (bool body, bool arrows, bool picker, bool title) open = overlay.HarnessVisibleParts;
+        string openGlyph = overlay.HarnessMinimizeGlyph;
+        string openTitle = overlay.HarnessTitle;
+        decimal openWidth = (decimal)overlay.HarnessPanelWidth;
+        decimal openHeight = (decimal)overlay.HarnessPanelHeight;
+
+        overlay.HarnessToggleMinimized();
+        await Settle();
+        (bool body, bool arrows, bool picker, bool title) shut = overlay.HarnessVisibleParts;
+        string shutGlyph = overlay.HarnessMinimizeGlyph;
+        string shutTitle = overlay.HarnessTitle;
+        decimal shutWidth = (decimal)overlay.HarnessPanelWidth;
+        decimal shutHeight = (decimal)overlay.HarnessPanelHeight;
+        decimal headerHeight = (decimal)overlay.HarnessHeaderHeight;
+        bool remembered = OverlayLayout.LoadMinimized();
+
+        overlay.HarnessToggleMinimized();
+        await Settle();
+        (bool body, bool arrows, bool picker, bool title) reopened = overlay.HarnessVisibleParts;
+        decimal reopenedHeight = (decimal)overlay.HarnessPanelHeight;
+        bool forgotten = !OverlayLayout.LoadMinimized();
+
+        GD.Print($"[RdpsMeter] Self-test: header collapsed to \"{shutTitle}\", {openHeight}px -> {shutHeight}px (header {headerHeight}px)");
+
+        return Report("Minimize",
+            Expect("opens with a body", open.body ? 1m : 0m, 1m),
+            Expect("opens with its arrows", open.arrows ? 1m : 0m, 1m),
+            Expect("opens with its fight picker", open.picker ? 1m : 0m, 1m),
+            Expect("open, the button offers to collapse", openGlyph == "−" ? 1m : 0m, 1m),
+            Expect("collapsed, the body is gone", shut.body ? 1m : 0m, 0m),
+            Expect("collapsed, the arrows are gone", shut.arrows ? 1m : 0m, 0m),
+            Expect("collapsed, the fight picker is gone", shut.picker ? 1m : 0m, 0m),
+            Expect("collapsed, the title stays", shut.title ? 1m : 0m, 1m),
+            Expect("and still says what it said", shutTitle == openTitle ? 1m : 0m, 1m),
+            Expect("which is more than the meter's name", shutTitle != overlay.HarnessModeName(solo: true) ? 1m : 0m, 1m),
+            Expect("collapsed, the button offers to open", shutGlyph == "+" ? 1m : 0m, 1m),
+            Expect("the window got shorter", shutHeight < openHeight ? 1m : 0m, 1m),
+            Expect("down to the header and the window's own border, with no blank strip left under it",
+                shutHeight <= headerHeight + 2m ? 1m : 0m, 1m),
+            Expect("but no narrower", shutWidth, openWidth),
+            Expect("collapsing is remembered", remembered ? 1m : 0m, 1m),
+            Expect("reopening brings the body back", reopened.body ? 1m : 0m, 1m),
+            Expect("and the arrows", reopened.arrows ? 1m : 0m, 1m),
+            Expect("and the fight picker", reopened.picker ? 1m : 0m, 1m),
+            Expect("and the height", reopenedHeight, openHeight),
+            Expect("reopening is remembered too", forgotten ? 1m : 0m, 1m));
     }
 
     /// <summary>

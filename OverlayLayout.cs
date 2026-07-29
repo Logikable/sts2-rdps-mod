@@ -14,9 +14,10 @@ internal enum MeterMode
 }
 
 /// <summary>
-/// Remembers how the player left the rDPS window - where they put it, and which meter they were reading - so it comes
-/// back the same way next session. Stored in the game's user data (not beside the read-only mod dll) as a tiny config
-/// file; a missing or unreadable file just means "no saved spot, use the default corner" and the default meter.
+/// Remembers how the player left the rDPS window - where they put it, which meter they were reading, and whether they
+/// had it collapsed - so it comes back the same way next session. Stored in the game's user data (not beside the
+/// read-only mod dll) as a tiny config file; a missing or unreadable file just means "no saved spot, use the default
+/// corner", the default meter, and open.
 /// </summary>
 internal static class OverlayLayout
 {
@@ -57,6 +58,28 @@ internal static class OverlayLayout
             "blocked" => MeterMode.Blocked,
             _ => MeterMode.Rdps,
         };
+    }
+
+    public static void SaveMinimized(bool minimized)
+    {
+        var config = Read();
+        config.SetValue(Section, "minimized", minimized);
+        config.Save(Path);
+    }
+
+    /// <summary>
+    /// Whether the window was left collapsed to its header, defaulting to open. Coming back collapsed is not a way to
+    /// lose the meter: the header is still on screen with the button that opens it.
+    /// </summary>
+    public static bool LoadMinimized()
+    {
+        var config = new ConfigFile();
+        if (config.Load(Path) != Error.Ok || !config.HasSectionKey(Section, "minimized"))
+        {
+            return false;
+        }
+
+        return config.GetValue(Section, "minimized").AsBool();
     }
 
     private static string Name(MeterMode mode)

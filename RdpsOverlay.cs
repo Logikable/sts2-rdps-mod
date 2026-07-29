@@ -19,7 +19,13 @@ namespace RdpsMeter;
 /// <see cref="MeterMode"/>) - rDPS, which moves damage to whoever's buffs bought it; aDPS, the damage the player
 /// themselves dealt; and Blocked, the damage their block stopped - and the button on the right picks which tally to read
 /// it over: this combat, the run total, or one earlier fight. The meter is remembered between sessions; the tally resets
-/// to the run total with each run.
+/// to the run total with each run. The title between them names the meter and carries its number - the player's own
+/// alone, the party's summed in co-op - so the header states the answer and the body breaks it down.
+///
+/// Hard against the right edge, the minus collapses the window to that header and becomes the plus that opens it again.
+/// Collapsed, the arrows and the tally picker go with the body, since neither means anything without one; the title
+/// stays, so a collapsed window is still reporting rather than merely out of the way. That too is remembered between
+/// sessions - safely, because what is left on screen is the button that brings it back.
 ///
 /// Nothing short of an empty run takes the window away - not ending a fight, not leaving the run for the main menu - so
 /// the numbers stay readable after the match; see <see cref="ShouldShow"/>.
@@ -76,11 +82,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private const float ValueColumn = 56f;
     private const float PercentColumn = 44f;
 
-    // The header's two zones, measured in from the right edge: the view picker's own space, and, to the left of it, the
-    // meter title flanked by its arrows. Fixed sizes rather than a container, so neither a long fight name nor a long
-    // title can push the other around - or the window wider (see the Width note above).
-    private const float MenuWidth = 112f;
+    // The header's zones, measured in from the right edge: the minimize button hard against the edge, the view picker
+    // left of it, and left of that the meter title flanked by its arrows. Fixed sizes rather than a container, so
+    // neither a long fight name nor a long title can push the other around - or the window wider (see the Width note
+    // above). The picker is what gave up the room the minimize button needed, rather than the title: a fight's name
+    // already clips happily, while the title is the one thing here meant to be read at a glance.
+    private const float MenuWidth = 96f;
     private const float ArrowWidth = 24f;
+    private const float MinimizeWidth = 22f;
+
+    // The right-hand edge everything but the minimize button is measured in from: the window's own margin, the button,
+    // and a hair of space so the picker's chip does not touch it.
+    private const float MenuInset = 6f + MinimizeWidth + 2f;
 
     // Warm blue, bright enough to read on the translucent header at the title's size.
     private static readonly Color TitleColor = new(0.541f, 0.706f, 0.973f);
@@ -114,6 +127,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     private Button _prev = null!;
     private Button _next = null!;
     private MenuButton _menu = null!;
+    private Button _minimize = null!;
+    private MarginContainer _body = null!;
     private VBoxContainer _list = null!;
     private PanelContainer _tooltip = null!;
     private VBoxContainer _tooltipList = null!;
@@ -133,6 +148,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // Which meter the arrows have landed on. Restored from the config on the first frame, so the window comes back on
     // whichever one was last read rather than always on rDPS.
     private MeterMode _mode = OverlayLayout.LoadMode();
+
+    // Whether the window is collapsed to its bare header, restored from the config the same way the meter is. Collapsed
+    // it keeps only the title and the button that opens it again - so it is never lost, only got out of the way.
+    private bool _minimized = OverlayLayout.LoadMinimized();
 
     // Whether the run being shown has nobody to credit, recomputed each frame. With no teammates, rDPS and aDPS are the
     // same number, so a solo run is offered one of them, drawn under the name they share, and the arrows page between
@@ -202,7 +221,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             AnchorTop = 0f,
             AnchorBottom = 1f,
             OffsetLeft = 6f + ArrowWidth,
-            OffsetRight = -(MenuWidth + 6f + ArrowWidth),
+            OffsetRight = -(MenuWidth + MenuInset + ArrowWidth),
         };
         _title.AddThemeFontSizeOverride("font_size", 19);
         _title.AddThemeColorOverride("font_color", TitleColor);
@@ -233,8 +252,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             AnchorRight = 1f,
             AnchorTop = 0.5f,
             AnchorBottom = 0.5f,
-            OffsetLeft = -(MenuWidth + 6f),
-            OffsetRight = -6f,
+            OffsetLeft = -(MenuWidth + MenuInset),
+            OffsetRight = -MenuInset,
             OffsetTop = -11f,
             OffsetBottom = 11f,
         };
@@ -272,20 +291,43 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         caret.AddThemeColorOverride("font_color", new Color(1f, 1f, 1f, 0.75f));
         _menu.AddChild(caret);
 
-        var body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        body.AddThemeConstantOverride("margin_left", 10);
-        body.AddThemeConstantOverride("margin_right", 10);
-        body.AddThemeConstantOverride("margin_top", 6);
-        body.AddThemeConstantOverride("margin_bottom", 6);
+        // Collapse to the header and back, hard against the window's right edge. It carries a glyph rather than a word
+        // so it needs no translation, and it swaps that glyph for the inverse of whatever it just did - the minus that
+        // took the window away becomes the plus that brings it back.
+        _minimize = new Button
+        {
+            Flat = true,
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            AnchorLeft = 1f,
+            AnchorRight = 1f,
+            AnchorTop = 0f,
+            AnchorBottom = 1f,
+            OffsetLeft = -(MinimizeWidth + 6f),
+            OffsetRight = -6f,
+        };
+        _minimize.AddThemeFontSizeOverride("font_size", 20);
+        _minimize.AddThemeColorOverride("font_color", TitleColor);
+        _minimize.AddThemeColorOverride("font_hover_color", Colors.White);
+        _minimize.AddThemeColorOverride("font_pressed_color", Colors.White);
+        _minimize.Pressed += ToggleMinimized;
+        _header.AddChild(_minimize);
+
+        _body = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        _body.AddThemeConstantOverride("margin_left", 10);
+        _body.AddThemeConstantOverride("margin_right", 10);
+        _body.AddThemeConstantOverride("margin_top", 6);
+        _body.AddThemeConstantOverride("margin_bottom", 6);
 
         _list = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         _list.AddThemeConstantOverride("separation", 4);
-        body.AddChild(_list);
+        _body.AddChild(_list);
 
         root.AddChild(_header);
-        root.AddChild(body);
+        root.AddChild(_body);
         _panel.AddChild(root);
         AddChild(_panel);
+        ApplyMinimized();
 
         // Restore the last-used spot if there is one; otherwise the default top-right anchoring stands.
         if (OverlayLayout.LoadPosition() is Vector2 saved)
@@ -384,6 +426,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             _clampPending = false;
         }
 
+        // Godot grows a control to fit its minimum size but never shrinks it back when that minimum falls - and the
+        // panel hangs off a CanvasLayer, so no container does it for us. Left alone, the window keeps the height of the
+        // longest breakdown it has ever shown (and, collapsed, the height of the body it just dropped) as dead space.
+        // Assigning the height every frame is what makes it track: Godot clamps the value back up to the minimum, so
+        // this can only ever take away space nothing is asking for.
+        float wanted = _panel.GetCombinedMinimumSize().Y;
+        if (_panel.Size.Y > wanted)
+        {
+            _panel.Size = new Vector2(_panel.Size.X, wanted);
+        }
+
         // Show every player with a tally, plus any live player yet to deal damage, so the party appears at zero from
         // the start of a fight.
         var netIds = new HashSet<ulong>(_snapshot.Keys);
@@ -397,17 +450,6 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             .ThenBy(id => id)
             .ToList();
 
-        // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
-        // way. The panel becomes the breakdown itself, with the meter's total moved up into the header.
-        _solo = RunContext.IsSingleplayer && ordered.Count <= 1;
-        if (_solo)
-        {
-            RenderBreakdownBody(ordered.Count > 0 ? ordered[0] : null);
-            return;
-        }
-
-        _title.Text = ModeName();
-
         decimal max = 1m;
         decimal team = 0m;
         foreach (ulong id in ordered)
@@ -418,6 +460,28 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             {
                 max = value;
             }
+        }
+
+        // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
+        // way. The panel becomes the breakdown itself, and the row that would have carried the number is gone - which
+        // is why the header carries it. In a party it carries the same number for the whole party, so collapsing the
+        // window to that header still leaves something being reported.
+        _solo = RunContext.IsSingleplayer && ordered.Count <= 1;
+        _title.Text = HeaderTitle(team);
+
+        // Collapsed, the header is the whole window: no rows to lay out and nothing to hover.
+        if (_minimized)
+        {
+            _hovered = null;
+            _tooltip.Visible = false;
+            _tooltipSignature = null;
+            return;
+        }
+
+        if (_solo)
+        {
+            RenderBreakdownBody(ordered.Count > 0 ? ordered[0] : null);
+            return;
         }
 
         var seen = new HashSet<ulong>();
@@ -481,6 +545,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     /// <summary>The panel's laid-out width, so the self-test can check that content never reflows it.</summary>
     internal float HarnessPanelWidth => _panel.Size.X;
 
+    /// <summary>The panel's laid-out height, which is the one dimension collapsing the window is allowed to change.</summary>
+    internal float HarnessPanelHeight => _panel.Size.Y;
+
     /// <summary>The meter being read, the headline it draws, and the arrows that page between them.</summary>
     internal MeterMode HarnessMode => _mode;
 
@@ -502,11 +569,28 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         StepMode(step);
     }
 
-    /// <summary>The headline a solo window would draw for this player - or, for a null row, for nobody at all.</summary>
-    internal string HarnessSoloTitle(RdpsRow? row)
+    /// <summary>The headline the window would draw for this player - or, for a null row, for nobody at all.</summary>
+    internal string HarnessHeaderTitle(RdpsRow? row)
     {
-        return SoloTitle(row);
+        return HeaderTitle(Value(row));
     }
+
+    /// <summary>Whether the window is collapsed to its header, and the button that collapses it.</summary>
+    internal bool HarnessMinimized => _minimized;
+
+    internal string HarnessMinimizeGlyph => _minimize.Text;
+
+    internal void HarnessToggleMinimized()
+    {
+        ToggleMinimized();
+    }
+
+    /// <summary>The header's own height, which is all a collapsed window is allowed to be (bar the window's border).</summary>
+    internal float HarnessHeaderHeight => _header.Size.Y;
+
+    /// <summary>What a collapsed window has to have given up: the body, and the header's two choices.</summary>
+    internal (bool Body, bool Arrows, bool Picker, bool Title) HarnessVisibleParts =>
+        (_body.Visible, _prev.Visible && _next.Visible, _menu.Visible, _title.Visible);
 
     /// <summary>What one player's bar is worth on the meter currently being read.</summary>
     internal decimal HarnessValue(RdpsRow row)
@@ -575,6 +659,35 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         {
             popup.AddItem(FightName(fights[i]), i);
         }
+    }
+
+    /// <summary>
+    /// Collapse the window to its header, or open it again, and remember which. Restoring re-clamps a window that was
+    /// dragged against the bottom of the screen while collapsed, since the body it grows back would otherwise hang off
+    /// the edge - but only one that was dragged there, since a window still on its default anchors grows downward from
+    /// a fixed corner and writing a position would only fight those anchors.
+    /// </summary>
+    private void ToggleMinimized()
+    {
+        _minimized = !_minimized;
+        OverlayLayout.SaveMinimized(_minimized);
+        ApplyMinimized();
+        _clampPending |= !_minimized && _header.IsDetached;
+    }
+
+    // Everything the collapsed window gives up: the body, and the two choices in the header that only make sense
+    // against a body - which meter is being read, and which fight it is read over. The title stays, and widens to the
+    // space they leave, matched to the minimize button on the other side so it sits centred rather than shunted left.
+    private void ApplyMinimized()
+    {
+        _body.Visible = !_minimized;
+        _prev.Visible = !_minimized;
+        _next.Visible = !_minimized;
+        _menu.Visible = !_minimized;
+
+        _minimize.Text = _minimized ? "+" : "−";
+        _title.OffsetLeft = _minimized ? MenuInset : 6f + ArrowWidth;
+        _title.OffsetRight = _minimized ? -MenuInset : -(MenuWidth + MenuInset + ArrowWidth);
     }
 
     // Page to the next meter and remember it, wrapping at either end so both arrows always reach everything.
@@ -683,8 +796,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return Loc.T("view.total");
     }
 
-    // The solo body: the lone player's breakdown drawn straight into the panel, with their rDPS in the header (the row
-    // that would have carried it is gone) and no "Damage Breakdown" strip, since the window's own title now says it.
+    // The solo body: the lone player's breakdown drawn straight into the panel, with no "Damage Breakdown" strip, since
+    // the window's own title - which by then is already carrying their number - says it.
     private void RenderBreakdownBody(ulong? netId)
     {
         _hovered = null;
@@ -699,8 +812,6 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         RdpsRow? row = netId is ulong id ? _snapshot.GetValueOrDefault(id) : null;
-        _title.Text = SoloTitle(row);
-
         string signature = netId is ulong key ? Signature(key, row) : "empty";
         if (signature == _bodySignature)
         {
@@ -715,14 +826,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     }
 
     /// <summary>
-    /// The solo header, which carries the meter's own total because the row that would have held it is gone. It carries
-    /// it at zero too, rather than falling back to the bare meter name: a window reading "Damage: 0" is telling you
-    /// there has been no damage, while one reading "Damage" looks like it has not finished loading. The zero is the
-    /// answer, so it is shown - which is what a fight nobody has swung in yet, or a shop between fights, looks like.
+    /// The header, which names the meter being read and carries its number: the lone player's alone, the whole party's
+    /// summed in co-op, where it is the one place the team's own total is stated rather than split across the rows.
+    ///
+    /// It carries it at zero too, rather than falling back to the bare meter name: a window reading "Damage: 0" is
+    /// telling you there has been no damage, while one reading "Damage" looks like it has not finished loading. The
+    /// zero is the answer, so it is shown - which is what a fight nobody has swung in yet, or a shop between fights,
+    /// looks like. It is also what makes the window worth collapsing to: the header alone still reports.
     /// </summary>
-    private string SoloTitle(RdpsRow? row)
+    private string HeaderTitle(decimal value)
     {
-        return Loc.T("title.value", ModeName(), Round(Value(row)));
+        return Loc.T("title.value", ModeName(), Round(value));
     }
 
     private void UpdateTooltip()
@@ -1063,8 +1177,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             AnchorRight = left ? 0f : 1f,
             AnchorTop = 0f,
             AnchorBottom = 1f,
-            OffsetLeft = left ? 6f : -(MenuWidth + 6f + ArrowWidth),
-            OffsetRight = left ? 6f + ArrowWidth : -(MenuWidth + 6f),
+            OffsetLeft = left ? 6f : -(MenuWidth + MenuInset + ArrowWidth),
+            OffsetRight = left ? 6f + ArrowWidth : -(MenuWidth + MenuInset),
         };
         button.AddThemeFontSizeOverride("font_size", 17);
         button.AddThemeColorOverride("font_color", TitleColor);
@@ -1251,6 +1365,12 @@ internal sealed partial class DragHandle : Panel
     {
         _detached = true;
     }
+
+    /// <summary>
+    /// Whether the window has left its anchors for a position of its own. Until it has, its spot is the anchors' to
+    /// decide and writing a Position would only fight them.
+    /// </summary>
+    public bool IsDetached => _detached;
 
     public override void _GuiInput(InputEvent @event)
     {
