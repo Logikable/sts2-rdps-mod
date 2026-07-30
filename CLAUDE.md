@@ -294,6 +294,27 @@ onto `ExecutingEffect` (the supplemental stack `EffectSource` falls back to) in 
 prefix, and pop it by wrapping the returned `Task`, never in a plain postfix —
 an async method returns its Task long before the damage lands.
 
+But "does that route push?" is the *second* question, not the first. **The stack
+is read off whichever `PlayerChoiceContext` the damage call was handed**, so a
+source that builds its own — `CreatureCmd.Damage(new BlockingPlayerChoiceContext(),
+…)` instead of passing the one it was given — starts from an empty stack and is
+anonymous no matter what the game pushed. Black Hole is the case: its
+`AfterCardPlayed` dispatcher pushes it faithfully and its damage still read
+"(none)", because the push landed on a context the damage never travelled on.
+A pushing hook is therefore not evidence a source is fine, and that combination
+is worth checking first — it is invisible to the reasoning that catches the
+ordinary case, and reads as redundant to anyone tidying the patch list.
+
+`tools/find-attribution-gaps.py` derives the whole list from a decompile, and it
+has now been wrong twice in the same direction — by looking too narrowly, never
+by over-reporting. It read only the override's own body (Black Hole deals through
+a private helper the two hooks share), and it classified hooks only from
+top-level `Hook.cs` methods, so the 18 `…Late`/`…Early` hooks dispatched inline
+from a sibling's body matched nothing and were skipped rather than flagged. Both
+are fixed, and unclassifiable hooks now print as `UNKNOWN` instead of vanishing.
+When it reports nothing, check what it *declined* to look at before concluding
+there is no gap.
+
 Block is immune to all of this: `BlockSource` reads the real call stack instead,
 which does not care what anybody pushed.
 

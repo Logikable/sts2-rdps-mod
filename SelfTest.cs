@@ -114,6 +114,7 @@ internal static class SelfTest
         all &= await SleightOfFleshScenario(context, dealer, enemy);
         all &= await UnpushedRelicScenario(context, dealer, enemy);
         all &= await ThunderScenario(context, dealer, enemy);
+        all &= await BlackHoleScenario(context, dealer, enemy);
         all &= await BeaconOfHopeScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
@@ -548,6 +549,54 @@ internal static class SelfTest
             Expect("it hits for what it says", hit, 7m),
             Expect("named after the power", l.DealtWith(you, expected), hit),
             Expect("not after the orb that set it off", l.DealtWith(you, orbName), 0m),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Black Hole names itself, and it is the one entry in the unpushed list that is not there for the usual reason.
+    /// Every other member deals out of a hook whose Hook.cs dispatcher never calls PushModel. Black Hole's other route,
+    /// AfterCardPlayed, *is* pushed - faithfully - and its damage still arrived anonymous, because the power hands
+    /// CreatureCmd.Damage a brand-new BlockingPlayerChoiceContext rather than the one it was passed. A fresh context has
+    /// an empty model stack, so what the game pushed onto the real one is unreachable.
+    ///
+    /// That is why the check below is not merely "it has a name": the interesting failure is a silent one, where a
+    /// reader concludes the pushing hook must already be fine and drops the entry. If this scenario ever fails while
+    /// the others pass, suspect the entry was removed as redundant.
+    ///
+    /// AfterStarsGained is the route driven here because it takes two plain arguments. AfterCardPlayed wants a CardPlay
+    /// with stars spent and IsLastInSeries set, which a scenario cannot assemble cheaply - and it proves nothing extra,
+    /// since both routes funnel into the same private helper and are named by the same prefix.
+    /// </summary>
+    private static async Task<bool> BlackHoleScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<BlackHolePower>(ctx, dealer, 4m, dealer, null);
+        BlackHolePower? blackHole = dealer.GetPower<BlackHolePower>();
+        if (blackHole == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Black Hole': FAIL (it did not apply)");
+            return false;
+        }
+
+        string expected = blackHole.Title.GetFormattedText();
+        decimal hit = blackHole.Amount;
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {hit} on gaining a star");
+
+        try
+        {
+            await blackHole.AfterStarsGained(1, dealer.Player!);
+        }
+        finally
+        {
+            await PowerCmd.Remove<BlackHolePower>(dealer);
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Black Hole (damage through a freshly built choice context)",
+            Expect("it hits for what it says", hit, 4m),
+            Expect("named after the power", l.DealtWith(you, expected), hit),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 
