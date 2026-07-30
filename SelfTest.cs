@@ -2183,6 +2183,7 @@ internal static class SelfTest
         }
 
         const string archivedId = "selftest-archived";
+        const string legacyId = "selftest-legacy";
         const string currentId = "selftest-current";
         var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
         string harnessLabel = RunLedger.Active.Label;
@@ -2230,6 +2231,24 @@ internal static class SelfTest
         RunHistoryView.Show(nextAct ?? default);
         decimal nextActDamage = overlay.HarnessSelectedView().Sum(r => r.ADps);
 
+        // A run saved before the meter recorded rosters: numbers on disk, no party. The page knows who played, so the
+        // row is still coloured - otherwise every run that already exists would come back grey.
+        RunLedger.StartNewRun(legacyId);
+        Fought("0:1:2:0", "Legacy Alpha", 44);
+        RunLedger.StartNewRun(currentId);
+        ArchivedRun.Forget();
+
+        var legacyPage = new RunHistory
+        {
+            Seed = legacyId,
+            Players = new List<RunHistoryPlayer> { new() { Id = 1uL, Character = past.Id } },
+            MapPointHistory = new List<List<MapPointHistoryEntry>> { act0, act1 },
+        };
+        HistoryFight? legacyFight = RunHistoryLink.Locate(legacyPage, act0[0]);
+        RunHistoryView.Show(legacyFight ?? default);
+        decimal legacyDamage = overlay.HarnessSelectedView().Sum(r => r.ADps);
+        (Color Color, bool HasIcon) legacyVisual = overlay.HarnessVisual(1uL);
+
         // A run with no file at all is still the empty meter it always was.
         var missing = new RunHistory
         {
@@ -2243,6 +2262,7 @@ internal static class SelfTest
         RunHistoryView.Release();
         ArchivedRun.Forget();
         RunLedgerStore.Delete(archivedId);
+        RunLedgerStore.Delete(legacyId);
         RunLedgerStore.Delete(currentId);
         RunLedger.StartNewRun(RunContext.RunId);
         RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
@@ -2255,6 +2275,8 @@ internal static class SelfTest
             Expect("coloured from the archived roster", shownVisual.Color == past.NameColor ? 1m : 0m, 1m),
             Expect("not from the live player's class", shownVisual.Color == live.NameColor ? 0m : 1m, 1m),
             Expect("the next act counts from zero", nextActDamage, 33m),
+            Expect("a run saved with no roster still has its damage", legacyDamage, 44m),
+            Expect("and is coloured from the page's own roster", legacyVisual.Color == past.NameColor ? 1m : 0m, 1m),
             Expect("a run never saved resolves to nothing", unsaved is { Key: null } ? 1m : 0m, 1m),
             Expect("and shows nothing", unsavedRows, 0m),
             Expect("the loaded run is untouched", RunLedger.LoadedRunId == RunContext.RunId ? 1m : 0m, 1m));

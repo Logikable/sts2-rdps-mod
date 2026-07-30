@@ -68,9 +68,17 @@ internal static class RunHistoryLink
         // page is mostly used to look at runs that are over, and gating on the loaded run (which is what this did) meant
         // every one of those drew an empty meter even though its breakdown was sitting in the save folder.
         string runId = history.Seed;
-        CombatInfo? recorded = runId == RunLedger.LoadedRunId
-            ? RunLedger.FightInAct(act, ordinal)
-            : ArchivedRun.FightInAct(runId, act, ordinal);
+        bool archived = runId != RunLedger.LoadedRunId;
+        if (archived)
+        {
+            // The page knows who played, and every run saved before the meter recorded a roster does not. Without this
+            // those runs would come back with correct numbers in grey rows, which is half of the same bug.
+            ArchivedRun.AdoptRoster(runId, history.Players.Select(p => (p.Id, p.Character.ToString())).ToList());
+        }
+
+        CombatInfo? recorded = archived
+            ? ArchivedRun.FightInAct(runId, act, ordinal)
+            : RunLedger.FightInAct(act, ordinal);
 
         // The ledger's own name for the fight wins when it has one: it is what the picker calls that fight everywhere
         // else in the meter. Otherwise the page's own record names it, which is all there is for a run we never saw.

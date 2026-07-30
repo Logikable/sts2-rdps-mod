@@ -159,6 +159,13 @@ meter can be installed mid-run and a co-op player can join one already going, so
 there is no single moment the whole party is known; recorded before
 `BeginCombat`, because that is what writes the file.
 
+Every run saved before the roster existed has numbers and no party, and those
+are exactly the runs the history page is for — so `ArchivedRun.AdoptRoster`
+fills the gaps from `RunHistory.Players`, which records each player's character
+itself. Only *missing* entries; a file that saved its own roster keeps it. Ship
+a persistence change without this and the old data comes back correct in grey,
+which reads as the bug not being fixed.
+
 The trap when a row can come from two runs: the local player keeps their net id
 across runs while the character changes, so the live visual cache is *wrong* for
 an archived run rather than merely unhelpful. `VisualFor` skips the cache

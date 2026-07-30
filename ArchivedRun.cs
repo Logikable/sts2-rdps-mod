@@ -87,6 +87,36 @@ internal static class ArchivedRun
         }
     }
 
+    /// <summary>
+    /// Fills in roster entries the saved file does not have, from whoever else knows - in practice the run history page,
+    /// which records each player's character itself.
+    ///
+    /// Every run saved before the meter started writing a roster has numbers but no party, and those are exactly the
+    /// runs the history page is for; without this, fixing the zeroes would have left every one of them showing correct
+    /// numbers in grey. Only *missing* entries are filled, so a run that saved its own roster keeps it - that one was
+    /// written by the meter and knows about players the page may not.
+    /// </summary>
+    public static void AdoptRoster(string runId, IReadOnlyList<(ulong NetId, string Character)> players)
+    {
+        lock (Lock)
+        {
+            if (!Ensure(runId))
+            {
+                return;
+            }
+
+            foreach ((ulong netId, string character) in players)
+            {
+                if (string.IsNullOrEmpty(character) || _party!.ContainsKey(netId))
+                {
+                    continue;
+                }
+
+                _party[netId] = new RosterEntryDto { NetId = netId, Character = character };
+            }
+        }
+    }
+
     /// <summary>Drops the cached run. For the self-test, and for a save that has just rewritten a run's file.</summary>
     public static void Forget()
     {
