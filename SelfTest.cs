@@ -2109,7 +2109,14 @@ internal static class SelfTest
         }
 
         const string runId = "selftest-roster";
-        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        var grey = new Color(0.7f, 0.7f, 0.7f);
+
+        // Net ids nobody is playing. The live dealer is net id 1 and the overlay caches its colour off the real Player
+        // every frame, which would answer every question here before the roster was ever consulted - the scenario would
+        // pass on a completely broken restore. 7 and 9 are in the tally and in no combat.
+        const ulong saved = 7uL;
+        const ulong ghost = 9uL;
+        var share = new Dictionary<ulong, decimal> { { saved, 1m } };
         string harnessLabel = RunLedger.Active.Label;
 
         // The real character the harness is being played with, so the expected colour is the game's own rather than
@@ -2118,7 +2125,7 @@ internal static class SelfTest
         string characterId = character.Id.ToString();
 
         RunLedger.StartNewRun(runId);
-        RunLedger.RecordRoster(1uL, "Tester", characterId);
+        RunLedger.RecordRoster(saved, "Tester", characterId);
         RunLedger.BeginCombat("0:1:2:0", "Alpha");
         RunLedger.Active.ApplyDot("Poison", share, 11);
         RunLedger.EndCombat();
@@ -2126,16 +2133,22 @@ internal static class SelfTest
         // What a fresh launch does: nothing in memory, then read the file back.
         string json = RunLedgerStore.Serialize(RunLedger.ToDto());
         RunLedger.LoadDto(null);
-        bool greyWhenUnknown = overlay.HarnessVisual(1uL).Color == new Color(0.7f, 0.7f, 0.7f);
+        bool greyWhenUnknown = overlay.HarnessVisual(saved).Color == grey;
 
         RunLedger.LoadDto(RunLedgerStore.Deserialize(json));
         CharacterVisuals.ClearCache();
-        (Color Color, bool HasIcon) restored = overlay.HarnessVisual(1uL);
+        (Color Color, bool HasIcon) restored = overlay.HarnessVisual(saved);
+
+        // Read before the cleanup below wipes the ledger. Putting these straight into the Report call is how the first
+        // version of this scenario failed: the arguments are evaluated after the cleanup runs, so it was asking a run
+        // that had just been thrown away.
+        bool characterRoundTripped = RunLedger.CharacterOf(saved) == characterId;
+        decimal restoredDamage = RunLedger.TotalSnapshot().Sum(r => r.ADps);
 
         // A model id that names nothing must degrade to grey, not throw: that is what a run recorded under a mod the
         // player has since removed looks like.
-        RunLedger.RecordRoster(9uL, "Ghost", "CHARACTER.NOT_A_REAL_MODEL");
-        (Color Color, bool HasIcon) bogus = overlay.HarnessVisual(9uL);
+        RunLedger.RecordRoster(ghost, "Ghost", "CHARACTER.NOT_A_REAL_MODEL");
+        (Color Color, bool HasIcon) bogus = overlay.HarnessVisual(ghost);
 
         RunLedgerStore.Delete(runId);
         RunLedger.StartNewRun(RunContext.RunId);
@@ -2143,12 +2156,12 @@ internal static class SelfTest
 
         return Report("Class colours survive a restart",
             Expect("grey with nothing loaded", greyWhenUnknown ? 1m : 0m, 1m),
-            Expect("the character round-trips", RunLedger.CharacterOf(1uL) == characterId ? 1m : 0m, 1m),
-            Expect("and the numbers came with it", RunLedger.TotalSnapshot().Sum(r => r.ADps), 11m),
+            Expect("the character round-trips", characterRoundTripped ? 1m : 0m, 1m),
+            Expect("and the numbers came with it", restoredDamage, 11m),
             Expect("the row is the class colour", restored.Color == character.NameColor ? 1m : 0m, 1m),
-            Expect("which is not the grey fallback", restored.Color == new Color(0.7f, 0.7f, 0.7f) ? 0m : 1m, 1m),
+            Expect("which is not the grey fallback", restored.Color == grey ? 0m : 1m, 1m),
             Expect("the class icon comes back too", restored.HasIcon ? 1m : 0m, 1m),
-            Expect("an unknown character falls back to grey", bogus.Color == new Color(0.7f, 0.7f, 0.7f) ? 1m : 0m, 1m),
+            Expect("an unknown character falls back to grey", bogus.Color == grey ? 1m : 0m, 1m),
             Expect("and draws no icon", bogus.HasIcon ? 0m : 1m, 1m));
     }
 
@@ -2173,11 +2186,17 @@ internal static class SelfTest
         const string currentId = "selftest-current";
         var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
         string harnessLabel = RunLedger.Active.Label;
-        CharacterModel character = dealer.Player!.Character;
+        CharacterModel live = dealer.Player!.Character;
+
+        // A different character than the one being played, so "coloured from the archived roster" is a real question.
+        // Net id 1 is the live dealer and the overlay caches its colour every frame; with both runs on the same class
+        // the check would pass off that cache, which is the exact bug it is meant to catch - the local player keeps
+        // their net id across runs while their character changes.
+        CharacterModel past = ModelDb.AllCharacters.FirstOrDefault(c => c.NameColor != live.NameColor) ?? live;
 
         // The run that is over. Saved to disk by BeginCombat/EndCombat, exactly as a real run saves itself.
         RunLedger.StartNewRun(archivedId);
-        RunLedger.RecordRoster(1uL, "Past", character.Id.ToString());
+        RunLedger.RecordRoster(1uL, "Past", past.Id.ToString());
         Fought("0:1:2:0", "Old Alpha", 11);
         Fought("0:3:4:0", "Old Beta", 22);
         Fought("1:0:1:0", "Old Gamma", 33);
@@ -2233,7 +2252,8 @@ internal static class SelfTest
             Expect("tagged with its own run", elite?.RunId == archivedId ? 1m : 0m, 1m),
             Expect("its damage, not the loaded run's", shownDamage, 22m),
             Expect("captioned from the archived ledger", shownCaption == "Old Beta" ? 1m : 0m, 1m),
-            Expect("coloured from the archived roster", shownVisual.Color == character.NameColor ? 1m : 0m, 1m),
+            Expect("coloured from the archived roster", shownVisual.Color == past.NameColor ? 1m : 0m, 1m),
+            Expect("not from the live player's class", shownVisual.Color == live.NameColor ? 0m : 1m, 1m),
             Expect("the next act counts from zero", nextActDamage, 33m),
             Expect("a run never saved resolves to nothing", unsaved is { Key: null } ? 1m : 0m, 1m),
             Expect("and shows nothing", unsavedRows, 0m),
