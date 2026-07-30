@@ -100,6 +100,7 @@ internal static class SelfTest
         all &= PersistentOverlayScenario();
         all &= LastPlayedScenario();
         all &= RunHistoryScenario();
+        all &= SnapshotCacheScenario();
         all &= RosterVisualsScenario(dealer);
         all &= ArchivedRunScenario(dealer);
         all &= await MeterModeScenario();
@@ -1930,7 +1931,6 @@ internal static class SelfTest
         }
 
         const string runId = "selftest-run-history";
-        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
         string harnessLabel = RunLedger.Active.Label;
 
         RunLedger.StartNewRun(runId);
@@ -1998,12 +1998,6 @@ internal static class SelfTest
             Expect("even with nothing loaded", shownOnEmptyLedger ? 1m : 0m, 1m),
             Expect("released back to the total", releasedCaption == Loc.T("view.total") ? 1m : 0m, 1m));
 
-        void Fought(string key, string label, int damage)
-        {
-            RunLedger.BeginCombat(key, label);
-            RunLedger.Active.ApplyDot("Poison", share, damage);
-            RunLedger.EndCombat();
-        }
     }
 
     /// <summary>
@@ -2185,7 +2179,6 @@ internal static class SelfTest
         const string archivedId = "selftest-archived";
         const string legacyId = "selftest-legacy";
         const string currentId = "selftest-current";
-        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
         string harnessLabel = RunLedger.Active.Label;
         CharacterModel live = dealer.Player!.Character;
 
@@ -2281,12 +2274,104 @@ internal static class SelfTest
             Expect("and shows nothing", unsavedRows, 0m),
             Expect("the loaded run is untouched", RunLedger.LoadedRunId == RunContext.RunId ? 1m : 0m, 1m));
 
-        void Fought(string key, string label, int damage)
-        {
-            RunLedger.BeginCombat(key, label);
-            RunLedger.Active.ApplyDot("Poison", share, damage);
-            RunLedger.EndCombat();
-        }
+    }
+
+    /// <summary>
+    /// Snapshots are cached, so the thing to prove is that they stop being cached the instant anything changes. Every
+    /// path that writes to a tally is walked here and the total re-read after each one; a mutator that forgot to mark
+    /// the tally dirty shows up as a number that stops moving, which is the failure mode this whole cache risks and the
+    /// reason it is worth a scenario of its own.
+    ///
+    /// Also checks the cheap direction: reading twice with nothing in between hands back the very same list, which is
+    /// what "not rebuilt every frame" actually means.
+    /// </summary>
+    private static bool SnapshotCacheScenario()
+    {
+        const string runId = "selftest-cache";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        string harnessLabel = RunLedger.Active.Label;
+
+        RunLedger.StartNewRun(runId);
+        RunLedger.BeginCombat("0:1:2:0", "Alpha");
+        RunLedger.Active.ApplyDot("Poison", share, 10);
+
+        IReadOnlyList<RdpsRow> first = RunLedger.TotalSnapshot();
+        bool reusedWhenIdle = ReferenceEquals(first, RunLedger.TotalSnapshot());
+        decimal afterDot = first.Sum(r => r.ADps);
+
+        // Each write in turn, re-reading the total after every one.
+        RunLedger.Active.ApplyDot("Poison", share, 5);
+        decimal afterSecondDot = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        RunLedger.Active.RecordName(1uL, "Renamed");
+        string afterRename = RunLedger.TotalSnapshot().FirstOrDefault()?.Name ?? "";
+
+        // A second fight: the run grew, so the total must grow with it.
+        RunLedger.BeginCombat("0:3:4:0", "Beta");
+        RunLedger.Active.ApplyDot("Poison", share, 7);
+        decimal afterSecondFight = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        // Re-entering a fight replaces its tally, which must take the old numbers back out of the total.
+        RunLedger.BeginCombat("0:3:4:0", "Beta");
+        RunLedger.Active.ApplyDot("Poison", share, 1);
+        decimal afterReplay = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        // Reset empties a tally in place - no structural change at all, so only the revision can catch it.
+        RunLedger.Active.Reset();
+        decimal afterReset = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        // And a per-combat snapshot caches on the same counter.
+        IReadOnlyList<RdpsRow> combat = RunLedger.SnapshotOf("0:1:2:0");
+        bool combatReused = ReferenceEquals(combat, RunLedger.SnapshotOf("0:1:2:0"));
+        RunLedger.Active.ApplyDot("Poison", share, 3);
+        decimal combatAfterWrite = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        // Two different runs of the same shape. Every combat loaded from a file starts at revision zero, so one combat
+        // at revision zero is what *both* of these look like to the revision list - the fingerprints are identical and
+        // the numbers are not. Only the structural counter tells them apart, which is why it is not redundant with the
+        // revisions despite looking like it.
+        RunLedger.StartNewRun("selftest-cache-a");
+        RunLedger.BeginCombat("0:1:2:0", "Alpha");
+        RunLedger.Active.ApplyDot("Poison", share, 10);
+        RunLedgerDto dtoA = RunLedger.ToDto();
+
+        RunLedger.StartNewRun("selftest-cache-b");
+        RunLedger.BeginCombat("0:1:2:0", "Alpha");
+        RunLedger.Active.ApplyDot("Poison", share, 99);
+        RunLedgerDto dtoB = RunLedger.ToDto();
+
+        RunLedger.LoadDto(dtoA);
+        decimal loadedA = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+        RunLedger.LoadDto(dtoB);
+        decimal loadedB = RunLedger.TotalSnapshot().Sum(r => r.ADps);
+
+        RunLedgerStore.Delete(runId);
+        RunLedgerStore.Delete("selftest-cache-a");
+        RunLedgerStore.Delete("selftest-cache-b");
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Cached snapshots go stale when they must",
+            Expect("the first read is right", afterDot, 10m),
+            Expect("an idle re-read is the same list", reusedWhenIdle ? 1m : 0m, 1m),
+            Expect("a second hit lands", afterSecondDot, 15m),
+            Expect("a rename lands", afterRename == "Renamed" ? 1m : 0m, 1m),
+            Expect("a new fight adds to the total", afterSecondFight, 22m),
+            Expect("replaying a fight replaces it", afterReplay, 16m),
+            Expect("resetting a tally empties it", afterReset, 15m),
+            Expect("a combat re-read is the same list", combatReused ? 1m : 0m, 1m),
+            Expect("and a later write still lands", combatAfterWrite, 18m),
+            Expect("a loaded run reads back", loadedA, 10m),
+            Expect("and another of the same shape is not it", loadedB, 99m));
+    }
+
+    // One finished fight in the loaded run, filed under its own key. Shared by the scenarios that need a run with a
+    // shape to it rather than a particular kind of damage in it.
+    private static void Fought(string key, string label, int damage)
+    {
+        RunLedger.BeginCombat(key, label);
+        RunLedger.Active.ApplyDot("Poison", new Dictionary<ulong, decimal> { { 1uL, 1m } }, damage);
+        RunLedger.EndCombat();
     }
 
     private static MapPointHistoryEntry Point(params RoomType[] rooms)

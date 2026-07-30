@@ -138,6 +138,31 @@ or pruned), just no longer the common one. Pruning is sized for browsing (60
 runs), not for the handful you have in progress: a pruned file is the zeroes bug
 coming back.
 
+## Snapshots are cached — every mutator must `Touch()`
+
+The overlay asks for a snapshot every frame; the numbers only move when a hit
+lands. So `CombatLedger` caches its rendered rows against a `_revision`, and
+`RunLedger.TotalSnapshot` caches the whole-run fold against `(structure,
+per-combat revisions)`. Total is the **default** view and used to re-merge every
+combat in the run sixty times a second — a cost that grew with every fight won,
+so the meter was slowest deep into a run.
+
+**The rule: anything that writes to `_ledgers` or `_names` calls `Touch()`.**
+There are six such places (`Reset`, `ApplyHit`, `ApplyBlock`, `ApplyDot`,
+`RecordName`, and `AccumulateInto` — which touches its *target*, not itself).
+Forgetting one does not crash; it makes a number quietly stop moving, which is
+why `SnapshotCacheScenario` walks every write path and re-reads after each.
+
+The structural counter is **not** redundant with the revisions, though it looks
+it. Every combat loaded from a file starts at revision zero, so two different
+runs that both have one combat present *identical* fingerprints — without the
+counter, loading run B after run A returns run A's numbers. The revision list is
+also compared element-wise rather than hashed: hashing would collide eventually,
+and in a damage meter a collision means silently wrong numbers.
+
+`Snapshot()` hands the same list to every caller. That is safe only because rows
+are never written to after construction — keep it that way.
+
 ## What a saved run has to carry
 
 Anything the meter draws that isn't a number has to be **in the file**, because

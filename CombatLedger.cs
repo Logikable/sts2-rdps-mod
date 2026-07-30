@@ -99,6 +99,28 @@ internal sealed class CombatLedger
     private readonly Dictionary<ulong, PlayerLedger> _ledgers = new();
     private readonly Dictionary<ulong, string> _names = new();
 
+    // How many times this tally has changed, and the rendered rows as of that count. The overlay asks for a snapshot
+    // every frame while the numbers only move when a hit lands, so building one per frame was pure waste - and the
+    // waste compounded, because the whole-run view builds one of these per combat (see RunLedger.TotalSnapshot).
+    //
+    // Every method that writes to _ledgers or _names must call Touch(). That is the one rule here, and getting it wrong
+    // shows up as numbers that stop moving rather than as a crash, so a new mutator wants a scenario with it.
+    private int _revision;
+    private IReadOnlyList<RdpsRow>? _rows;
+    private int _rowsRevision = -1;
+
+    /// <summary>How many times this tally has changed, so a caller can tell whether its own cache is still good.</summary>
+    public int Revision
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _revision;
+            }
+        }
+    }
+
     /// <summary>Whether this combat has recorded nobody yet, so there is genuinely nothing to draw for it.</summary>
     public bool IsEmpty
     {
@@ -144,6 +166,7 @@ internal sealed class CombatLedger
         lock (_lock)
         {
             _ledgers.Clear();
+            Touch();
         }
     }
 
@@ -197,6 +220,8 @@ internal sealed class CombatLedger
                 dealer.BuffByCard[attribution.DealerCard] =
                     dealer.BuffByCard.GetValueOrDefault(attribution.DealerCard) + buffTotal;
             }
+
+            Touch();
         }
     }
 
@@ -234,6 +259,8 @@ internal sealed class CombatLedger
                 var given = (source, wearerNetId);
                 owner.BlockGivenBySource[given] = owner.BlockGivenBySource.GetValueOrDefault(given) + amount;
             }
+
+            Touch();
         }
     }
 
@@ -332,6 +359,8 @@ internal sealed class CombatLedger
                 PlayerLedger l = Ledger(netId);
                 l.DealtByCard[effect] = l.DealtByCard.GetValueOrDefault(effect) + effectiveDamage * fraction;
             }
+
+            Touch();
         }
     }
 
@@ -342,7 +371,15 @@ internal sealed class CombatLedger
     {
         lock (_lock)
         {
-            return _ledgers
+            if (_rows != null && _rowsRevision == _revision)
+            {
+                return _rows;
+            }
+
+            // Safe to hand the same list to every caller: a row is built once and never written to, and every reader
+            // (the overlay, the harness, the archived-run reader) only sums and sorts what it is given.
+            _rowsRevision = _revision;
+            return _rows = _ledgers
                 .Select(kv => new RdpsRow
                 {
                     NetId = kv.Key,
@@ -378,6 +415,7 @@ internal sealed class CombatLedger
         lock (_lock)
         {
             _names[netId] = name;
+            Touch();
         }
     }
 
@@ -487,6 +525,9 @@ internal sealed class CombatLedger
             {
                 target._names[netId] = name;
             }
+
+            // The write landed in target, so it is target's cache that is now stale, not ours.
+            target.Touch();
         }
     }
 
@@ -580,6 +621,12 @@ internal sealed class CombatLedger
         }
 
         return ledger;
+    }
+
+    // Marks the tally changed, so the cached rows are rebuilt on the next read. Callers hold _lock.
+    private void Touch()
+    {
+        _revision++;
     }
 
     private PlayerLedger Ledger(ulong netId)
