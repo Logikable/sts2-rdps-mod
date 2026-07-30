@@ -180,6 +180,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // The run generation the cached rows/visuals belong to; a change means a new run, so they must be rebuilt.
     private int _generation = -1;
 
+    // The archived run the cached rows were drawn for, or null when they belong to the loaded run. Tracked separately
+    // from the generation because paging the run history between old runs changes what is drawn without starting one.
+    private string? _shownRun;
+
     // The translation revision the drawn text belongs to; a change means the player switched language, so every label
     // must be redrawn in the new one (and given that language's font).
     private int _locale = -1;
@@ -392,6 +396,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             _bodySignature = null;
         }
 
+        // Paging the run history onto a different run is the same problem a generation bump solves, and does not bump
+        // one: a row is built with its colour and icon baked in, so the rows cached for the run just looked at would
+        // keep their tint over the next run's numbers. Same net id, different character.
+        string? shownRun = ArchivedRunId();
+        if (shownRun != _shownRun)
+        {
+            _shownRun = shownRun;
+            foreach (Node child in _list.GetChildren())
+            {
+                _list.RemoveChild(child);
+                child.QueueFree();
+            }
+
+            _rows.Clear();
+            _bodySignature = null;
+        }
+
         // A language switch leaves every drawn label in the old language - the cached signatures only track the
         // numbers, so nothing would otherwise redraw. Drop them and the rows so the next pass rebuilds the text, and
         // re-font the header, which is built once and lives across the change.
@@ -544,7 +565,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         if (RunHistoryView.Fight is HistoryFight fight)
         {
             _menu.Text = fight.Caption;
-            return fight.Key is string fightKey ? RunLedger.SnapshotOf(fightKey) : Array.Empty<RdpsRow>();
+            if (fight.Key is not string fightKey)
+            {
+                return Array.Empty<RdpsRow>();
+            }
+
+            // An archived run's rows come from its own file, never from the loaded run - the fight key is only unique
+            // within a run, so reading a past run's key out of the live ledger would happily return this run's damage.
+            return fight.RunId == RunLedger.LoadedRunId
+                ? RunLedger.SnapshotOf(fightKey)
+                : ArchivedRun.SnapshotOf(fight.RunId ?? string.Empty, fightKey);
         }
 
         switch (_viewKind)
@@ -738,6 +768,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     internal IReadOnlyList<RdpsRow> HarnessSelectedView()
     {
         return SelectedView();
+    }
+
+    /// <summary>
+    /// The colour and icon a player's row would be drawn with, resolved through the same fallback chain a real row uses.
+    /// Reading the chain rather than a built Row is deliberate: the chain is where the bug lived, and it can be asked
+    /// about a player who has no row yet - which is exactly the restored-breakdown case.
+    /// </summary>
+    internal (Color Color, bool HasIcon) HarnessVisual(ulong netId)
+    {
+        PlayerVisual visual = VisualFor(netId);
+        return (visual.Color, visual.Icon != null);
     }
 
     /// <summary>The overlay living in the scene tree, or null if it has not been installed yet.</summary>
@@ -1186,6 +1227,48 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return text.ToString();
     }
 
+    /// <summary>
+    /// How a player's row should look, in order of how much the source knows.
+    ///
+    /// The live player wins: it is the run as it is actually being played. Next is the saved roster, which is what
+    /// carries a restored breakdown - after a restart there is no live player at all, and this is the whole reason a
+    /// reopened game used to draw every row grey. Last is the neutral tint, for a player in the tally that neither
+    /// source can place: a breakdown saved before the roster existed, or a character whose model is no longer installed.
+    ///
+    /// The one exception is a row belonging to a *different* run than the one being played, which is what the run
+    /// history page shows: there the live look is not merely unhelpful but wrong, because the local player keeps their
+    /// net id across runs while the character changes. So an archived run skips the live cache entirely and is drawn
+    /// only from its own saved roster.
+    /// </summary>
+    private PlayerVisual VisualFor(ulong netId)
+    {
+        string name = _snapshot.GetValueOrDefault(netId)?.Name ?? netId.ToString();
+        string? archived = ArchivedRunId();
+        if (archived == null && _visuals.TryGetValue(netId, out PlayerVisual live))
+        {
+            return live;
+        }
+
+        string? characterId = archived == null
+            ? RunLedger.CharacterOf(netId)
+            : ArchivedRun.CharacterOf(archived, netId);
+
+        (Color Color, Texture2D? Icon)? look = CharacterVisuals.For(characterId);
+        return look.HasValue
+            ? new PlayerVisual(look.Value.Color, look.Value.Icon, name)
+            : new PlayerVisual(new Color(0.7f, 0.7f, 0.7f), null, name);
+    }
+
+    // The run the meter is showing when that is not the run in memory, i.e. the history page sitting on an older run;
+    // null whenever the rows belong to the loaded run, which is every case outside that page.
+    private static string? ArchivedRunId()
+    {
+        return RunHistoryView.Fight is HistoryFight fight && fight.RunId is string runId
+            && runId != RunLedger.LoadedRunId
+                ? runId
+                : null;
+    }
+
     private Row Ensure(ulong netId)
     {
         if (_rows.TryGetValue(netId, out Row? existing))
@@ -1193,11 +1276,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return existing;
         }
 
-        // Prefer the look captured while the player was live; fall back to a neutral tint and the ledger's resolved
-        // name for a player we somehow never saw on-screen (e.g. a tally restored with no live combat).
-        PlayerVisual visual = _visuals.TryGetValue(netId, out PlayerVisual cached)
-            ? cached
-            : new PlayerVisual(new Color(0.7f, 0.7f, 0.7f), null, _snapshot.GetValueOrDefault(netId)?.Name ?? netId.ToString());
+        PlayerVisual visual = VisualFor(netId);
         Color color = visual.Color;
 
         // The row takes the mouse so hovering it drives the breakdown; its children ignore it so the whole row is one

@@ -16,9 +16,10 @@ namespace RdpsMeter;
 /// rather than across the whole run keeps a missing early fight (the mod installed mid-run, say) from shifting every
 /// later act's numbering as well.
 ///
-/// A run other than the one the ledger has loaded never resolves to a combat, however well the positions line up:
-/// its numbers are simply not in memory, and showing the loaded run's damage under an older run's fight would be
-/// worse than showing none.
+/// Which ledger answers depends on the run: the one being played is in memory, and any other is read back off disk by
+/// <see cref="ArchivedRun"/>. What must never happen is the two being confused - showing the loaded run's damage under
+/// an older run's fight is worse than showing none - so the run's seed is matched first and then carried on the
+/// <see cref="HistoryFight"/>, rather than the reader assuming whatever run happens to be loaded.
 /// </summary>
 internal static class RunHistoryLink
 {
@@ -63,13 +64,19 @@ internal static class RunHistoryLink
 
     private static HistoryFight Describe(RunHistory history, int act, int ordinal, MapPointRoomHistoryEntry room)
     {
-        CombatInfo? recorded = history.Seed == RunLedger.LoadedRunId ? RunLedger.FightInAct(act, ordinal) : null;
+        // The run being played answers from memory; any other run is read back off disk. Both are real sources - the
+        // page is mostly used to look at runs that are over, and gating on the loaded run (which is what this did) meant
+        // every one of those drew an empty meter even though its breakdown was sitting in the save folder.
+        string runId = history.Seed;
+        CombatInfo? recorded = runId == RunLedger.LoadedRunId
+            ? RunLedger.FightInAct(act, ordinal)
+            : ArchivedRun.FightInAct(runId, act, ordinal);
 
         // The ledger's own name for the fight wins when it has one: it is what the picker calls that fight everywhere
         // else in the meter. Otherwise the page's own record names it, which is all there is for a run we never saw.
         return recorded is CombatInfo fight && !string.IsNullOrEmpty(fight.Label)
-            ? new HistoryFight(fight.Label, fight.Key)
-            : new HistoryFight(NameOf(room), recorded?.Key);
+            ? new HistoryFight(fight.Label, runId, fight.Key)
+            : new HistoryFight(NameOf(room), runId, recorded?.Key);
     }
 
     // What to call a fight we have no tally for. Mirrors how a live combat is named - the encounter's own title first,

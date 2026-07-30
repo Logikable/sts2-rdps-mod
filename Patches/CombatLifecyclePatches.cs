@@ -2,6 +2,7 @@ using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Players;
 
 namespace RdpsMeter.Patches;
 
@@ -18,6 +19,10 @@ internal static class CombatLifecyclePatches
     private static void StartCombatInternalPrefix()
     {
         AttributionPatches.ClearPending();
+
+        // Before BeginCombat, not after: BeginCombat is what writes the run's file, so recording the party first means
+        // a run that is quit after one fight still has its roster saved.
+        RecordRoster();
 
         // Open (or, on a mid-combat save reload, reopen and wipe) this combat's tally, keyed by where the run is and
         // named after the enemies it starts with (toughest first, so a mix reads by its most notable enemy).
@@ -37,6 +42,26 @@ internal static class CombatLifecyclePatches
     private static void EndCombatInternalPrefix()
     {
         RunLedger.EndCombat();
+    }
+
+    // Who is in this fight, filed against the run so their rows keep their class colour and icon after the combat state
+    // is gone - including in a later session, where there is no live player to read the colour off at all. Only the
+    // character's model id is kept; the colour and the icon are recovered from it (see CharacterVisuals).
+    private static void RecordRoster()
+    {
+        try
+        {
+            CombatState? state = CombatManager.Instance?.DebugOnlyGetState();
+            foreach (Player player in state?.Players ?? (IReadOnlyList<Player>)Array.Empty<Player>())
+            {
+                RunLedger.RecordRoster(player.NetId, PlayerIdentity.Name(player), player.Character.Id.ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            // A row's colour is never worth breaking combat start over; the rows just draw in the neutral tint.
+            GD.PrintErr($"[RdpsMeter] Could not record the party roster: {ex}");
+        }
     }
 
     // The fight's name. The game names its own encounters ("Group of Slimes", "Knight Gang", "The Kin") and those read

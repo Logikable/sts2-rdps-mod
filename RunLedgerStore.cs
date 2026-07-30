@@ -11,6 +11,27 @@ internal sealed class RunLedgerDto
 {
     public string RunId { get; set; } = string.Empty;
     public List<CombatEntryDto> Combats { get; set; } = new();
+
+    // Who was in this run, once for the whole run rather than once per combat: the party is fixed for a run's lifetime,
+    // and a fight the meter missed should still get coloured rows. A file written before the roster existed simply has
+    // none, and those runs fall back to the neutral tint they already drew with.
+    public List<RosterEntryDto> Roster { get; set; } = new();
+}
+
+/// <summary>
+/// One player's identity for the whole run: enough to draw their row without a live combat to read it off.
+///
+/// The character is stored as its ModelId ("CHARACTER.IRONCLAD"), not as a colour and an icon path. A model id is the
+/// game's own stable key and survives a re-theme; a saved colour would freeze whatever the class looked like the day the
+/// file was written, and a saved texture path would break the moment the game moved its art. Everything drawn is
+/// recovered from the prototype in <c>ModelDb</c> at load - the same trick <see cref="BlockSource"/> uses to name a
+/// relic it only knows by type.
+/// </summary>
+internal sealed class RosterEntryDto
+{
+    public ulong NetId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Character { get; set; } = string.Empty;
 }
 
 internal sealed class CombatEntryDto
@@ -69,9 +90,11 @@ internal static class RunLedgerStore
     // Where the breakdown lived when the meter kept only one run's worth; adopted once, then removed.
     private const string LegacyPath = "user://rdps_meter_run.json";
 
-    // Abandoned runs are never cleaned up by the game, so keep only the most recently written few files. Far more than
-    // the handful of runs anyone has going at once, and each file is a few KB.
-    private const int KeepRuns = 12;
+    // Abandoned runs are never cleaned up by the game, so keep only the most recently written files. This was 12, which
+    // was sized for "runs anyone has in progress at once" - but the run history page reaches back over finished runs
+    // too, and a pruned file is exactly the zeroes bug it used to show. Sized for browsing now rather than for
+    // resuming; each file is a few KB, so the whole cap is well under a megabyte.
+    private const int KeepRuns = 60;
 
     public static string Serialize(RunLedgerDto dto)
     {

@@ -21,6 +21,11 @@ internal static class RunLedger
     private static readonly object Lock = new();
     private static readonly Dictionary<string, CombatLedger> Combats = new();
 
+    // Who is in the run, by net id. Run-level rather than per-combat because the party does not change mid-run, and
+    // because a row must be drawable for a fight the meter never saw - a restored breakdown has tallies but no live
+    // players behind them.
+    private static readonly Dictionary<ulong, RosterEntryDto> Party = new();
+
     // The combat keys in the order they were first entered, so fights number stably (Fight 1, 2, 3) even as the dict
     // is re-keyed by a reloaded combat.
     private static readonly List<string> Order = new();
@@ -53,12 +58,39 @@ internal static class RunLedger
         {
             Combats.Clear();
             Order.Clear();
+            Party.Clear();
             _active = new CombatLedger();
             _runId = runId;
             Generation++;
         }
 
         Persist();
+    }
+
+    /// <summary>
+    /// Notes who is playing, so their rows can be drawn in their class colour long after the combat that produced them
+    /// is gone. Called at the top of each combat rather than once per run: the meter can be installed mid-run, and a
+    /// co-op player can join a run already in progress, so there is no single moment the whole party is known.
+    ///
+    /// Re-recording the same player is a plain overwrite, which is what a name change should do.
+    /// </summary>
+    public static void RecordRoster(ulong netId, string name, string characterId)
+    {
+        lock (Lock)
+        {
+            Party[netId] = new RosterEntryDto { NetId = netId, Name = name, Character = characterId };
+        }
+    }
+
+    /// <summary>The character this player was running, as a ModelId string, or null for one we never saw.</summary>
+    public static string? CharacterOf(ulong netId)
+    {
+        lock (Lock)
+        {
+            return Party.TryGetValue(netId, out RosterEntryDto? entry) && !string.IsNullOrEmpty(entry.Character)
+                ? entry.Character
+                : null;
+        }
     }
 
     /// <summary>
@@ -270,6 +302,7 @@ internal static class RunLedger
                 }
             }
 
+            dto.Roster.AddRange(Party.Values);
             return dto;
         }
     }
@@ -289,6 +322,7 @@ internal static class RunLedger
     {
         Combats.Clear();
         Order.Clear();
+        Party.Clear();
         _active = new CombatLedger();
         _runId = runId;
         if (dto == null)
@@ -300,6 +334,11 @@ internal static class RunLedger
         {
             Combats[entry.Key] = CombatLedger.FromState(entry);
             Order.Add(entry.Key);
+        }
+
+        foreach (RosterEntryDto player in dto.Roster)
+        {
+            Party[player.NetId] = player;
         }
     }
 

@@ -100,6 +100,8 @@ internal static class SelfTest
         all &= PersistentOverlayScenario();
         all &= LastPlayedScenario();
         all &= RunHistoryScenario();
+        all &= RosterVisualsScenario(dealer);
+        all &= ArchivedRunScenario(dealer);
         all &= await MeterModeScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
@@ -1913,9 +1915,10 @@ internal static class SelfTest
     /// <summary>
     /// The run history page drives the meter. Builds a run of three fights across two acts and a page whose map points
     /// match it, then checks that a map point resolves to the combat the ledger filed for it - skipping the shop, and
-    /// starting its count over in the second act - and that the overlay actually switches to it. A page showing some
-    /// other run resolves to no combat at all: the meter goes empty under the fight's own name rather than showing the
-    /// loaded run's damage, and stays on screen to say so.
+    /// starting its count over in the second act - and that the overlay actually switches to it. A page showing a run
+    /// with no saved breakdown at all resolves to no combat: the meter goes empty under the fight's own name rather
+    /// than showing the loaded run's damage, and stays on screen to say so. (A run that *does* have one is
+    /// <see cref="ArchivedRunScenario"/>.)
     /// </summary>
     private static bool RunHistoryScenario()
     {
@@ -2086,6 +2089,162 @@ internal static class SelfTest
             Expect("solo says DPS", soloTitle == Loc.T("mode.dps") ? 1m : 0m, 1m),
             Expect("solo skips aDPS", soloNext == MeterMode.Blocked ? 1m : 0m, 1m),
             Expect("the picker draws its chip", overlay.HarnessPickerDrawsChip ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// A restored breakdown keeps the party's class colours. The bug: the colour and icon were read off the live
+    /// Player and never written down, so reopening the game restored the numbers and drew every row the neutral grey.
+    ///
+    /// Goes through the full disk shape - serialize, deserialize, load - rather than calling LoadDto on the object in
+    /// hand, because "does it survive JSON" is precisely the question. Then it asks the overlay what it would draw, so
+    /// the fallback chain is what is measured and not just the dictionary behind it.
+    /// </summary>
+    private static bool RosterVisualsScenario(Creature dealer)
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Class colours survive a restart': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        const string runId = "selftest-roster";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        string harnessLabel = RunLedger.Active.Label;
+
+        // The real character the harness is being played with, so the expected colour is the game's own rather than
+        // anything this test made up.
+        CharacterModel character = dealer.Player!.Character;
+        string characterId = character.Id.ToString();
+
+        RunLedger.StartNewRun(runId);
+        RunLedger.RecordRoster(1uL, "Tester", characterId);
+        RunLedger.BeginCombat("0:1:2:0", "Alpha");
+        RunLedger.Active.ApplyDot("Poison", share, 11);
+        RunLedger.EndCombat();
+
+        // What a fresh launch does: nothing in memory, then read the file back.
+        string json = RunLedgerStore.Serialize(RunLedger.ToDto());
+        RunLedger.LoadDto(null);
+        bool greyWhenUnknown = overlay.HarnessVisual(1uL).Color == new Color(0.7f, 0.7f, 0.7f);
+
+        RunLedger.LoadDto(RunLedgerStore.Deserialize(json));
+        CharacterVisuals.ClearCache();
+        (Color Color, bool HasIcon) restored = overlay.HarnessVisual(1uL);
+
+        // A model id that names nothing must degrade to grey, not throw: that is what a run recorded under a mod the
+        // player has since removed looks like.
+        RunLedger.RecordRoster(9uL, "Ghost", "CHARACTER.NOT_A_REAL_MODEL");
+        (Color Color, bool HasIcon) bogus = overlay.HarnessVisual(9uL);
+
+        RunLedgerStore.Delete(runId);
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Class colours survive a restart",
+            Expect("grey with nothing loaded", greyWhenUnknown ? 1m : 0m, 1m),
+            Expect("the character round-trips", RunLedger.CharacterOf(1uL) == characterId ? 1m : 0m, 1m),
+            Expect("and the numbers came with it", RunLedger.TotalSnapshot().Sum(r => r.ADps), 11m),
+            Expect("the row is the class colour", restored.Color == character.NameColor ? 1m : 0m, 1m),
+            Expect("which is not the grey fallback", restored.Color == new Color(0.7f, 0.7f, 0.7f) ? 0m : 1m, 1m),
+            Expect("the class icon comes back too", restored.HasIcon ? 1m : 0m, 1m),
+            Expect("an unknown character falls back to grey", bogus.Color == new Color(0.7f, 0.7f, 0.7f) ? 1m : 0m, 1m),
+            Expect("and draws no icon", bogus.HasIcon ? 0m : 1m, 1m));
+    }
+
+    /// <summary>
+    /// The run history page shows a *finished* run's numbers. The bug: only the run held in memory could resolve, so
+    /// every older run on the page drew a meter of zeroes even though its breakdown was sitting in the save folder.
+    ///
+    /// The sharp check is that the archived run and the loaded run both have a fight under the same key with different
+    /// damage. A combat key is only unique within a run, so a reader that forgot which run it was looking at would
+    /// return the loaded run's number and look perfectly healthy against a test where only one of them had data.
+    /// </summary>
+    private static bool ArchivedRunScenario(Creature dealer)
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Run history shows a finished run': FAIL (no overlay in the scene tree)");
+            return false;
+        }
+
+        const string archivedId = "selftest-archived";
+        const string currentId = "selftest-current";
+        var share = new Dictionary<ulong, decimal> { { 1uL, 1m } };
+        string harnessLabel = RunLedger.Active.Label;
+        CharacterModel character = dealer.Player!.Character;
+
+        // The run that is over. Saved to disk by BeginCombat/EndCombat, exactly as a real run saves itself.
+        RunLedger.StartNewRun(archivedId);
+        RunLedger.RecordRoster(1uL, "Past", character.Id.ToString());
+        Fought("0:1:2:0", "Old Alpha", 11);
+        Fought("0:3:4:0", "Old Beta", 22);
+        Fought("1:0:1:0", "Old Gamma", 33);
+
+        // The run being played now, sharing a combat key with the archived one but not its damage.
+        RunLedger.StartNewRun(currentId);
+        Fought("0:3:4:0", "New Beta", 99);
+
+        // A cold cache, so the read really does come off disk.
+        ArchivedRun.Forget();
+
+        var act0 = new List<MapPointHistoryEntry>
+        {
+            Point(RoomType.Monster), Point(RoomType.Shop), Point(RoomType.Elite),
+        };
+        var act1 = new List<MapPointHistoryEntry> { Point(RoomType.Monster) };
+        var page = new RunHistory
+        {
+            Seed = archivedId,
+            MapPointHistory = new List<List<MapPointHistoryEntry>> { act0, act1 },
+        };
+
+        HistoryFight? elite = RunHistoryLink.Locate(page, act0[2]);
+        RunHistoryView.Show(elite ?? default);
+        decimal shownDamage = overlay.HarnessSelectedView().Sum(r => r.ADps);
+        string shownCaption = overlay.HarnessPickerCaption;
+        (Color Color, bool HasIcon) shownVisual = overlay.HarnessVisual(1uL);
+
+        // The second act still counts from zero, off the archived run's own ordering.
+        HistoryFight? nextAct = RunHistoryLink.Locate(page, act1[0]);
+        RunHistoryView.Show(nextAct ?? default);
+        decimal nextActDamage = overlay.HarnessSelectedView().Sum(r => r.ADps);
+
+        // A run with no file at all is still the empty meter it always was.
+        var missing = new RunHistory
+        {
+            Seed = "selftest-never-saved",
+            MapPointHistory = new List<List<MapPointHistoryEntry>> { act0, act1 },
+        };
+        HistoryFight? unsaved = RunHistoryLink.Locate(missing, act0[0]);
+        RunHistoryView.Show(unsaved ?? default);
+        int unsavedRows = overlay.HarnessSelectedView().Count;
+
+        RunHistoryView.Release();
+        ArchivedRun.Forget();
+        RunLedgerStore.Delete(archivedId);
+        RunLedgerStore.Delete(currentId);
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Run history shows a finished run",
+            Expect("the archived fight resolves", elite?.Key == "0:3:4:0" ? 1m : 0m, 1m),
+            Expect("tagged with its own run", elite?.RunId == archivedId ? 1m : 0m, 1m),
+            Expect("its damage, not the loaded run's", shownDamage, 22m),
+            Expect("captioned from the archived ledger", shownCaption == "Old Beta" ? 1m : 0m, 1m),
+            Expect("coloured from the archived roster", shownVisual.Color == character.NameColor ? 1m : 0m, 1m),
+            Expect("the next act counts from zero", nextActDamage, 33m),
+            Expect("a run never saved resolves to nothing", unsaved is { Key: null } ? 1m : 0m, 1m),
+            Expect("and shows nothing", unsavedRows, 0m),
+            Expect("the loaded run is untouched", RunLedger.LoadedRunId == RunContext.RunId ? 1m : 0m, 1m));
+
+        void Fought(string key, string label, int damage)
+        {
+            RunLedger.BeginCombat(key, label);
+            RunLedger.Active.ApplyDot("Poison", share, damage);
+            RunLedger.EndCombat();
+        }
     }
 
     private static MapPointHistoryEntry Point(params RoomType[] rooms)
