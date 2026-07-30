@@ -122,9 +122,49 @@ under act/coord/room, while a saved `RunHistory` keeps only map point types,
 rooms and monsters — no coordinates. What they share is **order**, so the nth
 fight of act N on the page is the nth combat the ledger recorded for act N.
 Count *combat rooms*, not map points (one point can hold several rooms), and
-count per act so a missing early fight doesn't shift later acts. A page showing
-a different run (`RunHistory.Seed != RunLedger.LoadedRunId`) never resolves to a
-combat — an empty meter beats another run's numbers.
+count per act so a missing early fight doesn't shift later acts.
+
+A run other than the loaded one is read back off disk by `ArchivedRun`, keyed by
+`RunHistory.Seed`. This used to refuse — only the run in memory resolved — which
+showed a meter of zeroes over every finished run while its breakdown sat unread
+in the save folder. Two things keep that safe. **A combat key is unique only
+within a run**, so the run id rides on `HistoryFight` and the reader picks the
+ledger from it; a reader that assumed the loaded run would return today's damage
+under an old fight's name and look perfectly healthy in a test where only one
+run had data. And the run id *inside* the file is checked against the one asked
+for, because two seeds can fold to the same filename. A run with no file at all
+is still the empty meter it always was — that case is real (older than the mod,
+or pruned), just no longer the common one. Pruning is sized for browsing (60
+runs), not for the handful you have in progress: a pruned file is the zeroes bug
+coming back.
+
+## What a saved run has to carry
+
+Anything the meter draws that isn't a number has to be **in the file**, because
+after a restart there is no live `Player` to read it off. Class colour and icon
+were read off `Player.Character` and never written down, so a reopened game
+restored the numbers and drew every row the neutral grey.
+
+Persist the **`ModelId`**, never the resolved asset. `CharacterVisuals` recovers
+`NameColor` and `IconTexture` from the prototype in `ModelDb` at load — a saved
+colour would freeze whatever the class looked like the day the file was written,
+and a saved texture path breaks the moment the game moves its art. Both
+properties belong to the prototype, not to a run's copy, so the lookup answers
+exactly as the live model would. Resolution is best-effort in both directions:
+an id that no longer names anything falls back to grey rather than throwing
+while drawing.
+
+The roster is **run-level, recorded per combat**. Not once per run, because the
+meter can be installed mid-run and a co-op player can join one already going, so
+there is no single moment the whole party is known; recorded before
+`BeginCombat`, because that is what writes the file.
+
+The trap when a row can come from two runs: the local player keeps their net id
+across runs while the character changes, so the live visual cache is *wrong* for
+an archived run rather than merely unhelpful. `VisualFor` skips the cache
+entirely when the history page is on another run, and `_shownRun` drops the
+cached rows when the page moves between runs — a `Row` bakes its colour in at
+construction, and paging between old runs doesn't bump `RunLedger.Generation`.
 
 ## Damage accounting
 
