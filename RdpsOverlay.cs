@@ -128,6 +128,9 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     // combat ends and the live combat state (the only place these come from) is gone.
     private readonly record struct PlayerVisual(Color Color, Texture2D? Icon, string Name);
 
+    // What a row is tinted when nothing can say whose it is - no live player, no saved roster, no resolvable character.
+    private static readonly Color UnknownPlayerColor = new(0.7f, 0.7f, 0.7f);
+
     // Which tally the meter is showing: the whole run's total, the active/most-recent combat, or one picked fight.
     private enum ViewKind
     {
@@ -441,8 +444,15 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             : Array.Empty<Player>();
         foreach (Player player in livePlayers)
         {
-            _visuals[player.NetId] =
-                new PlayerVisual(player.Character.NameColor, player.Character.IconTexture, PlayerIdentity.Name(player));
+            // Only once per player per run. None of this can change while a run is going, and all three are dearer than
+            // they look: IconTexture rebuilds its path string and goes to the texture cache, and PlayerIdentity.Name
+            // calls into the platform layer. A new run clears the cache through the generation check above, which is
+            // the only time these answers differ.
+            if (!_visuals.ContainsKey(player.NetId))
+            {
+                _visuals[player.NetId] = new PlayerVisual(
+                    player.Character.NameColor, player.Character.IconTexture, PlayerIdentity.Name(player));
+            }
         }
 
         _snapshot = SelectedView().ToDictionary(r => r.NetId);
@@ -1022,9 +1032,10 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         }
 
         _bodySignature = signature;
-        Color color = netId is ulong owner && _visuals.TryGetValue(owner, out PlayerVisual visual)
-            ? visual.Color
-            : new Color(0.7f, 0.7f, 0.7f);
+
+        // The same chain a table row resolves through, rather than the live cache alone - solo is the one layout where
+        // this colour is the whole window, and a restored run has no live player to read it off.
+        Color color = netId is ulong owner ? VisualFor(owner).Color : UnknownPlayerColor;
         RebuildBreakdown(_list, row, color, damageHeader: false);
     }
 
@@ -1256,7 +1267,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         (Color Color, Texture2D? Icon)? look = CharacterVisuals.For(characterId);
         return look.HasValue
             ? new PlayerVisual(look.Value.Color, look.Value.Icon, name)
-            : new PlayerVisual(new Color(0.7f, 0.7f, 0.7f), null, name);
+            : new PlayerVisual(UnknownPlayerColor, null, name);
     }
 
     // The run the meter is showing when that is not the run in memory, i.e. the history page sitting on an older run;
