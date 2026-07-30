@@ -23,12 +23,10 @@ internal static class ArchivedRun
 {
     private static readonly object Lock = new();
 
-    // The run currently cached, and its rebuilt tallies. Both null together when nothing is cached; _combats stays null
-    // for a run whose file is missing, which is the cached miss.
+    // The run currently cached and its rebuilt tallies. _set stays null for a run whose file is missing while _runId
+    // holds its id - that pairing is the cached miss, and it is why the two are not one nullable field.
     private static string? _runId;
-    private static Dictionary<string, CombatLedger>? _combats;
-    private static List<string>? _order;
-    private static Dictionary<ulong, RosterEntryDto>? _party;
+    private static CombatSet? _set;
 
     /// <summary>
     /// The nth combat recorded in one act of an archived run, or null when that run or fight is not on disk. Mirrors
@@ -37,30 +35,9 @@ internal static class ArchivedRun
     /// </summary>
     public static CombatInfo? FightInAct(string runId, int act, int ordinal)
     {
-        string prefix = $"{act}:";
         lock (Lock)
         {
-            if (!Ensure(runId))
-            {
-                return null;
-            }
-
-            int seen = 0;
-            foreach (string key in _order!)
-            {
-                if (!key.StartsWith(prefix, StringComparison.Ordinal)
-                    || !_combats!.TryGetValue(key, out CombatLedger? combat))
-                {
-                    continue;
-                }
-
-                if (seen++ == ordinal)
-                {
-                    return new CombatInfo(key, combat.Label);
-                }
-            }
-
-            return null;
+            return Ensure(runId) ? _set!.FightInAct(act, ordinal) : null;
         }
     }
 
@@ -69,9 +46,7 @@ internal static class ArchivedRun
     {
         lock (Lock)
         {
-            return Ensure(runId) && _combats!.TryGetValue(key, out CombatLedger? combat)
-                ? combat.Snapshot()
-                : Array.Empty<RdpsRow>();
+            return Ensure(runId) ? _set!.SnapshotOf(key) : Array.Empty<RdpsRow>();
         }
     }
 
@@ -80,10 +55,7 @@ internal static class ArchivedRun
     {
         lock (Lock)
         {
-            return Ensure(runId) && _party!.TryGetValue(netId, out RosterEntryDto? entry)
-                && !string.IsNullOrEmpty(entry.Character)
-                    ? entry.Character
-                    : null;
+            return Ensure(runId) ? _set!.CharacterOf(netId) : null;
         }
     }
 
@@ -107,12 +79,12 @@ internal static class ArchivedRun
 
             foreach ((ulong netId, string character) in players)
             {
-                if (string.IsNullOrEmpty(character) || _party!.ContainsKey(netId))
+                if (string.IsNullOrEmpty(character) || _set!.Party.ContainsKey(netId))
                 {
                     continue;
                 }
 
-                _party[netId] = new RosterEntryDto { NetId = netId, Character = character };
+                _set.Party[netId] = new RosterEntryDto { NetId = netId, Character = character };
             }
         }
     }
@@ -123,9 +95,7 @@ internal static class ArchivedRun
         lock (Lock)
         {
             _runId = null;
-            _combats = null;
-            _order = null;
-            _party = null;
+            _set = null;
         }
     }
 
@@ -139,13 +109,11 @@ internal static class ArchivedRun
 
         if (_runId == runId)
         {
-            return _combats != null;
+            return _set != null;
         }
 
         _runId = runId;
-        _combats = null;
-        _order = null;
-        _party = null;
+        _set = null;
 
         try
         {
@@ -159,23 +127,7 @@ internal static class ArchivedRun
                 return false;
             }
 
-            var combats = new Dictionary<string, CombatLedger>();
-            var order = new List<string>();
-            foreach (CombatEntryDto entry in saved.Combats)
-            {
-                combats[entry.Key] = CombatLedger.FromState(entry);
-                order.Add(entry.Key);
-            }
-
-            var party = new Dictionary<ulong, RosterEntryDto>();
-            foreach (RosterEntryDto player in saved.Roster)
-            {
-                party[player.NetId] = player;
-            }
-
-            _combats = combats;
-            _order = order;
-            _party = party;
+            _set = CombatSet.From(saved);
             return true;
         }
         catch (Exception ex)

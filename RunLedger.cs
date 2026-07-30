@@ -19,16 +19,19 @@ internal readonly record struct CombatInfo(string Key, string Label);
 internal static class RunLedger
 {
     private static readonly object Lock = new();
-    private static readonly Dictionary<string, CombatLedger> Combats = new();
 
-    // Who is in the run, by net id. Run-level rather than per-combat because the party does not change mid-run, and
-    // because a row must be drawable for a fight the meter never saw - a restored breakdown has tallies but no live
-    // players behind them.
-    private static readonly Dictionary<ulong, RosterEntryDto> Party = new();
+    // This run's combats, the order they were entered in, and who fought them. Shared with the archived-run reader,
+    // which is the same thing loaded from a file rather than built as it is played (see <see cref="CombatSet"/>).
+    private static CombatSet _set = new();
 
-    // The combat keys in the order they were first entered, so fights number stably (Fight 1, 2, 3) even as the dict
-    // is re-keyed by a reloaded combat.
-    private static readonly List<string> Order = new();
+    // The whole-run view, and what it was built from. The overlay asks for it every frame and it is the default view,
+    // so rebuilding it per frame meant re-merging every combat in the run sixty times a second - a cost that grew with
+    // every fight won, making the meter slowest deep into a run. It is rebuilt only when a combat is added or replaced
+    // (_structure) or when one of them records something (its own Revision).
+    private static int _structure;
+    private static IReadOnlyList<RdpsRow>? _total;
+    private static int _totalStructure = -1;
+    private static int[] _totalRevisions = Array.Empty<int>();
 
     // The active combat's tally, where live hits are booked. Defaults to a detached ledger so writes before the first
     // combat (or after a run ends) go somewhere harmless rather than throwing.
@@ -56,9 +59,8 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            Combats.Clear();
-            Order.Clear();
-            Party.Clear();
+            _set = new CombatSet();
+            _structure++;
             _active = new CombatLedger();
             _runId = runId;
             Generation++;
@@ -78,7 +80,7 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            Party[netId] = new RosterEntryDto { NetId = netId, Name = name, Character = characterId };
+            _set.Party[netId] = new RosterEntryDto { NetId = netId, Name = name, Character = characterId };
         }
     }
 
@@ -87,9 +89,7 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            return Party.TryGetValue(netId, out RosterEntryDto? entry) && !string.IsNullOrEmpty(entry.Character)
-                ? entry.Character
-                : null;
+            return _set.CharacterOf(netId);
         }
     }
 
@@ -150,7 +150,7 @@ internal static class RunLedger
         {
             lock (Lock)
             {
-                foreach (CombatLedger combat in Combats.Values)
+                foreach (CombatLedger combat in _set.Combats.Values)
                 {
                     if (!combat.IsEmpty)
                     {
@@ -174,12 +174,13 @@ internal static class RunLedger
         lock (Lock)
         {
             var ledger = new CombatLedger { Label = label };
-            if (!Combats.ContainsKey(key))
+            if (!_set.Combats.ContainsKey(key))
             {
-                Order.Add(key);
+                _set.Order.Add(key);
             }
 
-            Combats[key] = ledger;
+            _set.Combats[key] = ledger;
+            _structure++;
             _active = ledger;
         }
 
@@ -198,19 +199,64 @@ internal static class RunLedger
         return Active.Snapshot();
     }
 
-    /// <summary>The whole run's tally: every combat's ledger folded into one, then snapshotted like a single combat.</summary>
+    /// <summary>
+    /// The whole run's tally: every combat's ledger folded into one, then snapshotted like a single combat. Cached,
+    /// because this is the view the meter opens on and it is asked for every frame - see <see cref="TotalIsCurrent"/>
+    /// for what makes the cache go stale.
+    /// </summary>
     public static IReadOnlyList<RdpsRow> TotalSnapshot()
     {
-        var aggregate = new CombatLedger();
         lock (Lock)
         {
-            foreach (CombatLedger combat in Combats.Values)
+            if (TotalIsCurrent())
+            {
+                return _total!;
+            }
+
+            var aggregate = new CombatLedger();
+            foreach (CombatLedger combat in _set.Combats.Values)
             {
                 combat.AccumulateInto(aggregate);
             }
+
+            _total = aggregate.Snapshot();
+            _totalStructure = _structure;
+            _totalRevisions = new int[_set.Order.Count];
+            for (int i = 0; i < _totalRevisions.Length; i++)
+            {
+                _totalRevisions[i] = RevisionAt(i);
+            }
+
+            return _total;
+        }
+    }
+
+    // Whether the cached total still describes the run. Compares the actual revisions rather than hashing them: the
+    // list is one int per fight, so walking it is cheap, and a hash could collide - which in a damage meter means
+    // numbers that quietly stop moving, the one failure worth spending a loop to rule out. Callers hold Lock.
+    private static bool TotalIsCurrent()
+    {
+        if (_total == null || _totalStructure != _structure || _totalRevisions.Length != _set.Order.Count)
+        {
+            return false;
         }
 
-        return aggregate.Snapshot();
+        for (int i = 0; i < _totalRevisions.Length; i++)
+        {
+            if (_totalRevisions[i] != RevisionAt(i))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // The revision of the nth combat in entry order, or -1 for an order entry with no ledger behind it (which cannot
+    // happen today, and would otherwise silently compare equal to a real revision). Callers hold Lock.
+    private static int RevisionAt(int index)
+    {
+        return _set.Combats.TryGetValue(_set.Order[index], out CombatLedger? combat) ? combat.Revision : -1;
     }
 
     /// <summary>A single combat's tally, or an empty snapshot if that combat is no longer in the run.</summary>
@@ -218,7 +264,7 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            return Combats.TryGetValue(key, out CombatLedger? combat) ? combat.Snapshot() : Array.Empty<RdpsRow>();
+            return _set.SnapshotOf(key);
         }
     }
 
@@ -227,10 +273,10 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            var list = new List<CombatInfo>(Order.Count);
-            foreach (string key in Order)
+            var list = new List<CombatInfo>(_set.Order.Count);
+            foreach (string key in _set.Order)
             {
-                if (Combats.TryGetValue(key, out CombatLedger? combat))
+                if (_set.Combats.TryGetValue(key, out CombatLedger? combat))
                 {
                     list.Add(new CombatInfo(key, combat.Label));
                 }
@@ -259,25 +305,9 @@ internal static class RunLedger
     /// </summary>
     public static CombatInfo? FightInAct(int act, int ordinal)
     {
-        string prefix = $"{act}:";
         lock (Lock)
         {
-            int seen = 0;
-            foreach (string key in Order)
-            {
-                if (!key.StartsWith(prefix, StringComparison.Ordinal)
-                    || !Combats.TryGetValue(key, out CombatLedger? combat))
-                {
-                    continue;
-                }
-
-                if (seen++ == ordinal)
-                {
-                    return new CombatInfo(key, combat.Label);
-                }
-            }
-
-            return null;
+            return _set.FightInAct(act, ordinal);
         }
     }
 
@@ -285,7 +315,7 @@ internal static class RunLedger
     {
         lock (Lock)
         {
-            return Combats.ContainsKey(key);
+            return _set.Combats.ContainsKey(key);
         }
     }
 
@@ -294,15 +324,15 @@ internal static class RunLedger
         lock (Lock)
         {
             var dto = new RunLedgerDto { RunId = _runId };
-            foreach (string key in Order)
+            foreach (string key in _set.Order)
             {
-                if (Combats.TryGetValue(key, out CombatLedger? combat))
+                if (_set.Combats.TryGetValue(key, out CombatLedger? combat))
                 {
                     dto.Combats.Add(combat.ToState(key));
                 }
             }
 
-            dto.Roster.AddRange(Party.Values);
+            dto.Roster.AddRange(_set.Party.Values);
             return dto;
         }
     }
@@ -320,26 +350,10 @@ internal static class RunLedger
     // hold Lock.
     private static void Restore(RunLedgerDto? dto, string runId)
     {
-        Combats.Clear();
-        Order.Clear();
-        Party.Clear();
+        _set = CombatSet.From(dto);
+        _structure++;
         _active = new CombatLedger();
         _runId = runId;
-        if (dto == null)
-        {
-            return;
-        }
-
-        foreach (CombatEntryDto entry in dto.Combats)
-        {
-            Combats[entry.Key] = CombatLedger.FromState(entry);
-            Order.Add(entry.Key);
-        }
-
-        foreach (RosterEntryDto player in dto.Roster)
-        {
-            Party[player.NetId] = player;
-        }
     }
 
     private static void Persist()
