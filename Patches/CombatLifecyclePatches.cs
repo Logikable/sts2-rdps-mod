@@ -1,3 +1,5 @@
+using System.Linq;
+using System.Reflection;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
@@ -10,11 +12,47 @@ namespace RdpsMeter.Patches;
 /// Resets the ledger at the start of each combat and prints the attribution summary at the end. Both target methods
 /// are async; a Harmony prefix runs at their synchronous entry, which is exactly when we want to clear (combat about
 /// to begin) and report (combat ending, tallies complete).
+///
+/// Neither is bound by name alone, because 0.110.0 rewrote CombatManager to keep its per-combat fields in a
+/// CombatTurnState object and gave both methods a private overload taking one. See <see cref="LifecycleTarget"/> for
+/// why picking the wrong overload is a silent failure rather than a loud one.
 /// </summary>
-[HarmonyPatch(typeof(CombatManager))]
+internal static class LifecycleTarget
+{
+    /// <summary>
+    /// The overload of <paramref name="name"/> that every path to it funnels through.
+    ///
+    /// Through 0.109.1 there was exactly one: a public, no-argument StartCombatInternal / EndCombatInternal. 0.110.0
+    /// moved the body into a private overload taking the combat's CombatTurnState and left the old signature behind as
+    /// a wrapper - but only as *one* of the callers. The ordinary end of a fight runs
+    /// CheckWinCondition -> EndCombatInternal(turnState) and never touches the wrapper, so a patch left on the
+    /// no-argument version would stop seeing combats end while still binding perfectly.
+    ///
+    /// That is the failure worth naming: the binding verifier cannot catch it. `nameof(EndCombatInternal)` still
+    /// resolves on 0.110.0, so the bind reports ok and the meter simply stops closing out fights. Prefer the
+    /// one-argument overload wherever it exists, and fall back to the no-argument one for the older versions the mod
+    /// still supports. Resolution is by parameter count rather than by naming CombatTurnState, which does not exist as
+    /// a type before 0.110.0.
+    /// </summary>
+    internal static MethodBase Resolve(string name)
+    {
+        MethodInfo[] candidates = AccessTools.GetDeclaredMethods(typeof(CombatManager))
+            .Where(m => m.Name == name)
+            .ToArray();
+
+        return candidates.FirstOrDefault(m => m.GetParameters().Length == 1)
+            ?? candidates.First(m => m.GetParameters().Length == 0);
+    }
+}
+
+[HarmonyPatch]
 internal static class CombatLifecyclePatches
 {
-    [HarmonyPatch(nameof(CombatManager.StartCombatInternal))]
+    private static MethodBase TargetMethod()
+    {
+        return LifecycleTarget.Resolve("StartCombatInternal");
+    }
+
     [HarmonyPrefix]
     private static void StartCombatInternalPrefix()
     {
@@ -35,13 +73,6 @@ internal static class CombatLifecyclePatches
             SelfTest.Install();
         }
 #endif
-    }
-
-    [HarmonyPatch(nameof(CombatManager.EndCombatInternal))]
-    [HarmonyPrefix]
-    private static void EndCombatInternalPrefix()
-    {
-        RunLedger.EndCombat();
     }
 
     // Who is in this fight, filed against the run so their rows keep their class colour and icon after the combat state
@@ -117,5 +148,24 @@ internal static class CombatLifecyclePatches
         {
             return null;
         }
+    }
+}
+
+/// <summary>
+/// Closes out the combat's tally. A separate class only because Harmony resolves one target method per patch class,
+/// and this one is chosen the same careful way - see <see cref="LifecycleTarget.Resolve"/>.
+/// </summary>
+[HarmonyPatch]
+internal static class CombatEndPatch
+{
+    private static MethodBase TargetMethod()
+    {
+        return LifecycleTarget.Resolve("EndCombatInternal");
+    }
+
+    [HarmonyPrefix]
+    private static void EndCombatInternalPrefix()
+    {
+        RunLedger.EndCombat();
     }
 }
