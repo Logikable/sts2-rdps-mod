@@ -64,7 +64,16 @@ internal static class UnpushedSourcePatches
     {
         yield return AccessTools.Method(typeof(HailstormPower), nameof(HailstormPower.BeforeSideTurnEnd));
         yield return AccessTools.Method(typeof(TheBombPower), nameof(TheBombPower.BeforeSideTurnEnd));
-        yield return AccessTools.Method(typeof(OutbreakPower), nameof(OutbreakPower.AfterPowerAmountChanged));
+
+        // Named rather than typed, because 0.110.0 deleted OutbreakPower outright - Outbreak was reworked from a power
+        // that pinged every enemy into a skill that applies Poison and triggers it, which the poison path attributes
+        // instead. A typeof() here would not compile against 0.110.0, and hard-removing it would drop the entry for
+        // 0.107.1, where the power still exists and still needs naming. Missing types resolve to null and are skipped.
+        foreach (MethodBase method in ByName("OutbreakPower", "AfterPowerAmountChanged"))
+        {
+            yield return method;
+        }
+
         yield return AccessTools.Method(typeof(SleightOfFleshPower), nameof(SleightOfFleshPower.AfterPowerAmountChanged));
         yield return AccessTools.Method(typeof(JuggernautPower), nameof(JuggernautPower.AfterBlockGained));
         yield return AccessTools.Method(typeof(NecroMasteryPower), nameof(NecroMasteryPower.AfterCurrentHpChanged));
@@ -78,6 +87,19 @@ internal static class UnpushedSourcePatches
         // helper is private, and the hooks are where the owning player is still in hand.
         yield return AccessTools.Method(typeof(BlackHolePower), nameof(BlackHolePower.AfterCardPlayed));
         yield return AccessTools.Method(typeof(BlackHolePower), nameof(BlackHolePower.AfterStarsGained));
+    }
+
+    /// <summary>
+    /// A power hook resolved by type name, for entries whose type does not exist on every supported game version.
+    /// Yields nothing when the type or the method is absent, so the class binds on whichever versions still have it.
+    /// </summary>
+    private static IEnumerable<MethodBase> ByName(string powerType, string hook)
+    {
+        Type? type = AccessTools.TypeByName($"MegaCrit.Sts2.Core.Models.Powers.{powerType}");
+        if (type != null && AccessTools.Method(type, hook) is { } method)
+        {
+            yield return method;
+        }
     }
 
     [HarmonyPrefix]

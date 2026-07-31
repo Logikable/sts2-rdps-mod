@@ -1,9 +1,53 @@
+using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace RdpsMeter.Patches;
+
+/// <summary>
+/// Opens the poison context at the one place every tick sequence now starts.
+///
+/// Through 0.109.1 poison only ever ticked at turn start, so bracketing AfterSideTurnStart was the same thing as
+/// bracketing the ticks. 0.110.0 lifted the loop into a public Trigger() and left AfterSideTurnStart as a guard that
+/// calls it - and, more to the point, reworked Outbreak from a power into a skill that applies Poison to every enemy
+/// and then calls power.Trigger() on each of them **immediately**. Those ticks never pass through AfterSideTurnStart.
+/// Left alone, the whole payload of a rare 3-cost card would find no open context, fall through to ordinary hit
+/// attribution, and - being a dealer-less unblockable hit - land as nobody's damage.
+///
+/// Patching Trigger covers both routes at once on 0.110.0, and needs no participants guard of its own: the turn-start
+/// route applies that guard before it calls in, and a direct call is unconditional by construction.
+/// </summary>
+[HarmonyPatch]
+internal static class PoisonTriggerPatch
+{
+    internal static MethodInfo? TriggerMethod()
+    {
+        return AccessTools.Method(typeof(PoisonPower), "Trigger");
+    }
+
+    // Older versions have no Trigger; PoisonAttributionPatches below brackets the turn-start hook for them instead.
+    private static bool Prepare()
+    {
+        return TriggerMethod() != null;
+    }
+
+    private static IEnumerable<MethodBase> TargetMethods()
+    {
+        if (TriggerMethod() is { } method)
+        {
+            yield return method;
+        }
+    }
+
+    [HarmonyPrefix]
+    private static void Prefix(PoisonPower __instance)
+    {
+        PoisonAttribution.Begin(__instance);
+    }
+}
 
 /// <summary>
 /// Attributes Poison, which the counterfactual engine cannot see: a poison tick is dealt through CreatureCmd.Damage
@@ -24,6 +68,14 @@ namespace RdpsMeter.Patches;
 [HarmonyPatch(typeof(PoisonPower), nameof(PoisonPower.AfterSideTurnStart))]
 internal static class PoisonAttributionPatches
 {
+    // Only for versions with no Trigger() to bracket. Where both exist this would double-Begin the same sequence -
+    // harmless in effect, since Begin overwrites the context wholesale, but it would mean the turn-start route and the
+    // direct route were bracketed at different depths, and only one of them resets the tick index correctly.
+    private static bool Prepare()
+    {
+        return PoisonTriggerPatch.TriggerMethod() == null;
+    }
+
     [HarmonyPrefix]
     private static void Prefix(PoisonPower __instance, IReadOnlyList<Creature> participants)
     {

@@ -1709,43 +1709,39 @@ internal static class SelfTest
     }
 
     /// <summary>
-    /// The dealer plays Outbreak, then poisons an enemy three times. On the third poison Outbreak deals its amount to
-    /// every enemy with the player as dealer but no card source, from AfterPowerAmountChanged - a non-pushing hook - so
-    /// without a source label it would read "(none)". It must be booked as the player's own aDPS, named "Outbreak".
-    /// The first poison is applied by a teammate (so Outbreak ignores it) so the three owner-applied increments that
-    /// drive the burst are the direct calls, keeping the count exact.
+    /// The reworked Outbreak, which 0.110.0 turned from a power into a skill. It applies Poison to every enemy and
+    /// then calls PoisonPower.Trigger() on each of them immediately, rather than waiting for a turn to start.
+    ///
+    /// That direct call is the whole point of the scenario. Poison damage is dealer-less and unblockable, so it is
+    /// attributed only from the context the mod opens when a tick sequence begins; through 0.109.1 that context was
+    /// bracketed onto AfterSideTurnStart, which this route never touches. Without a bracket on Trigger itself the
+    /// card's entire payload lands as nobody's damage - not merely mislabelled, but absent from the meter.
+    ///
+    /// The poison is applied by a teammate so the credit has somewhere to go other than the dealer, which is what
+    /// makes the failure visible: an unattributed tick would leave applier2's total at zero.
     /// </summary>
     private static async Task<bool> OutbreakScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
     {
         await Prep(dealer, enemy);
-        ulong you = dealer.Player!.NetId;
 
-        await PowerCmd.Apply<OutbreakPower>(ctx, dealer, 11m, dealer, null);
-        await PowerCmd.Apply<PoisonPower>(ctx, enemy, 1m, applier2, null);
-
-        OutbreakPower? outbreak = dealer.GetPower<OutbreakPower>();
+        await PowerCmd.Apply<PoisonPower>(ctx, enemy, 9m, applier2, null);
         PoisonPower? poison = enemy.GetPower<PoisonPower>();
-        if (outbreak != null && poison != null)
+        if (poison == null)
         {
-            for (int i = 0; i < 3; i++)
-            {
-                await outbreak.AfterPowerAmountChanged(ctx, poison, 1m, dealer, null);
-            }
+            GD.Print("[RdpsMeter] Scenario 'Outbreak': FAIL (poison did not apply)");
+            return false;
         }
 
-        // Outbreak bursts every hittable enemy, so its total is 11 per enemy; the point of the check is that the damage
-        // is booked as the player's own and named "Outbreak" (a whole number of 11s), never left as "(none)".
+        LogShares("Poison", poison);
+        GD.Print("[RdpsMeter] Self-test: Outbreak triggers poison directly, off any turn boundary");
+
+        // What the card does: trigger the poison there and then, with no turn starting.
+        await poison.Trigger();
+
         CombatLedger l = CombatLedger.Current;
-        string name = outbreak?.Title.GetFormattedText() ?? "Outbreak";
-        decimal dealt = l.DealtWith(you, name);
-        bool ok = dealt > 0m && dealt % 11m == 0m && l.DealtWith(you, NoCard) == 0m;
-        GD.Print($"[RdpsMeter] Scenario 'Outbreak': {(ok ? "PASS" : "FAIL")}");
-        if (!ok)
-        {
-            GD.Print($"[RdpsMeter]     Outbreak dealt={dealt} (want a positive multiple of 11), unlabeled={l.DealtWith(you, NoCard)}");
-        }
-
-        return ok;
+        return Report("Outbreak (poison triggered off a turn boundary)",
+            Expect("credited to whoever applied the poison", l.DealtWith(2uL, "Poison"), 9m),
+            Expect("nothing left unnamed", l.DealtWith(dealer.Player!.NetId, NoCard), 0m));
     }
 
     /// <summary>
@@ -2510,11 +2506,6 @@ internal static class SelfTest
         if (enemy.GetPower<StranglePower>() != null)
         {
             await PowerCmd.Remove<StranglePower>(enemy);
-        }
-
-        if (dealer.GetPower<OutbreakPower>() != null)
-        {
-            await PowerCmd.Remove<OutbreakPower>(dealer);
         }
 
         if (dealer.GetPower<DexterityPower>() != null)
