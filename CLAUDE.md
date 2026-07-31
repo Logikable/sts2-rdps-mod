@@ -353,3 +353,30 @@ diff -rq out-<old> out-<new>
 multiplayer card 0.108.0 added. A patch release often touches only the `.pck`,
 leaving the managed assembly identical apart from the commit hash in
 `AssemblyInfo.cs`; that diff says so in seconds and no rebuild is needed.
+
+Read `Only in` lines as carefully as `Files … differ`. A deleted model is a
+compile error you will find anyway, but a **renamed or reworked** one is not:
+0.110.0 deleted `OutbreakPower` and rebuilt Outbreak as a skill that applies
+Poison and triggers it, so the mod compiled fine against everything it still
+referenced while the card's whole payload stopped being attributed. Diff the
+`Models.Cards`/`Powers`/`Relics` folders for `CreatureCmd.Damage`, `GainBlock`
+and `PowerCmd.Apply` lines specifically — those three are what the meter reads.
+
+**The three checks do not cover the fourth failure: a method that still binds
+but is no longer the one that runs.** 0.110.0 moved CombatManager's per-combat
+fields into a `CombatTurnState` and gave `StartCombatInternal` /
+`EndCombatInternal` private overloads taking one. `EndCombatInternal` kept its
+old public no-argument signature as a *wrapper*, so `nameof` still resolved and
+the verifier still said ok — but the ordinary end of a fight runs
+`CheckWinCondition -> EndCombatInternal(turnState)` and never touches the
+wrapper. The meter would have stopped closing out combats with every check
+green. When a diff shows a method gaining an overload, ask which one the
+*callers* use, and bind to the one they funnel through
+(`LifecycleTarget.Resolve`). A rebuild cannot see this and neither can the
+binding verifier; only reading the call sites can.
+
+The verifier resolves the game assembly's own dependencies out of `lib/` by
+name, so when the game picks up a new one (0.110.0 added Sentry) the fix is to
+drop that dll in beside `sts2.dll` — it is gitignored like the rest. Without it
+every patch reports as failed at once, which looks like catastrophe and is
+actually a missing file.
