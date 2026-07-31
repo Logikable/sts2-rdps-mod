@@ -33,10 +33,25 @@ Dictionary<string, string> byName = new(StringComparer.OrdinalIgnoreCase)
     ["0Harmony"] = Path.Combine(libDir, "0Harmony.dll"),
 };
 
+// Anything else the game assembly drags in is resolved by name out of libDir. 0.110.0 made sts2 reference Sentry, and
+// with only the three names above mapped, reflecting over the mod's types threw for every patch - reported as 22
+// binding failures that looked exactly like a real break. The dependency is the game's, not the mod's, so the fix is
+// to load whatever is sitting beside sts2.dll rather than to enumerate its dependencies here and be wrong again next
+// update. A name with no dll in libDir still resolves to null, which is the honest answer.
 AssemblyLoadContext.Default.Resolving += (context, name) =>
-    name.Name is { } simpleName && byName.TryGetValue(simpleName, out string? path) && File.Exists(path)
-        ? context.LoadFromAssemblyPath(path)
-        : null;
+{
+    if (name.Name is not { } simpleName)
+    {
+        return null;
+    }
+
+    if (!byName.TryGetValue(simpleName, out string? path))
+    {
+        path = Path.Combine(libDir, $"{simpleName}.dll");
+    }
+
+    return File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
+};
 
 Console.WriteLine($"Verifying {Path.GetFileName(modPath)} against {Path.GetFileName(sts2Path)}");
 

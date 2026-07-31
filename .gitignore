@@ -9,3 +9,8 @@ dist/
 # Includes version-suffixed copies kept for cross-version API comparison.
 lib/sts2.dll
 lib/sts2-*.dll
+
+# Copied out of the game install beside sts2.dll. 0.110.0 made the game assembly reference Sentry, so the binding
+# verifier cannot reflect over it without these present; nothing the mod itself compiles against. Not ours to ship.
+lib/Sentry.dll
+lib/Sentry.Godot.dll
