@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.21 - damage from the Regent's Black Hole is now credited to Black Hole instead of landing in the unnamed \"(none)\" row. The power deals its damage in a way that hid which card was behind it, so every star you spent showed up in your total but none of it could be traced to the card that earned it. Rows that were already correct are unchanged. Prompted by that report, every damage-dealing power, relic, orb and card in the game was re-checked for the same problem: Black Hole was the only one still affected, and the tool that does the checking was widened so the two ways it could have missed this cannot hide a source again. Checked against game v0.109.1.",
+  "changeNote": "0.1.22 - compatibility with game v0.110.0. Update to this if you have updated the game: on v0.110.0 the previous release fails to load at all, so the meter does not appear. That is fixed, and fights are recorded again. The reworked Outbreak is also handled. It is now a skill that poisons every enemy and triggers that poison on the spot, which is a route the meter did not watch - its damage was not merely unlabelled but missing from your totals entirely, and it is now credited to whoever applied the poison. Haze, Mirage and the renamed Sidestep were checked against the same paths and needed no change; runs you have already saved are unaffected. Still works on game v0.107.1 and later.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
