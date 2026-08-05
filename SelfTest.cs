@@ -125,6 +125,7 @@ internal static class SelfTest
         all &= await BlockProRataScenario(context, dealer, enemy, applier2, applier3);
         all &= await BlockFourPlayerScenario(context, dealer, enemy, applier2, applier3, applier4);
         all &= await BlockReconcileScenario(context, dealer, enemy);
+        all &= await OstyAbsorptionScenario(context, dealer, enemy);
         all &= await BlockedMeterScenario();
         all &= await EmptyTitleScenario();
         all &= await MinimizeScenario();
@@ -946,6 +947,69 @@ internal static class SelfTest
             Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
 
         return trimmed && padded;
+    }
+
+    /// <summary>
+    /// Osty soaking a hit reads on the Blocked meter, under the game's own name for it.
+    ///
+    /// Summon is the Necrobinder's Defend, so the damage their pet eats in their place belongs on the same meter the
+    /// rest of the party's block does. It arrives by a different road, though - a redirect in the damage funnel rather
+    /// than a block pool - so none of the block scenarios above say anything about it.
+    ///
+    /// Three phases, in an order that lets one summon prove all three:
+    ///
+    ///  - The negative control comes first, while Osty is at full health: an unpowered hit is not an attack, so the
+    ///    game does not divert it. It must reach the player and leave both Osty and the meter untouched. Without this,
+    ///    a patch that credited Osty with every hit the player took would pass the rest of the scenario.
+    ///  - Then a real attack, which Osty takes instead of the player.
+    ///  - Then one bigger than Osty is left, which is where the interesting arithmetic is: only the HP Osty actually
+    ///    had counts as mitigation, and the excess goes through to the player exactly as if Osty had not been there.
+    /// </summary>
+    private static async Task<bool> OstyAbsorptionScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CombatLedger l = CombatLedger.Current;
+
+        await OstyCmd.Summon(ctx, dealer.Player!, 6m, null);
+        Creature osty = dealer.Player!.Osty!;
+        string expected = osty.Monster!.Title.GetFormattedText();
+        int summoned = osty.CurrentHp;
+
+        // Logged because the assertions below cannot see it: they compare the meter against this same expression, so a
+        // lookup that returned the raw loc key - or the id fallback - would agree with itself and pass. The row's name
+        // is the half of this feature a player actually reads, so print what it resolved to.
+        GD.Print($"[RdpsMeter] Self-test: Osty row will be named '{expected}'");
+
+        // Not an attack: no Move flag, so IsPoweredAttack is false and the funnel never consults Osty.
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 3m, DamageProps.nonCardUnpowered, enemy, null, null);
+        decimal creditedForUnpowered = l.BlockedWith(you, expected);
+        int ostyAfterUnpowered = osty.CurrentHp;
+        int hpAfterUnpowered = dealer.CurrentHp;
+
+        // An attack, and smaller than Osty: all of it is diverted.
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+        decimal creditedForAbsorbed = l.BlockedWith(you, expected);
+        int ostyAfterAbsorbed = osty.CurrentHp;
+        int hpAfterAbsorbed = dealer.CurrentHp;
+
+        // An attack bigger than the 2 HP Osty has left: 2 is mitigation, the other 7 lands on the player.
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 9m, DamageProps.card, enemy, null, null);
+        decimal creditedAfterOverrun = l.BlockedWith(you, expected);
+        int hpAfterOverrun = dealer.CurrentHp;
+
+        return Report("Osty absorbing damage (Blocked meter)",
+            Expect("Summon 6 puts 6 HP on Osty", summoned, 6m),
+            Expect("an unpowered hit is not diverted", creditedForUnpowered, 0m),
+            Expect("so Osty is untouched by it", ostyAfterUnpowered, 6m),
+            Expect("and the player takes it", hpAfterUnpowered, dealer.MaxHp - 3),
+            Expect("an attack is credited to Osty", creditedForAbsorbed, 4m),
+            Expect("Osty is what lost the HP", ostyAfterAbsorbed, 2m),
+            Expect("so the player takes none of it", hpAfterAbsorbed, hpAfterUnpowered),
+            Expect("only the HP Osty had counts", creditedAfterOverrun, 6m),
+            Expect("and the overkill reaches the player", hpAfterOverrun, hpAfterAbsorbed - 7),
+            Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
+            Expect("and none of it lands as damage dealt", l.DealtWith(you, expected), 0m));
     }
 
     /// <summary>

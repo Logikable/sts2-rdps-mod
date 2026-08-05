@@ -278,6 +278,41 @@ Dexterity is pooled the way Strength is: every source stacks into one
 `DexterityPower`, so `PowerOwnershipPatches.GrantedBy` records what granted each
 share and the meter can say "Dexterity Potion" instead of "Dexterity".
 
+## The Blocked meter is mitigation, not only block
+
+Osty feeds it too. Summon is the Necrobinder's Defend, so damage their pet eats
+in their place is booked on the Blocked meter under the pet's name — and a
+Necrobinder who summons instead of blocking would otherwise read as having
+mitigated nothing. Nothing above applies to it: there is no pool and no
+attribution, because the mechanic is a **redirect**, not a gain.
+
+`OstyCmd.Summon` sets the pet's max HP and hangs `DieForYouPower` on it. That
+power overrides `ModifyUnblockedDamageTarget`, so in the damage funnel — *after*
+the owner's block has already been spent — the unblocked remainder is retargeted
+from the owner onto the pet. Three things follow, all the game's rules:
+
+- **Attacks only.** The redirect is gated on `props.IsPoweredAttack()`
+  (`ValueProp.Move` and not `Unpowered`), so poison, burn and every other
+  non-attack HP loss goes straight through to the owner.
+- **Only what the pet actually had counts.** `LoseHpInternal` reports the HP it
+  really lost as `UnblockedDamage` and the rest as `OverkillDamage`, which the
+  funnel then deals to the owner for real. Same line the damage side draws, and
+  for the same reason: mitigation the pet was never big enough to provide is not
+  mitigation.
+- **Only *redirected* damage counts.** A pet sits in `CombatState.Allies`, so an
+  enemy sweep across the side hits it as a target in its own right — damage that
+  was never headed for the owner's HP. Keying off the redirect excludes that by
+  construction rather than by a list of exceptions, and excludes a pet the owner
+  spends deliberately (Sacrifice) for free.
+
+Two patches, because no single point knows both facts:
+`ModifyUnblockedDamageTarget` knows a redirect happened but not what it will be
+worth, `LoseHpInternal` knows what was absorbed but not who for. The row's name
+comes from the game's own `MonsterModel.Title`, so it reads "Osty" without the
+mod shipping the word and reads correctly in every other locale — the same route
+card rows already take. A test cannot check that name by comparing against the
+same expression, which is why the scenario prints what it resolved to.
+
 ## When a row says "(none)"
 
 Damage with a real dealer but no card is named from the game's executing-model
