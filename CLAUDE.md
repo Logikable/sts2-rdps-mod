@@ -381,13 +381,25 @@ Harmony targets), and diff full decompiles of the old and new assemblies —
 
 ```
 ilspycmd -p -o out-<ver> -r lib lib/sts2-<ver>.dll   # ~40s for a 9 MB assembly
-diff -rq out-<old> out-<new>
+tools/decompile-diff.sh out-<old> out-<new>          # which files differ
+tools/decompile-diff.sh out-<old> out-<new> <file>   # what actually changed in one
 ```
 
 — which is the only one that catches *behavioural* changes, like the new
 multiplayer card 0.108.0 added. A patch release often touches only the `.pck`,
 leaving the managed assembly identical apart from the commit hash in
 `AssemblyInfo.cs`; that diff says so in seconds and no rebuild is needed.
+
+Use the script rather than a plain `diff` on a single file. **ilspy renumbers
+every compiler-generated name after the point of a change** — async state
+machines and lambda display classes are `_003C…__DisplayClass21_0` and become
+`22_0` when anything earlier shifts — and it emits `//IL_` offset comments that
+move with them. One new field therefore produces hundreds of diff lines with no
+behaviour in them, which is exactly the condition under which a real change in
+the next file gets skimmed past. 0.110.1 is the case: `AutoSlayer.cs` read as a
+rewrite and was a single added `bool`. The filter is blunt on purpose and drops
+whole lines mentioning generated names, so it narrows the question rather than
+answering it — when a file matters, read it.
 
 Read `Only in` lines as carefully as `Files … differ`. A deleted model is a
 compile error you will find anyway, but a **renamed or reworked** one is not:
