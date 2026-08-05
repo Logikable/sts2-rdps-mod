@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.22 - compatibility with game v0.110.0. Update to this if you have updated the game: on v0.110.0 the previous release fails to load at all, so the meter does not appear. That is fixed, and fights are recorded again. The reworked Outbreak is also handled. It is now a skill that poisons every enemy and triggers that poison on the spot, which is a route the meter did not watch - its damage was not merely unlabelled but missing from your totals entirely, and it is now credited to whoever applied the poison. Haze, Mirage and the renamed Sidestep were checked against the same paths and needed no change; runs you have already saved are unaffected. Still works on game v0.107.1 and later.",
+  "changeNote": "0.1.23 - the Necrobinder's Osty now counts on the Blocked tab. Damage Osty takes in your place is booked under a row named Osty, because Summon is the Necrobinder's Defend and a fight spent summoning rather than blocking should not read as having stopped nothing. Two limits, both deliberate. Only what Osty actually had to give counts: a hit bigger than Osty books what it absorbed, and the excess that carries on through to you does not, the same way overkill has never counted as damage dealt. And only damage diverted off you counts - an enemy that attacks Osty directly was never going to hit you, so crediting it would pad the number. Also checked against game v0.110.1, which needed no changes. Still works on game v0.107.1 and later.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
