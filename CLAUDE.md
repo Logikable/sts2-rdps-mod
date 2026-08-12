@@ -372,6 +372,56 @@ draw-triggered effect grants block or Strength today, so the two orderings do no
 currently collide; a game update that adds one would need this thought through
 again.
 
+## One modifier can be several models' work
+
+The counterfactual engine credits a buff by removing it from the modifier list
+and re-running the pipeline, so it can only credit what the list *mentions*. The
+list is built by `Hook.ModifyDamageInternal` from the models whose own
+`ModifyDamage*` returned a non-identity value — which means a model that changes
+damage without being a listener is invisible to attribution, and its work is
+silently folded into whichever listener consulted it.
+
+Vulnerable is the case. `VulnerablePower.ModifyDamageMultiplicative` starts from
+its own `DamageIncrease` (1.5) and then hands the running value to three models
+that are not listeners, in this order: the dealer's **Paper Phrog** relic
+(`+0.25`), the dealer's **Cruelty** (`+Amount/100`), and the target's
+**Debilitate**, which doubles whatever bonus has accumulated (`amount +
+(amount - 1)`). All four arrive as one number under `VulnerablePower`, so the
+whole stack used to be credited to whoever applied Vulnerable and a teammate who
+spent a card on Debilitate was credited nothing.
+
+Note the order: Phrog and Cruelty are additive *on the bonus* (0.5 → 0.75 → 1.0),
+and Debilitate doubles the total after them (→ 2.0). So Debilitate is worth more
+on a dealer wearing Phrog, and the counterfactual measures that by construction
+rather than by a synergy rule written anywhere.
+
+`VulnerableBoosts` puts Debilitate and Cruelty back into the list so they become
+ordinary credit candidates. **The exclusion is a Harmony prefix on their
+`ModifyVulnerableMultiplier`, not a reimplementation of Vulnerable's formula**,
+and that is the whole design. A mirror of the arithmetic would reproduce today's
+numbers and then go quietly wrong the first time the game adds a fourth booster
+or reorders the three — wrong in the direction that still looks right, since
+every row would keep summing to the correct total. Letting the game's own method
+run with one participant switched off cannot drift: a booster we don't know
+about stays folded into Vulnerable's share, which is the behaviour that already
+shipped, not a confident lie.
+
+Paper Phrog is deliberately *not* a candidate. It is a `RelicModel` read off
+`dealer.Player`, so it is always the dealer's own and there is nobody else to
+credit — same reason a self-cast Cruelty is filtered out by the existing
+"shares that are all the dealer's" test. Both still participate in every
+counterfactual, which is what makes the teammate's Vulnerable credit *larger*
+when the dealer is amplifying it. That is the engine's rule everywhere (a buff
+is worth the damage it actually enabled), not a Vulnerable special case.
+
+Weak has the identical shape — `WeakPower` folds in **Paper Krane** and
+Debilitate's `ModifyWeakMultiplier` — and needs nothing, twice over: Krane is
+read off `target.Player`, and the meter never books damage aimed at a player,
+while Debilitate's Weak arm needs the power on the *dealer*, which only happens
+to an enemy. `CoveredPower` reads other models elsewhere in its file but its
+damage hook is self-contained. Those three are the whole class as of 0.110.1;
+`grep -rn "public decimal Modify.*Multiplier"` over a decompile re-derives it.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three

@@ -45,6 +45,12 @@ internal sealed class HitAttribution
 /// cap) restricted to the participating modifier list. Non-participating listeners are identity operations, so the
 /// restricted pipeline reproduces the game's result exactly - see <see cref="Recompute"/>, whose no-exclusion output
 /// equals the final damage.
+///
+/// One modifier is not one model's work. Vulnerable's multiplier folds in up to three other models before it returns,
+/// none of which is a listener and so none of which the game's modifier list mentions; <see cref="VulnerableBoosts"/>
+/// puts them back in the list and makes them excludable, so Debilitate is credited to the player who played it rather
+/// than to whoever applied Vulnerable. Every other rule here applies to them unchanged - including the one that keeps
+/// the dealer's own contributions with the dealer, which is what filters out a Cruelty cast on oneself.
 /// </summary>
 internal static class AttributionEngine
 {
@@ -62,9 +68,13 @@ internal static class AttributionEngine
         CardModel? cardSource,
         CardPlay? cardPlay,
         ModifyDamageHookType flags,
-        IReadOnlyList<AbstractModel> modifiers,
+        IReadOnlyList<AbstractModel> gameModifiers,
         decimal finalResult)
     {
+        // Vulnerable arrives as a single modifier carrying up to four models' work; augment the list with the hidden
+        // boosters so each can be excluded, and credited, on its own.
+        IReadOnlyList<AbstractModel> modifiers = VulnerableBoosts.Augment(gameModifiers, target, dealer);
+
         ulong? dealerNetId = dealer?.Player?.NetId ?? cardSource?.Owner?.NetId;
         // The card's human-readable title, without the upgrade marker, so "Anger" and "Anger+" share one row (Title
         // appends a "+"/"+N"; TitleLocString is the bare name). A hit with no card is a potion or a damaging
@@ -172,6 +182,31 @@ internal static class AttributionEngine
     /// With an empty exclusion set the result equals Hook.ModifyDamage's return value.
     /// </summary>
     public static decimal Recompute(
+        decimal baseAmount,
+        ValueProp props,
+        Creature? target,
+        Creature? dealer,
+        CardModel? cardSource,
+        CardPlay? cardPlay,
+        ModifyDamageHookType flags,
+        IReadOnlyList<AbstractModel> modifiers,
+        ISet<AbstractModel> exclude)
+    {
+        // A hidden Vulnerable booster cannot be skipped by leaving it out of the loop below - it is not a listener,
+        // and the game reads it from inside VulnerablePower's own multiplier. Suppressing it for the span of the
+        // replay is how an excluded one is removed; the finally is what stops that leaking onto real damage.
+        VulnerableBoosts.Begin(exclude);
+        try
+        {
+            return RecomputeInternal(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, exclude);
+        }
+        finally
+        {
+            VulnerableBoosts.End();
+        }
+    }
+
+    private static decimal RecomputeInternal(
         decimal baseAmount,
         ValueProp props,
         Creature? target,

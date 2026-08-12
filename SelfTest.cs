@@ -105,6 +105,7 @@ internal static class SelfTest
         all &= ArchivedRunScenario(dealer);
         all &= await MeterModeScenario();
         all &= await VulnerableScenario(context, dealer, enemy, applier2, applier3);
+        all &= await DebilitateScenario(context, dealer, enemy, applier2, applier3);
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
@@ -175,6 +176,119 @@ internal static class SelfTest
             Expect("recv <-3", l.ReceivedFrom(you, "Vulnerable", 3uL), 1m),
             Expect("given 2->you", l.GivenTo(2uL, "Vulnerable", you), 2m),
             Expect("given 3->you", l.GivenTo(3uL, "Vulnerable", you), 1m));
+    }
+
+    /// <summary>
+    /// Vulnerable's multiplier is four models' work, and each has to land on the right row. One teammate applies
+    /// Vulnerable, the dealer wears Paper Phrog and casts Cruelty on themselves, and a second teammate plays
+    /// Debilitate; every phase swings a powered 12 so the damage total reads the multiplier directly.
+    ///
+    /// The five phases build the stack one model at a time, so a wrong number names its own cause:
+    ///
+    ///   1. Vulnerable alone          x1.5   -> 18   control: no Debilitate row exists yet
+    ///   2. + Paper Phrog             x1.75  -> 21   the relic's +0.25
+    ///   3. + Cruelty 25              x2.0   -> 24   +0.25 more, so Phrog and Cruelty are additive on the bonus
+    ///   4. + Debilitate              x3.0   -> 36   Debilitate doubles the *accumulated* bonus (1.0 -> 2.0)
+    ///   5. Vulnerable + Debilitate   x2.0   -> 24   with the relic and Cruelty gone again
+    ///
+    /// Phase 4 is the bug this was written for: Debilitate reaches damage only from inside VulnerablePower's own
+    /// multiplier, never as a listener of its own, so the whole x3.0 used to be credited to whoever applied
+    /// Vulnerable and the player who spent a card on Debilitate was credited nothing. Phases 1 and 5 bracket it as
+    /// negative controls - before the card is played there is no Debilitate row, and after the relic and Cruelty come
+    /// off the credit drops back to the unamplified split rather than staying high.
+    ///
+    /// Comparing phase 4's Debilitate credit (8) against phase 5's (4) is the synergy check: the same card doubling
+    /// the same Vulnerable is worth twice as much when the dealer's own Phrog and Cruelty have already inflated the
+    /// bonus it doubles. Cruelty is cast on oneself, so it stays in the dealer's own share and must never appear as a
+    /// credited row - which is what makes phase 3's split (all 12 to the Vulnerable applier, none to the dealer's own
+    /// Cruelty) the check that it is filtered rather than merely absent.
+    /// </summary>
+    private static async Task<bool> DebilitateScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        ulong you = dealer.Player!.NetId;
+        var phrog = (PaperPhrog)ModelDb.Relic<PaperPhrog>().MutableClone();
+        bool worn = false;
+
+        try
+        {
+            // 1. Vulnerable alone: x1.5, all 6 of the bonus to the applier, and no Debilitate row anywhere.
+            await Prep(dealer, enemy);
+            await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, applier2, null);
+            await CreatureCmd.Damage(ctx, new[] { enemy }, 12m, DamageProps.card, dealer, null, null);
+            CombatLedger l1 = CombatLedger.Current;
+            bool ok = Report("Debilitate 1/5 (Vulnerable alone)",
+                Expect("aDPS", l1.DealtWith(you, NoCard), 18m),
+                Expect("recv Vulnerable <-2", l1.ReceivedFrom(you, "Vulnerable", 2uL), 6m),
+                Expect("no Debilitate row", l1.ReceivedFrom(you, "Debilitate", 3uL), 0m));
+
+            // 2. Paper Phrog on the dealer: x1.75. The relic belongs to the dealer, so nothing new is credited - it
+            // enlarges what the teammate's Vulnerable was worth, from 6 to 9.
+            await Prep(dealer, enemy);
+            dealer.Player!.AddRelicInternal(phrog, -1, silent: true);
+            worn = true;
+            await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, applier2, null);
+            await CreatureCmd.Damage(ctx, new[] { enemy }, 12m, DamageProps.card, dealer, null, null);
+            CombatLedger l2 = CombatLedger.Current;
+            ok &= Report("Debilitate 2/5 (+ Paper Phrog)",
+                Expect("aDPS", l2.DealtWith(you, NoCard), 21m),
+                Expect("recv Vulnerable <-2", l2.ReceivedFrom(you, "Vulnerable", 2uL), 9m),
+                Expect("no Debilitate row", l2.ReceivedFrom(you, "Debilitate", 3uL), 0m));
+
+            // 3. Cruelty 25 on the dealer, cast on themselves: x2.0. +0.25 on top of Phrog's +0.25 rather than a
+            // second multiplication, and credited to nobody but the dealer.
+            await Prep(dealer, enemy);
+            await PowerCmd.Apply<CrueltyPower>(ctx, dealer, 25m, dealer, null);
+            await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, applier2, null);
+            await CreatureCmd.Damage(ctx, new[] { enemy }, 12m, DamageProps.card, dealer, null, null);
+            CombatLedger l3 = CombatLedger.Current;
+            ok &= Report("Debilitate 3/5 (+ Cruelty, additive)",
+                Expect("aDPS", l3.DealtWith(you, NoCard), 24m),
+                Expect("recv Vulnerable <-2", l3.ReceivedFrom(you, "Vulnerable", 2uL), 12m),
+                Expect("own Cruelty not credited", l3.ReceivedFrom(you, "Cruelty", you), 0m),
+                Expect("Cruelty not credited to 2", l3.ReceivedFrom(you, "Cruelty", 2uL), 0m));
+
+            // 4. A second teammate plays Debilitate: x3.0. The doubling is worth 12 raw against Vulnerable's 24, and
+            // the engine's conservation factor splits the 24 of external gain 16/8.
+            await Prep(dealer, enemy);
+            await PowerCmd.Apply<CrueltyPower>(ctx, dealer, 25m, dealer, null);
+            await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, applier2, null);
+            await PowerCmd.Apply<DebilitatePower>(ctx, enemy, 2m, applier3, null);
+            LogShares("Debilitate", enemy.GetPower<DebilitatePower>());
+            await CreatureCmd.Damage(ctx, new[] { enemy }, 12m, DamageProps.card, dealer, null, null);
+            CombatLedger l4 = CombatLedger.Current;
+            ok &= Report("Debilitate 4/5 (credited, amplified)",
+                Expect("aDPS", l4.DealtWith(you, NoCard), 36m),
+                Expect("recv Vulnerable <-2", l4.ReceivedFrom(you, "Vulnerable", 2uL), 16m),
+                Expect("recv Debilitate <-3", l4.ReceivedFrom(you, "Debilitate", 3uL), 8m),
+                Expect("given 3->you", l4.GivenTo(3uL, "Debilitate", you), 8m),
+                Expect("own Cruelty not credited", l4.ReceivedFrom(you, "Cruelty", you), 0m));
+
+            // 5. Same two teammates, no relic and no Cruelty: x2.0. Debilitate is still credited, but half of what it
+            // was worth in phase 4 - the amplification came off with the relic rather than sticking to the row.
+            await Prep(dealer, enemy);
+            dealer.Player!.RemoveRelicInternal(phrog, silent: true);
+            worn = false;
+            await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, applier2, null);
+            await PowerCmd.Apply<DebilitatePower>(ctx, enemy, 2m, applier3, null);
+            await CreatureCmd.Damage(ctx, new[] { enemy }, 12m, DamageProps.card, dealer, null, null);
+            CombatLedger l5 = CombatLedger.Current;
+            ok &= Report("Debilitate 5/5 (unamplified)",
+                Expect("aDPS", l5.DealtWith(you, NoCard), 24m),
+                Expect("recv Vulnerable <-2", l5.ReceivedFrom(you, "Vulnerable", 2uL), 8m),
+                Expect("recv Debilitate <-3", l5.ReceivedFrom(you, "Debilitate", 3uL), 4m));
+
+            return ok;
+        }
+        finally
+        {
+            // A scenario that fails partway must not leave the player permanently wearing a relic the harness made
+            // up - F9 runs these against a real run.
+            if (worn)
+            {
+                dealer.Player!.RemoveRelicInternal(phrog, silent: true);
+            }
+        }
     }
 
     /// <summary>
@@ -2522,6 +2636,19 @@ internal static class SelfTest
         if (enemy.GetPower<FlankingPower>() != null)
         {
             await PowerCmd.Remove<FlankingPower>(enemy);
+        }
+
+        // Both boost Vulnerable's multiplier from outside it, so either one left standing silently inflates every
+        // later scenario that applies Vulnerable - and inflates it by an amount that still adds up, which is the kind
+        // of leak that reads as a real attribution bug in whichever scenario runs next.
+        if (enemy.GetPower<DebilitatePower>() != null)
+        {
+            await PowerCmd.Remove<DebilitatePower>(enemy);
+        }
+
+        if (dealer.GetPower<CrueltyPower>() != null)
+        {
+            await PowerCmd.Remove<CrueltyPower>(dealer);
         }
 
         // The temporary-strength powers are cleared too, not just the StrengthPower they grant: one left on the dealer
