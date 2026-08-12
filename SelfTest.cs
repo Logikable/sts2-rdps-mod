@@ -127,6 +127,7 @@ internal static class SelfTest
         all &= await BlockFourPlayerScenario(context, dealer, enemy, applier2, applier3, applier4);
         all &= await BlockReconcileScenario(context, dealer, enemy);
         all &= await OstyAbsorptionScenario(context, dealer, enemy);
+        all &= await LegionOfBoneScenario(context, dealer, enemy, applier2, applier3);
         all &= await BlockedMeterScenario();
         all &= await EmptyTitleScenario();
         all &= await MinimizeScenario();
@@ -1124,6 +1125,113 @@ internal static class SelfTest
             Expect("and the overkill reaches the player", hpAfterOverrun, hpAfterAbsorbed - 7),
             Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
             Expect("and none of it lands as damage dealt", l.DealtWith(you, expected), 0m));
+    }
+
+    /// <summary>
+    /// An Osty can be built out of somebody else's cards, and the mitigation belongs to whoever paid for it.
+    ///
+    /// Legion of Bone summons onto every living ally, so a Necrobinder can spend a card putting 6 HP in front of a
+    /// teammate; Bone Brew does the same one ally at a time, from a potion. Before this, every point that Osty then
+    /// soaked was credited to the player standing behind it, and the Necrobinder who bought the pet read as having
+    /// mitigated nothing.
+    ///
+    /// The real card cannot be played here - it iterates CombatState.PlayerCreatures, and the harness has one real
+    /// player - so each phase makes the same call Legion of Bone makes for a teammate: summon onto the dealer, from a
+    /// card owned by a detached fake player. That is the whole cross-player path; the loop around it is the game's.
+    ///
+    /// Every phase swings 8 or less into an Osty with more HP than that, so the hit is always fully absorbed and the
+    /// split is the only thing under test - the absorb arithmetic itself is OstyAbsorptionScenario's job. Prep clears
+    /// the pool between phases, so each one's shares are its own summons and nothing else.
+    ///
+    ///   1. dealer 8                      -> all 4 to the dealer      control: no teammate row exists
+    ///   2. teammate 8                    -> all 4 to the teammate    the reported case, at its extreme
+    ///   3. dealer 6 + teammate 6         -> 4 / 4                    an even split
+    ///   4. dealer 6 + t2 6 + t3 12       -> 2 / 2 / 4                uneven, three ways, not just "halve it"
+    ///   5. teammate's potion 8           -> all 4 to the teammate     Bone Brew, the other member of the class
+    ///
+    /// Phase 4 is what separates pro-rata from anything simpler: a 1:1:2 funding split has to come back 1:1:2, which
+    /// neither "the last summoner takes it" nor an even three-way split would produce. Phase 1 is the negative
+    /// control - with only the dealer's own summons in the pool, a teammate row must not appear at all.
+    /// </summary>
+    private static async Task<bool> LegionOfBoneScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        ulong you = dealer.Player!.NetId;
+
+        // 1. Only the dealer's own summons in the pool.
+        await Prep(dealer, enemy);
+        await OstyCmd.Summon(ctx, dealer.Player!, 8m, CardOwnedBy(dealer));
+        Creature osty = dealer.Player!.Osty!;
+        string osty1 = osty.Monster!.Title.GetFormattedText();
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+        CombatLedger l1 = CombatLedger.Current;
+        bool ok = Report("Legion of Bone 1/5 (dealer-funded control)",
+            Expect("mitigated 4", l1.BlockedWith(you, osty1), 4m),
+            Expect("all of it the dealer's", l1.RBlockOf(you), 4m),
+            Expect("no teammate row", l1.RBlockOf(2uL), 0m),
+            Expect("nothing given by 2", l1.BlockGivenTo(2uL, osty1, you), 0m));
+
+        // 2. The reported case: the pet is entirely a teammate's Legion of Bone.
+        await Prep(dealer, enemy);
+        await OstyCmd.Summon(ctx, dealer.Player!, 8m, CardOwnedBy(applier2));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+        CombatLedger l2 = CombatLedger.Current;
+        ok &= Report("Legion of Bone 2/5 (teammate-funded)",
+            Expect("still mitigated 4", l2.BlockedWith(you, osty1), 4m),
+            Expect("credited to the summoner", l2.RBlockOf(2uL), 4m),
+            Expect("given 2->you", l2.BlockGivenTo(2uL, osty1, you), 4m),
+            Expect("and none to the dealer", l2.RBlockOf(you), 0m));
+
+        // 3. Half each.
+        await Prep(dealer, enemy);
+        await OstyCmd.Summon(ctx, dealer.Player!, 6m, CardOwnedBy(dealer));
+        await OstyCmd.Summon(ctx, dealer.Player!, 6m, CardOwnedBy(applier2));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+        CombatLedger l3 = CombatLedger.Current;
+        ok &= Report("Legion of Bone 3/5 (even split)",
+            Expect("mitigated 8", l3.BlockedWith(you, osty1), 8m),
+            Expect("dealer half", l3.RBlockOf(you), 4m),
+            Expect("teammate half", l3.RBlockOf(2uL), 4m));
+
+        // 4. 6:6:12 in, so 1:1:2 out.
+        await Prep(dealer, enemy);
+        await OstyCmd.Summon(ctx, dealer.Player!, 6m, CardOwnedBy(dealer));
+        await OstyCmd.Summon(ctx, dealer.Player!, 6m, CardOwnedBy(applier2));
+        await OstyCmd.Summon(ctx, dealer.Player!, 12m, CardOwnedBy(applier3));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+        CombatLedger l4 = CombatLedger.Current;
+        ok &= Report("Legion of Bone 4/5 (pro-rata, three ways)",
+            Expect("mitigated 8", l4.BlockedWith(you, osty1), 8m),
+            Expect("dealer quarter", l4.RBlockOf(you), 2m),
+            Expect("2 quarter", l4.RBlockOf(2uL), 2m),
+            Expect("3 half", l4.RBlockOf(3uL), 4m),
+            Expect("given 3->you", l4.BlockGivenTo(3uL, osty1, you), 4m));
+
+        // 5. Bone Brew thrown at the dealer. PotionModel.Owner is the thrower, so unlike the block funnel there is
+        // nothing to reconstruct - but it is a different branch of the resolver and a different member of the class.
+        await Prep(dealer, enemy);
+        var brew = (BoneBrew)ModelDb.Potion<BoneBrew>().MutableClone();
+        brew.Owner = applier2.Player!;
+        await OstyCmd.Summon(ctx, dealer.Player!, 8m, brew);
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+        CombatLedger l5 = CombatLedger.Current;
+        ok &= Report("Legion of Bone 5/5 (Bone Brew thrown at an ally)",
+            Expect("mitigated 4", l5.BlockedWith(you, osty1), 4m),
+            Expect("credited to the thrower", l5.RBlockOf(2uL), 4m),
+            Expect("and none to the drinker", l5.RBlockOf(you), 0m));
+
+        return ok;
+    }
+
+    /// <summary>
+    /// A fresh Legion of Bone belonging to the given creature's player. A new clone each time because CardModel.Owner
+    /// refuses to be reassigned once set, and the point of the scenario is that different players own the summons.
+    /// </summary>
+    private static CardModel CardOwnedBy(Creature owner)
+    {
+        var card = (LegionOfBone)ModelDb.Card<LegionOfBone>().MutableClone();
+        card.Owner = owner.Player!;
+        return card;
     }
 
     /// <summary>

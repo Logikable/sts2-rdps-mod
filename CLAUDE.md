@@ -313,6 +313,37 @@ mod shipping the word and reads correctly in every other locale — the same rou
 card rows already take. A test cannot check that name by comparing against the
 same expression, which is why the scenario prints what it resolved to.
 
+**The pet may not be the owner's own work.** `Legion of Bone` summons onto every
+living ally at once, and `Bone Brew` is a targeted potion that can be thrown at a
+teammate — so the Osty in front of you can be made largely of somebody else's
+cards, and crediting the owner would read as the Necrobinder having mitigated
+nothing. Same shape as Beacon of Hope, and fixed the same way: credit who paid.
+
+`OstyCmd.Summon(ctx, summoner, amount, source)` is the one choke point — all 17
+summon sources funnel through it, and it carries both halves, `summoner` being
+who receives and `source` what caused it. Take the amount from
+`SummonResult.Amount`, not the argument: `Hook.ModifySummonAmount` runs inside
+and can change it. And wrap the returned `Task` rather than using a plain
+postfix — it is async, so a postfix runs before the pet exists (the same rule the
+effect-stack patches follow).
+
+`PetPool` splits each absorb **pro-rata by contributed max HP**, and deliberately
+does *not* track which hit point was spent. That is the whole reason this stayed
+small. Osty is long-lived with sinks the meter has no business modelling — heals,
+revives, an enemy sweep hitting it as a target, Sacrifice — and a FIFO pool over
+that would need a reconciliation pass per sink, each one a way to drift. Shares
+over lifetime contributions have nothing to reconcile. Note this is the *opposite*
+choice from `BlockPool`, and both are right: block is a turn-scoped pot spent to
+zero and refilled, so "the wearer's own first, oldest first" is an ordering a
+player can actually see, whereas nobody thinks of Osty's sixth hit point as older
+than its seventh.
+
+A potion resolves its owner directly here (`PotionModel.Owner` is the thrower),
+unlike in the block funnel where `BlockSource` has to go through `PotionSource` —
+there the potion is out of scope by the time block lands, here the game hands us
+the model. Don't copy the `PotionSource` dance into a path that was given the
+source.
+
 ## When a row says "(none)"
 
 Damage with a real dealer but no card is named from the game's executing-model

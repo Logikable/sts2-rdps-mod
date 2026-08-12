@@ -123,7 +123,26 @@ internal static class PetAbsorption
         }
 
         CombatLedger.Name(saved.NetId, PlayerIdentity.Name(saved));
-        CombatLedger.RecordBlock(saved.NetId, new[] { new BlockStrand(saved.NetId, NameOf(pet), absorbed) });
+
+        // Whose HP was it? Usually the owner's own, but an Osty can be built out of a teammate's Legion of Bone or a
+        // Bone Brew thrown at you, so the absorb is split by who paid for the pet rather than by who stood behind it.
+        // A pet with nothing recorded against it is the pre-PetPool behaviour: all of it to the owner.
+        string name = NameOf(pet);
+        IReadOnlyList<(ulong NetId, decimal Fraction)>? shares = PetPool.Shares(pet);
+        if (shares == null)
+        {
+            CombatLedger.RecordBlock(saved.NetId, new[] { new BlockStrand(saved.NetId, name, absorbed) });
+            return;
+        }
+
+        var strands = new List<BlockStrand>(shares.Count);
+        foreach ((ulong netId, decimal fraction) in shares)
+        {
+            CombatLedger.Name(netId, PlayerIdentity.Name(netId));
+            strands.Add(new BlockStrand(netId, name, absorbed * fraction));
+        }
+
+        CombatLedger.RecordBlock(saved.NetId, strands);
     }
 
     public static void Clear()

@@ -135,6 +135,10 @@ internal static class BlockPatches
         // standing for the next combat's first hit on that pet to claim.
         PetAbsorption.Clear();
 
+        // Who paid for each pet, which is per-combat like the pets themselves: an Osty does not survive the fight, so
+        // carrying its funding into the next one could only mis-credit a pet that happens to reuse the reference.
+        PetPool.Clear();
+
         // Balanced by its own postfix in the normal case; cleared here too so a hook that threw between the push and the
         // pop cannot leave a giver's name attached to the next combat's block.
         ForeignBlockGrant.Clear();
