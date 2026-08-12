@@ -3,7 +3,7 @@
     "name": "rDPS Meter",
     "author": "Logikable",
     "description": "FFXIV-style damage meter for solo and co-op. A draggable in-combat overlay pages between rDPS (damage credited to the teammate whose buffs and debuffs bought it), aDPS (what you dealt yourself) and Blocked (what your block stopped).",
-    "version": "0.1.23",
+    "version": "0.1.24",
     "has_pck": false,
     "has_dll": true,
     "min_game_version": "0.107.1",
