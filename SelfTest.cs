@@ -128,6 +128,7 @@ internal static class SelfTest
         all &= await BlockReconcileScenario(context, dealer, enemy);
         all &= await OstyAbsorptionScenario(context, dealer, enemy);
         all &= await LegionOfBoneScenario(context, dealer, enemy, applier2, applier3);
+        all &= await OstyReviveScenario(context, dealer, enemy, applier2);
         all &= await BlockedMeterScenario();
         all &= await EmptyTitleScenario();
         all &= await MinimizeScenario();
@@ -1232,6 +1233,82 @@ internal static class SelfTest
         var card = (LegionOfBone)ModelDb.Card<LegionOfBone>().MutableClone();
         card.Owner = owner.Player!;
         return card;
+    }
+
+    /// <summary>
+    /// A revived Osty is made only of the summon that brought it back, and its funding has to be forgotten with it.
+    ///
+    /// OstyCmd.Summon has two arms. A living pet is topped up through GainMaxHp, which adds to its max HP; a dead or
+    /// absent one goes through SetMaxHp, which replaces it outright. The pool was additive either way, so the hit
+    /// points a pet died with kept earning their buyer a share of everything the replacement soaked - a teammate who
+    /// spent one Legion of Bone early in a fight went on taking credit for a pet that was, by then, entirely somebody
+    /// else's. It matters because a Necrobinder's Osty dying is the ordinary case rather than an edge one, and every
+    /// existing scenario summons onto a living pet, so the whole replacing arm went untested.
+    ///
+    /// The pet is put to zero HP with LoseHpInternal rather than by swinging at it. Damage aimed at a pet spends its
+    /// *owner's* block on the way past (the funnel resolves PetOwner before blocking), so a swing big enough to kill
+    /// would book block on the meter and the phase would then be asserting against two effects at once.
+    ///
+    ///   1. teammate 10 -> killed -> dealer 8   the reported shape: the revive is the dealer's alone
+    ///   2. teammate 10 -> dealer 10, alive     the control: a top-up still accumulates, 50/50
+    ///
+    /// Phase 2 is what keeps the fix honest. Forgetting the pool on *every* summon would pass phase 1 just as well and
+    /// break teammate credit everywhere else, so the two phases together pin the reset to the replacing arm alone.
+    /// </summary>
+    private static async Task<bool> OstyReviveScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        ulong you = dealer.Player!.NetId;
+
+        // 1. The teammate's pet dies and the dealer buys the next one.
+        await Prep(dealer, enemy);
+        KillOsty(dealer);
+        await OstyCmd.Summon(ctx, dealer.Player!, 10m, CardOwnedBy(applier2));
+        Creature osty = dealer.Player!.Osty!;
+        string name = osty.Monster!.Title.GetFormattedText();
+
+        // Exactly the pet's hit points, so all 10 are mitigation and nothing spills through to the dealer.
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 10m, DamageProps.card, enemy, null, null);
+        decimal teammateFirst = CombatLedger.Current.RBlockOf(2uL);
+        bool wentDown = dealer.Player!.IsOstyMissing;
+
+        await OstyCmd.Summon(ctx, dealer.Player!, 8m, CardOwnedBy(dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 4m, DamageProps.card, enemy, null, null);
+        CombatLedger l1 = CombatLedger.Current;
+        bool ok = Report("Osty revive 1/2 (a revived pet is only its new funding)",
+            Expect("the teammate's 10 all absorbed", teammateFirst, 10m),
+            Expect("and the pet went down with it", wentDown ? 1m : 0m, 1m),
+            Expect("14 mitigated over the phase", l1.BlockedWith(you, name), 14m),
+            Expect("the revive is the dealer's alone", l1.RBlockOf(you), 4m),
+            Expect("teammate keeps only what they bought", l1.RBlockOf(2uL), 10m));
+
+        // 2. Control: the pet is alive for the second summon, so that one adds and the split stands.
+        await Prep(dealer, enemy);
+        KillOsty(dealer);
+        await OstyCmd.Summon(ctx, dealer.Player!, 10m, CardOwnedBy(applier2));
+        await OstyCmd.Summon(ctx, dealer.Player!, 10m, CardOwnedBy(dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+        CombatLedger l2 = CombatLedger.Current;
+        ok &= Report("Osty revive 2/2 (a top-up still adds, control)",
+            Expect("mitigated 8", l2.BlockedWith(you, name), 8m),
+            Expect("dealer half", l2.RBlockOf(you), 4m),
+            Expect("teammate half", l2.RBlockOf(2uL), 4m));
+
+        return ok;
+    }
+
+    /// <summary>
+    /// Puts the pet at zero HP so the next summon takes the revive arm. Straight to LoseHpInternal, which is the one
+    /// place HP is actually removed: it leaves the pet in combat and on its owner exactly as a real death does - the
+    /// game keeps a dead Osty in both, since DieForYouPower declines to have it removed - without spending the owner's
+    /// block or booking anything on the meter on the way.
+    /// </summary>
+    private static void KillOsty(Creature owner)
+    {
+        if (owner.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
     }
 
     /// <summary>

@@ -338,6 +338,32 @@ zero and refilled, so "the wearer's own first, oldest first" is an ordering a
 player can actually see, whereas nobody thinks of Osty's sixth hit point as older
 than its seventh.
 
+**A revive is the one sink that is not a sink — it is a reset.** `OstyCmd.Summon`
+has two arms: a living pet is topped up with `GainMaxHp`, which *adds*, while a
+dead or absent one goes through `SetMaxHp`, which *replaces*. So a revived Osty is
+made wholly of the summon that brought it back, and the cards that paid for the
+hit points it died with bought nothing still standing. The pool was additive
+either way, so a teammate who spent one Legion of Bone early kept drawing a share
+of every absorb by a pet that was, by then, entirely somebody else's. Everything
+else in the paragraph above still holds — the pool has nothing to reconcile
+*within* a life, and this is a new life.
+
+Read the game's own condition (`summoner.IsOstyAlive`, in a **prefix** — by the
+postfix the pet has been revived and healed, so it always answers "alive") rather
+than reproducing the rule: the two arms are one `if` in `OstyCmd.Summon`, and a
+copy here would keep agreeing with today's build long after the game stopped
+agreeing with the copy. Gate the reset on a summon that actually happened;
+`Hook.ModifySummonAmount` can zero one out, and that path returns before touching
+max HP at all.
+
+Every scenario written before this summoned onto a *living* pet, so the replacing
+arm went untested while looking thoroughly covered — and a Necrobinder's Osty
+dying is the ordinary case, not an edge one. The harness now kills it outright
+(`LoseHpInternal`, straight to zero) rather than swinging at it: damage aimed at a
+pet spends its **owner's** block on the way past, since the funnel resolves
+`PetOwner` before blocking, so a killing swing would book block too and the phase
+would be asserting against two effects at once.
+
 A potion resolves its owner directly here (`PotionModel.Owner` is the thrower),
 unlike in the block funnel where `BlockSource` has to go through `PotionSource` —
 there the potion is out of scope by the time block lands, here the game hands us

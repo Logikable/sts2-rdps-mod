@@ -84,6 +84,23 @@ internal static class PetPool
         }
     }
 
+    /// <summary>
+    /// Forgets what a pet was made of, for a summon that <em>replaces</em> its hit points instead of adding to them.
+    ///
+    /// OstyCmd.Summon has two arms and they differ in exactly this way: a living Osty is topped up with GainMaxHp,
+    /// which adds, while one being created or revived gets SetMaxHp, which does not. A revived pet is therefore built
+    /// wholly out of the summon that brought it back, and the cards that paid for the hit points it died with bought
+    /// nothing that is still standing. Without this the dead pet's funding keeps drawing a share of every later absorb
+    /// - so a teammate who summoned once early keeps taking credit for a pet that is now entirely somebody else's.
+    /// </summary>
+    public static void Reset(Creature pet)
+    {
+        lock (Lock)
+        {
+            Contributed.Remove(pet);
+        }
+    }
+
     public static void Clear()
     {
         lock (Lock)

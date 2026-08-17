@@ -28,13 +28,25 @@ namespace RdpsMeter.Patches;
 [HarmonyPatch(typeof(OstyCmd), nameof(OstyCmd.Summon))]
 internal static class PetSummonPatch
 {
-    [HarmonyPostfix]
-    private static void Postfix(Player summoner, AbstractModel? source, ref Task<SummonResult> __result)
+    /// <summary>
+    /// Whether the pet was alive going in, which is what decides between the command's two arms - and so between
+    /// adding to the pool and replacing it. It has to be read here: by the time the postfix runs the pet has been
+    /// revived and healed, so asking then always answers "alive".
+    /// </summary>
+    [HarmonyPrefix]
+    private static void Prefix(Player summoner, out bool __state)
     {
-        __result = Record(__result, summoner, source);
+        __state = summoner.IsOstyAlive;
     }
 
-    private static async Task<SummonResult> Record(Task<SummonResult> inner, Player summoner, AbstractModel? source)
+    [HarmonyPostfix]
+    private static void Postfix(Player summoner, AbstractModel? source, bool __state, ref Task<SummonResult> __result)
+    {
+        __result = Record(__result, summoner, source, __state);
+    }
+
+    private static async Task<SummonResult> Record(
+        Task<SummonResult> inner, Player summoner, AbstractModel? source, bool wasAlive)
     {
         SummonResult result = await inner;
 
@@ -42,6 +54,20 @@ internal static class PetSummonPatch
         {
             if (result.Creature is { } pet)
             {
+                // A summon onto a living pet tops its max HP up (GainMaxHp); one onto a dead or absent pet sets it
+                // outright (SetMaxHp), discarding whatever it had before. The pool has to follow, or the hit points a
+                // revived Osty died with go on earning their buyer a share of every absorb the replacement soaks.
+                // Gated on a summon that actually happened - Hook.ModifySummonAmount can zero one out, and that path
+                // returns before touching the pet's max HP at all.
+                //
+                // Reading the game's own branch condition rather than reproducing the rule is deliberate: the two arms
+                // are one `if` in OstyCmd.Summon, and a copy of it here would keep agreeing with today's build long
+                // after the game stopped agreeing with the copy.
+                if (!wasAlive && result.Amount > 0m)
+                {
+                    PetPool.Reset(pet);
+                }
+
                 PetPool.Contribute(pet, ContributorOf(summoner, source), result.Amount);
             }
         }
