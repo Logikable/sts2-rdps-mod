@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.24 - two co-op attribution fixes. Debilitate is now credited to the player who played it. Doubling Vulnerable's effect reaches damage from inside Vulnerable itself and never showed up as an effect of its own, so the whole multiplier went to whoever applied Vulnerable and the card that doubled it counted for nothing. Its credit is measured against the rest of the stack, so it is worth more when the attacker's own Paper Phrog and Cruelty have already raised the bonus it doubles - both of those were already correct and still stay with the attacker. Second, a summoned pet's mitigation now goes to whoever paid for its hit points, split in proportion when several players chipped in. Legion of Bone, and a Bone Brew thrown at an ally, put HP in front of a teammate, and every point the pet then soaked was being credited to that teammate rather than to the Necrobinder who bought it. Still works on game v0.107.1 and later.",
+  "changeNote": "0.1.25 - a co-op fix for summoned pets. A pet that dies and is summoned back is built entirely out of the summon that revived it, but the meter went on crediting whoever paid for the hit points it died with. So a teammate who spent one Legion of Bone early in a fight kept taking a share of everything the replacement soaked, and the player who actually bought it back was credited for only part of their own pet. Topping up a living pet is unchanged and still splits the credit between everyone who chipped in. Verified against game v0.111.0; still works on v0.107.1 and later.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
