@@ -86,6 +86,13 @@ internal sealed partial class MpHarnessNode : Node
     private double _stageElapsed;
     private NMultiplayerTest? _scene;
     private MpFightDriver? _fight;
+    private double _lingering = -1;
+
+    // How long a finished peer keeps running before it quits. The two peers never finish on the same frame, and the
+    // one still playing needs the other to keep servicing the network: a host whose only client has vanished stops
+    // resolving turns and floods the log with "Peer not connected" instead of reaching its own verdict. Lingering
+    // costs nothing and makes the session's outcome independent of which side got there first.
+    private const double LingerSeconds = 25.0;
 
     // How long to wait between join attempts, and when the next one is due. The first is deliberately not immediate:
     // the host has to get its ENet socket up, and there is no way to ask whether it has.
@@ -96,6 +103,17 @@ internal sealed partial class MpHarnessNode : Node
     {
         _elapsed += delta;
         _stageElapsed += delta;
+
+        if (_lingering >= 0)
+        {
+            _lingering += delta;
+            if (_lingering > LingerSeconds)
+            {
+                (Engine.GetMainLoop() as SceneTree)?.Quit();
+            }
+
+            return;
+        }
 
         if (_stage != Stage.Done && _elapsed > MpConfig.TimeoutSeconds)
         {
@@ -248,7 +266,7 @@ internal sealed partial class MpHarnessNode : Node
             GD.Print(message);
         }
 
-        (Engine.GetMainLoop() as SceneTree)?.Quit();
+        _lingering = 0;
     }
 
     private static StartRunLobby? LobbyOf(NMultiplayerTest? scene)

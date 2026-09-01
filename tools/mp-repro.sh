@@ -51,25 +51,36 @@ trap kill_game EXIT
 kill_game
 sleep 1
 
-launch() {
-  local role="$1" meter="$2" log="$3"
-  ( cd "$GAME_DIR" && ./SlayTheSpire2.exe \
-      --fastmp \
-      "--rdps-mp=$role" \
-      "--rdps-meter=$meter" \
-      "--rdps-scenario=$SCENARIO" \
-      "--rdps-character=$CHARACTER" \
-      "--rdps-mp-timeout=$TIMEOUT" \
-      >"$log" 2>&1 ) &
-  echo $!
+# Launched inline rather than from a function returning the PID: a $(...) around the launch blocks until every
+# writer to the substitution pipe is gone, and a Windows process started through WSL interop holds one for its whole
+# life - so the host would start, the substitution would never return, and the client would never launch at all.
+args() {
+  echo --fastmp
+  echo "--rdps-mp=$1"
+  echo "--rdps-meter=$2"
+  echo "--rdps-scenario=$SCENARIO"
+  echo "--rdps-character=$CHARACTER"
+  echo "--rdps-mp-timeout=$TIMEOUT"
 }
 
 echo "== launching host (meter=$HOST_METER) and client (meter=$CLIENT_METER), scenario=$SCENARIO =="
-HOST_PID=$(launch host "$HOST_METER" "$OUT/host.log")
-sleep 8
-CLIENT_PID=$(launch client "$CLIENT_METER" "$OUT/client.log")
+mapfile -t HOST_ARGS < <(args host "$HOST_METER")
+mapfile -t CLIENT_ARGS < <(args client "$CLIENT_METER")
 
-wait "$HOST_PID" "$CLIENT_PID" 2>/dev/null
+( cd "$GAME_DIR" && exec ./SlayTheSpire2.exe "${HOST_ARGS[@]}" ) >"$OUT/host.log" 2>&1 </dev/null &
+HOST_PID=$!
+sleep 8
+( cd "$GAME_DIR" && exec ./SlayTheSpire2.exe "${CLIENT_ARGS[@]}" ) >"$OUT/client.log" 2>&1 </dev/null &
+CLIENT_PID=$!
+
+# A wall-clock cap on top of the per-peer timeout: a peer that wedges below the harness's own _Process - a hung
+# await, a modal popup - never reaches its timeout check, and the launcher must still come back.
+( sleep "$((TIMEOUT + 180))"; kill_game ) &
+WATCHDOG=$!
+
+wait "$HOST_PID"
+wait "$CLIENT_PID"
+kill "$WATCHDOG" 2>/dev/null
 
 echo
 for peer in host client; do

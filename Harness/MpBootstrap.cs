@@ -112,13 +112,23 @@ internal static class MpScenarios
         switch (scenario)
         {
             case "echoform":
-                // Echo Form itself, plus attacks for it to echo - the power alone changes nothing observable, since
-                // what it modifies is the play count of whatever is played after it.
-                // Three copies so one reaches the opening hand rather than the scenario waiting on a shuffle. The
-                // starting deck's own Strikes are what Echo Form then doubles.
+                // Echo Form alone changes nothing observable - what it modifies is the play count of whatever is
+                // played after it, so the starting deck's own Strikes are what it doubles. Three copies so one
+                // reaches an opening hand rather than the scenario waiting on a shuffle.
                 yield return ModelDb.Card<EchoForm>().ToMutable();
                 yield return ModelDb.Card<EchoForm>().ToMutable();
                 yield return ModelDb.Card<EchoForm>().ToMutable();
+                break;
+
+            case "crossbuff":
+                // The meter's counterfactual engine only runs when a modifier on the hit belongs to a player other
+                // than the dealer - which is why a plain co-op fight of Strikes and Defends exercises none of it, and
+                // why the whole path is effectively dead in single player. Bash puts Vulnerable on the enemy and
+                // Debilitate doubles what Vulnerable is worth, so with both in every deck each player is buffing hits
+                // the other one lands, and every such hit runs Recompute and the VulnerableBoosts prefixes.
+                yield return ModelDb.Card<Bash>().ToMutable();
+                yield return ModelDb.Card<Bash>().ToMutable();
+                yield return ModelDb.Card<Debilitate>().ToMutable();
                 break;
 
             default:
