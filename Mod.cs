@@ -12,15 +12,31 @@ public static class Mod
     {
         ApplyPatches();
 
+#if RDPS_HARNESS
+        // A scripted two-peer session can ask for a peer that behaves as though the mod were not installed, so the
+        // difference between the two sides is the meter and nothing else. Everything below this point is the meter.
+        if (!Harness.MpConfig.MeterEnabled)
+        {
+            GD.Print("[RdpsMeter] Initialized with the meter switched off (two-peer harness)");
+            Harness.MpHarness.Install();
+            return;
+        }
+#endif
+
         // Come up showing the run that was last played, so the meter is readable from the main menu on. Whichever run
         // is then started or continued takes over.
         RunLedger.LoadLastPlayed();
         GD.Print("[RdpsMeter] Initialized");
 
 #if RDPS_HARNESS
-        // Only a harness build carries the auto-run self-test; the marker decides whether this launch runs it. The
-        // overlay still goes up alongside it, so the scenarios can assert against the real meter rather than a stub.
-        if (DevMode.Enabled)
+        // Only a harness build carries the auto-run self-tests; a marker or a command-line role decides which, if
+        // either, this launch runs. The overlay still goes up alongside them, so the scenarios can assert against the
+        // real meter rather than a stub.
+        if (Harness.MpConfig.Active)
+        {
+            Harness.MpHarness.Install();
+        }
+        else if (DevMode.Enabled)
         {
             AutoHarness.Install();
         }
@@ -51,6 +67,16 @@ public static class Mod
             {
                 continue;
             }
+
+#if RDPS_HARNESS
+            // The unmetered peer of a two-peer session installs no meter hooks at all - that is what makes it a
+            // faithful stand-in for an unmodded client. The harness's own scaffolding still applies, on both peers,
+            // because scaffolding that ran on one side only would be the asymmetry under test.
+            if (!Harness.MpConfig.MeterEnabled && type.Namespace != typeof(Harness.MpConfig).Namespace)
+            {
+                continue;
+            }
+#endif
 
             try
             {

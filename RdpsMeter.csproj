@@ -18,10 +18,19 @@
     <DefineConstants>$(DefineConstants);RDPS_HARNESS</DefineConstants>
   </PropertyGroup>
 
+  <!-- Which game assembly the mod compiles against. A release is built against lib/sts2.dll and carries one DLL for
+       every supported version, reaching the differences between them through Prepare-gates and reflection rather than
+       through the compiler. The harness is the exception: its self-test scenarios call game methods directly, so it
+       has to be built against the version it will actually be run on. Override with
+       -p:Sts2Ref=lib/sts2-<ver>.dll to build for one captured version. -->
+  <PropertyGroup>
+    <Sts2Ref Condition="'$(Sts2Ref)' == ''">lib/sts2.dll</Sts2Ref>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- Shipped by the game itself at runtime - reference only, do not copy to our output. -->
     <Reference Include="sts2">
-      <HintPath>lib/sts2.dll</HintPath>
+      <HintPath>$(Sts2Ref)</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
