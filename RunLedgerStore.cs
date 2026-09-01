@@ -103,7 +103,83 @@ internal static class RunLedgerStore
 
     public static RunLedgerDto? Deserialize(string json)
     {
-        return JsonSerializer.Deserialize<RunLedgerDto>(json);
+        return Normalize(JsonSerializer.Deserialize<RunLedgerDto>(json));
+    }
+
+    /// <summary>
+    /// Fills in anything the file left null, so nothing downstream has to ask.
+    ///
+    /// A property initializer does not survive deserialization: System.Text.Json assigns what the document says, so an
+    /// explicit null in the file leaves the list null rather than empty, and a null string reaches the restore path as
+    /// a dictionary key. The mod never writes either, but a file it did not write - hand-edited, half-written by a
+    /// crash, or produced by an older or newer shape of this DTO - can carry them, and every one of the nine loops
+    /// that walk this thing would throw on the first.
+    ///
+    /// That matters more than it sounds, because of where the throw would land. <see cref="Load"/> is called from the
+    /// meter's prefix on RunManager.SetUpSavedMultiplayer, whose one caller turns any exception into "kicked to the
+    /// main menu with an internal error" - so a stray null in a saved breakdown would read to a player as the mod
+    /// breaking their run on load. This file already promises the opposite in its own summary; normalizing once, here,
+    /// is what makes that promise true for every consumer rather than for the ones that remembered to check.
+    /// </summary>
+    private static RunLedgerDto? Normalize(RunLedgerDto? dto)
+    {
+        if (dto == null)
+        {
+            return null;
+        }
+
+        dto.RunId ??= string.Empty;
+        dto.Combats ??= new List<CombatEntryDto>();
+        dto.Roster ??= new List<RosterEntryDto>();
+
+        foreach (RosterEntryDto player in dto.Roster)
+        {
+            player.Name ??= string.Empty;
+            player.Character ??= string.Empty;
+        }
+
+        foreach (CombatEntryDto combat in dto.Combats)
+        {
+            combat.Key ??= string.Empty;
+            combat.Label ??= string.Empty;
+            combat.Players ??= new List<PlayerEntryDto>();
+
+            foreach (PlayerEntryDto player in combat.Players)
+            {
+                player.Name ??= string.Empty;
+                player.Dealt = Cards(player.Dealt);
+                player.Blocked = Cards(player.Blocked);
+                player.Given = Sources(player.Given);
+                player.Received = Sources(player.Received);
+                player.BlockGiven = Sources(player.BlockGiven);
+                player.BlockReceived = Sources(player.BlockReceived);
+            }
+        }
+
+        return dto;
+    }
+
+    // Card and effect names are used as dictionary keys, so a null one is not merely a blank row - it throws.
+    private static List<CardEntryDto> Cards(List<CardEntryDto>? entries)
+    {
+        entries ??= new List<CardEntryDto>();
+        foreach (CardEntryDto entry in entries)
+        {
+            entry.Card ??= string.Empty;
+        }
+
+        return entries;
+    }
+
+    private static List<SourceEntryDto> Sources(List<SourceEntryDto>? entries)
+    {
+        entries ??= new List<SourceEntryDto>();
+        foreach (SourceEntryDto entry in entries)
+        {
+            entry.Effect ??= string.Empty;
+        }
+
+        return entries;
     }
 
     public static void Save(RunLedgerDto dto)

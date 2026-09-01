@@ -97,6 +97,7 @@ internal static class SelfTest
         // other, and puts the harness's own run back when it is done.
         bool all = DefaultViewScenario();
         all &= TwoRunsScenario();
+        all &= MalformedSaveScenario();
         all &= PersistentOverlayScenario();
         all &= LastPlayedScenario();
         all &= RunHistoryScenario();
@@ -2179,6 +2180,68 @@ internal static class SelfTest
             Expect("combats preserved", back?.Combats.Count ?? -1, dto.Combats.Count),
             Expect("total dealt preserved", back != null ? TotalDealt(back) : -1m, TotalDealt(dto)),
             Expect("reserialize is stable", back != null && RunLedgerStore.Serialize(back) == json ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// A saved breakdown carrying nulls where lists and names should be must load as an empty one, not throw.
+    ///
+    /// The mod never writes such a file, but it reads files it did not write: hand-edited, half-written by a crash, or
+    /// left by an older or newer shape of the DTO. A property initializer does not survive deserialization - an
+    /// explicit null in the document wins - so before <c>Normalize</c> every one of the loops that walk this thing
+    /// would have thrown on the first null, and a null name would have thrown as a dictionary key.
+    ///
+    /// Worth a scenario rather than a code comment because of where that throw would land: <c>Load</c> runs inside the
+    /// meter's prefix on <c>RunManager.SetUpSavedMultiplayer</c>, whose caller turns any exception into "kicked to the
+    /// main menu with an internal error". A player would report that as the mod refusing to load their run.
+    /// </summary>
+    private static bool MalformedSaveScenario()
+    {
+        string harnessLabel = RunLedger.Active.Label;
+
+        // Every list and every string the restore path walks, present in the document and explicitly null.
+        const string json =
+            "{\"RunId\":\"selftest-malformed\",\"Combats\":[" +
+            "{\"Key\":null,\"Label\":null,\"Players\":[{\"NetId\":1,\"Name\":null," +
+            "\"Dealt\":[{\"Card\":null,\"Amount\":5,\"Buff\":0}],\"Given\":null,\"Received\":null," +
+            "\"Blocked\":null,\"BlockGiven\":null," +
+            "\"BlockReceived\":[{\"Effect\":null,\"Other\":2,\"Amount\":3}]}]}," +
+            "{\"Key\":\"1:1:1:0\",\"Label\":\"No players\",\"Players\":null}]," +
+            "\"Roster\":null}";
+
+        bool loaded;
+        int fights;
+        try
+        {
+            RunLedger.LoadDto(RunLedgerStore.Deserialize(json));
+            fights = RunLedger.Fights().Count;
+            loaded = true;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[RdpsMeter] Scenario 'Malformed save': threw instead of loading: {ex}");
+            loaded = false;
+            fights = -1;
+        }
+
+        // A document that is not JSON at all is the other half of the same promise: simply "no saved breakdown".
+        bool garbageHandled;
+        try
+        {
+            garbageHandled = RunLedgerStore.Deserialize("{not json") == null;
+        }
+        catch (Exception)
+        {
+            // Deserialize is allowed to throw for this one - Read is the layer that swallows it - so this is a pass.
+            garbageHandled = true;
+        }
+
+        RunLedger.StartNewRun(RunContext.RunId);
+        RunLedger.BeginCombat(RunContext.CombatKey, harnessLabel);
+
+        return Report("Malformed save loads instead of throwing",
+            Expect("loaded without throwing", loaded ? 1m : 0m, 1m),
+            Expect("both combats kept", fights, 2m),
+            Expect("unparseable file is simply no save", garbageHandled ? 1m : 0m, 1m));
     }
 
     /// <summary>
