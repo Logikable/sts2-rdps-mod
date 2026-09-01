@@ -43,8 +43,10 @@ internal sealed class MpBootstrapSettings : IBootstrapSettings
 
     public int Ascension => 0;
 
-    // Nothing here is a real run and the history page is not what is under test; keep it out of the save folder.
-    public bool SaveRunHistory => false;
+    // The multiplayer test scene passes this straight through as RunManager's shouldSave, so it decides whether the
+    // run is written to disk at all. Off by default - a scripted fight has no business overwriting the player's own
+    // in-progress co-op run - and on for the fresh phase of a reload session, whose whole job is to leave one.
+    public bool SaveRunHistory => MpConfig.SaveRun;
 
     public string? Seed => MpConfig.Seed;
 

@@ -1280,6 +1280,23 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
                 : null;
     }
 
+    /// <summary>
+    /// The texture if it is still alive, and null if it is not.
+    ///
+    /// A class icon is a live Godot resource whose life is the game's, not ours: it comes from a preload cache that is
+    /// torn down and rebuilt as the game moves between the menu and a run. Assigning a freed one throws
+    /// ObjectDisposedException, and that throw lands halfway through building a row - before the row is filed in
+    /// _rows - so the next frame tries to build it again, and the frame after that, for as long as the meter is open.
+    /// One dead texture therefore costs a stack trace per frame rather than an icon.
+    ///
+    /// <see cref="CharacterVisuals"/> no longer hands out stale textures, which is the actual fix; this is the guard
+    /// that keeps any future route to a dead one costing an icon instead of the overlay.
+    /// </summary>
+    private static Texture2D? Drawable(Texture2D? texture)
+    {
+        return texture != null && GodotObject.IsInstanceValid(texture) ? texture : null;
+    }
+
     private Row Ensure(ulong netId)
     {
         if (_rows.TryGetValue(netId, out Row? existing))
@@ -1314,7 +1331,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         // Foreground: class icon + name on the left, rDPS + team share on the right, over the bar.
         var icon = new TextureRect
         {
-            Texture = visual.Icon,
+            Texture = Drawable(visual.Icon),
             CustomMinimumSize = new Vector2(18f, 18f),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,

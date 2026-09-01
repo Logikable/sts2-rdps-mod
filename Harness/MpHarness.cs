@@ -81,6 +81,9 @@ internal sealed partial class MpHarnessNode : Node
         Playing,
         Dropped,
         Rejoining,
+        StartingReload,
+        WaitingForLoadScreen,
+        WaitingForResumedRun,
         Done,
     }
 
@@ -149,7 +152,27 @@ internal sealed partial class MpHarnessNode : Node
                 break;
 
             case Stage.OpeningScene:
-                OpenMultiplayerScene();
+                if (MpConfig.Flow == "reload")
+                {
+                    Advance(Stage.StartingReload);
+                }
+                else
+                {
+                    OpenMultiplayerScene();
+                }
+
+                break;
+
+            case Stage.StartingReload:
+                StartReload();
+                break;
+
+            case Stage.WaitingForLoadScreen:
+                Embark();
+                break;
+
+            case Stage.WaitingForResumedRun:
+                ReportResumedRun();
                 break;
 
             case Stage.Connecting:
@@ -336,6 +359,73 @@ internal sealed partial class MpHarnessNode : Node
         Invoke(_scene!, "ReadyButtonPressed");
         GD.Print(MpHarness.ReadySentinel);
         Advance(Stage.WaitingForCombat);
+    }
+
+    /// <summary>Host loads the saved co-op run and hosts a lobby for it; the client's own game does the joining.</summary>
+    private void StartReload()
+    {
+        // The client needs no driving at all: --fastmp=join makes the game open its join screen, which dials
+        // 127.0.0.1:33771 with --clientId on its own and pushes the load lobby when the host answers.
+        if (MpConfig.Role == MpRole.Client)
+        {
+            Advance(Stage.WaitingForLoadScreen);
+            return;
+        }
+
+        // Let the main menu finish acting on its own command line before reaching into it.
+        if (_stageElapsed < 2.0)
+        {
+            return;
+        }
+
+        if (!MpReloadFlow.StartHostingSavedRun())
+        {
+            Finish($"{MpHarness.FailedSentinel} no saved co-op run to reload - run the fresh flow first", failed: true);
+            return;
+        }
+
+        Advance(Stage.WaitingForLoadScreen);
+    }
+
+    /// <summary>
+    /// Presses Embark once the load lobby has the whole party. Waiting for the party matters: with anyone missing the
+    /// host is asked to confirm loading short-handed through a modal, which no scripted session can answer.
+    /// </summary>
+    private void Embark()
+    {
+        if (MpReloadFlow.LoadScreen() is not { } screen)
+        {
+            return;
+        }
+
+        object? lobby = Field(screen, "_runLobby");
+        int connected = lobby == null ? 0 : (int)(AccessTools.Property(lobby.GetType(), "PlayerCount")?.GetValue(lobby) ?? 0);
+        if (connected < 2)
+        {
+            return;
+        }
+
+        MpHarness.Log($"load lobby has {connected} player(s); embarking");
+        Invoke(screen, "OnEmbarkPressed", new object?[] { null });
+        Advance(Stage.WaitingForResumedRun);
+    }
+
+    /// <summary>
+    /// The reload's verdict: whether the run came back, and whether the meter's breakdown came back with it. The
+    /// second half is the point - SetUpSavedMultiplayer is where the mod reloads a run's tally from disk, so a
+    /// resumed run showing no fights would mean the meter dropped everything the party had already done.
+    /// </summary>
+    private void ReportResumedRun()
+    {
+        if (RunManager.Instance?.DebugOnlyGetState() is not { } state || NGame.Instance?.MainMenu?.Visible == true)
+        {
+            return;
+        }
+
+        Finish(
+            $"{MpHarness.CompleteSentinel} resumed the saved co-op run: {state.Players.Count} player(s), "
+            + $"meter has data={RunLedger.HasData}, fights={RunLedger.Fights().Count}",
+            failed: false);
     }
 
     private void Advance(Stage next)

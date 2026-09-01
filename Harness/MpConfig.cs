@@ -1,6 +1,7 @@
 // Developer-only two-peer harness - compiled in only under -p:Harness=true (see RdpsMeter.csproj). Never ships.
 #if RDPS_HARNESS
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Platform;
 
 namespace RdpsMeter.Harness;
 
@@ -38,8 +39,15 @@ internal static class MpConfig
 
     public static string HostIp { get; } = Arg("rdps-mp-ip") ?? "127.0.0.1";
 
-    /// <summary>The net id this peer announces to the host. ENet hands out no identity of its own, so we assign one.</summary>
-    public static ulong NetId { get; } = ulong.TryParse(Arg("rdps-mp-netid"), out ulong id) ? id : 1000uL;
+    /// <summary>
+    /// The net id this peer announces to the host. It defaults to the null platform's own local player id, which the
+    /// game reads from --clientId, so the id a peer dials with and the id it is known by cannot drift apart. They must
+    /// agree for a reload: a saved run records the ids it was played under, and RunManager.CanonicalizeSave throws
+    /// when handed one that is not in the save.
+    /// </summary>
+    public static ulong NetId { get; } = ulong.TryParse(Arg("rdps-mp-netid"), out ulong id)
+        ? id
+        : PlatformUtil.GetLocalPlayerId(PlatformType.None);
 
     /// <summary>
     /// Which character this peer picks, as an index into the multiplayer test scene's own paginator
@@ -66,6 +74,17 @@ internal static class MpConfig
     /// </summary>
     public static int DisconnectAfterTurns { get; } =
         int.TryParse(Arg("rdps-mp-drop-turn"), out int d) ? d : 2;
+
+    /// <summary>
+    /// Whether this session writes a real run save. Off by default, because a scripted fight has no business
+    /// overwriting the player's own in-progress co-op run; on for the fresh phase of a reload session, which exists
+    /// precisely to leave a save behind for the reload phase to read.
+    ///
+    /// Note that the game's own multiplayer test scene passes IBootstrapSettings.SaveRunHistory as RunManager's
+    /// shouldSave, so this is the flag that decides whether current_run_mp.save is written at all - not just whether
+    /// a run-history entry is kept.
+    /// </summary>
+    public static bool SaveRun { get; } = Arg("rdps-mp-save") == "true";
 
     /// <summary>Give up and quit rather than hang forever when a peer never connects or a fight never starts.</summary>
     public static double TimeoutSeconds { get; } =
