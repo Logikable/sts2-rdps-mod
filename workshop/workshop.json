@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.25 - a co-op fix for summoned pets. A pet that dies and is summoned back is built entirely out of the summon that revived it, but the meter went on crediting whoever paid for the hit points it died with. So a teammate who spent one Legion of Bone early in a fight kept taking a share of everything the replacement soaked, and the player who actually bought it back was credited for only part of their own pet. Topping up a living pet is unchanged and still splits the credit between everyone who chipped in. Verified against game v0.111.0; still works on v0.107.1 and later.",
+  "changeNote": "0.1.26 - a co-op crash fix. Loading a saved co-op run - the way you come back after everyone has disconnected - made the meter throw on every frame and flood the log, because it was still holding the class icons it had resolved back at the main menu, and loading a run frees them. It now looks the icon up fresh each time, so the rows draw and the run loads normally. Solo runs were never affected. A saved breakdown that has been damaged now also costs you that breakdown rather than the run it belongs to. Verified against game v0.111.0; still works on v0.107.1 and later.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
