@@ -50,6 +50,23 @@ internal static class MpConfig
     /// <summary>Both peers must agree on the seed or the run they build diverges before a card is ever played.</summary>
     public static string Seed { get; } = Arg("rdps-seed") ?? "RDPSMPTEST";
 
+    /// <summary>
+    /// What shape of session this is. "fresh" starts a co-op run and fights; "rejoin" does the same and then has the
+    /// client drop out mid-fight and try to come back, which is the second bug report's own words.
+    /// </summary>
+    public static string Flow { get; } = Arg("rdps-mp-flow") ?? "fresh";
+
+    /// <summary>How many turns each peer plays before it calls the fight done.</summary>
+    public static int Turns { get; } = int.TryParse(Arg("rdps-mp-turns"), out int t) ? t : 6;
+
+    /// <summary>
+    /// Which turn the client drops the connection on, in the rejoin flow. Mid-fight rather than between fights,
+    /// because the interesting question is what the meter does while it is holding a live combat's tally and the
+    /// overlay is drawing from it - the run is torn down underneath both.
+    /// </summary>
+    public static int DisconnectAfterTurns { get; } =
+        int.TryParse(Arg("rdps-mp-drop-turn"), out int d) ? d : 2;
+
     /// <summary>Give up and quit rather than hang forever when a peer never connects or a fight never starts.</summary>
     public static double TimeoutSeconds { get; } =
         double.TryParse(Arg("rdps-mp-timeout"), out double t) ? t : 300.0;

@@ -30,13 +30,17 @@ internal sealed class MpFightDriver
     // and keeps a stuck fight from filling it.
     private const double ActionInterval = 0.6;
 
-    // Enough turns for Echo Form to be drawn, played, and to then double an attack, without letting a peer that is
-    // quietly doing nothing run forever.
-    private const int TurnsToPlay = 6;
+    // Enough turns, by default, for Echo Form to be drawn, played, and to then double an attack, without letting a
+    // peer that is quietly doing nothing run forever.
+    private static int TurnsToPlay => MpConfig.Turns;
+
+    /// <summary>How many turns this peer has ended, so the session can act on a turn count - see the rejoin flow.</summary>
+    public int TurnsEnded => _turnsEnded;
 
     private double _sinceAction;
     private int _cardsPlayed;
     private int _turnsEnded;
+    private bool _playedPreferred;
 
     /// <summary>One frame of play. Returns null while the fight is still going, or the closing log line when done.</summary>
     public string? Step(double delta)
@@ -86,7 +90,7 @@ internal sealed class MpFightDriver
     /// </summary>
     private bool PlayOneCard(PlayerCombatState combat, Creature enemy)
     {
-        foreach (CardModel card in combat.Hand.Cards.ToList())
+        foreach (CardModel card in InPreferenceOrder(combat.Hand.Cards))
         {
             Creature? target = card.CanPlayTargeting(enemy) ? enemy : (card.CanPlayTargeting(null) ? null : enemy);
             if (!card.CanPlayTargeting(target))
@@ -97,12 +101,41 @@ internal sealed class MpFightDriver
             if (card.TryManualPlay(target))
             {
                 _cardsPlayed++;
+                _playedPreferred |= IsPreferred(card);
                 MpHarness.Log($"played {card.TitleLocString.GetFormattedText()} ({_cardsPlayed})");
                 return true;
             }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// The hand, with the scenario's own card first - but only until it has been played once, after which further
+    /// copies go last.
+    ///
+    /// Both halves are load-bearing, and each was learned from a session that proved nothing. Without the preference,
+    /// the first Echo Form run went six turns and only the peer that was *not* under test ever played one. With an
+    /// unconditional preference, the peer under test spent every turn's three energy on another Echo Form and never
+    /// attacked - and Echo Form's whole payload is that the cards played *after* it play twice, so a scenario that
+    /// only ever plays Echo Form never observes an echo at all.
+    /// </summary>
+    private IEnumerable<CardModel> InPreferenceOrder(IReadOnlyList<CardModel> hand)
+    {
+        List<CardModel> cards = hand.ToList();
+        if (MpScenarios.PreferredCardFor(MpConfig.Scenario) == null)
+        {
+            return cards;
+        }
+
+        return _playedPreferred
+            ? cards.OrderBy(IsPreferred)
+            : cards.OrderByDescending(IsPreferred);
+    }
+
+    private static bool IsPreferred(CardModel card)
+    {
+        return card.GetType().Name == MpScenarios.PreferredCardFor(MpConfig.Scenario);
     }
 }
 #endif

@@ -107,6 +107,22 @@ internal static class MpBootstrapPatch
 /// <summary>The cards a named scenario needs in every deck, built fresh so each player owns their own copies.</summary>
 internal static class MpScenarios
 {
+    /// <summary>
+    /// The card the fight driver should reach for first when it is in hand.
+    ///
+    /// Without this a scenario is at the mercy of the draw and of which card happens to come first in hand: the first
+    /// Echo Form session ran six turns and only the client ever played one, so the peer under test - the metered one -
+    /// never exercised the card the bug report is about. Naming the card makes the scenario test what it says it does.
+    /// </summary>
+    public static string? PreferredCardFor(string scenario)
+    {
+        return scenario switch
+        {
+            "echoform" => "EchoForm",
+            _ => null,
+        };
+    }
+
     public static IEnumerable<CardModel> ExtraCardsFor(string scenario)
     {
         switch (scenario)

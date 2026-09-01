@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Helpers;
@@ -78,6 +79,8 @@ internal sealed partial class MpHarnessNode : Node
         Ready,
         WaitingForCombat,
         Playing,
+        Dropped,
+        Rejoining,
         Done,
     }
 
@@ -98,6 +101,7 @@ internal sealed partial class MpHarnessNode : Node
     // the host has to get its ENet socket up, and there is no way to ask whether it has.
     private const double JoinRetryInterval = 4.0;
     private double _nextJoinAttempt = 2.0;
+    private int _rejoinAttempts;
 
     public override void _Process(double delta)
     {
@@ -176,13 +180,80 @@ internal sealed partial class MpHarnessNode : Node
                 break;
 
             case Stage.Playing:
+                if (DropIfDue())
+                {
+                    break;
+                }
+
                 if (_fight!.Step(delta) is { } outcome)
                 {
                     Finish(outcome, failed: false);
                 }
 
                 break;
+
+            case Stage.Dropped:
+                // The game answers a dropped client by tearing the run down and walking it back to the main menu. That
+                // teardown is the half of the rejoin report the meter can actually be responsible for: it happens while
+                // the ledger is holding a live combat's tally and the overlay is drawing from it.
+                if (NGame.Instance?.MainMenu != null && CombatManager.Instance is not { IsInProgress: true })
+                {
+                    MpHarness.Log("back at the main menu after the drop");
+                    Advance(Stage.Rejoining);
+                }
+
+                break;
+
+            case Stage.Rejoining:
+                Rejoin();
+                break;
         }
+    }
+
+    /// <summary>
+    /// Drops the connection mid-fight, in the rejoin flow, once this peer has played its allotted turns. Client only:
+    /// a host that drops ends the session for everyone, which is a different bug report.
+    /// </summary>
+    private bool DropIfDue()
+    {
+        if (MpConfig.Flow != "rejoin" || MpConfig.Role != MpRole.Client
+            || _fight!.TurnsEnded < MpConfig.DisconnectAfterTurns)
+        {
+            return false;
+        }
+
+        MpHarness.Log($"dropping the connection after {_fight.TurnsEnded} turn(s)");
+        RunManager.Instance.NetService.Disconnect(NetError.Quit);
+        Advance(Stage.Dropped);
+        return true;
+    }
+
+    /// <summary>
+    /// Tries to get back into the host's still-running game, and reports what the game says rather than asserting -
+    /// the point is to find out whether the refusal is the mod's or the game's own.
+    /// </summary>
+    private void Rejoin()
+    {
+        if (_stageElapsed < _nextJoinAttempt)
+        {
+            return;
+        }
+
+        if (LobbyOf(_scene) != null || _rejoinAttempts >= 2)
+        {
+            Finish($"{MpHarness.CompleteSentinel} rejoin attempted {_rejoinAttempts} time(s); lobby={(LobbyOf(_scene) != null)}", failed: false);
+            return;
+        }
+
+        _rejoinAttempts++;
+        _nextJoinAttempt = _stageElapsed + JoinRetryInterval * 2;
+
+        MpHarness.Log($"rejoin attempt {_rejoinAttempts} to {MpConfig.HostIp}:33771");
+
+        _scene = SceneHelper.Instantiate<NMultiplayerTest>("debug/multiplayer_test");
+        NGame.Instance!.RootSceneContainer.SetCurrentScene(_scene);
+        var initializer = new ENetClientConnectionInitializer(MpConfig.NetId, MpConfig.HostIp, 33771);
+        _ = Invoke(_scene, "JoinToHost", initializer);
     }
 
     /// <summary>
