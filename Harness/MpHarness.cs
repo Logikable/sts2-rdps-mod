@@ -224,6 +224,10 @@ internal sealed partial class MpHarnessNode : Node
 
         MpHarness.Log($"dropping the connection after {_fight.TurnsEnded} turn(s)");
         RunManager.Instance.NetService.Disconnect(NetError.Quit);
+
+        // Forget the scene along with the connection. Its _lobby still points at the lobby we just left, and a rejoin
+        // that tested it would answer "already in a lobby" and report success without having reconnected to anything.
+        _scene = null;
         Advance(Stage.Dropped);
         return true;
     }
@@ -234,26 +238,41 @@ internal sealed partial class MpHarnessNode : Node
     /// </summary>
     private void Rejoin()
     {
+        if (_scene == null)
+        {
+            _rejoinAttempts++;
+            _nextJoinAttempt = _stageElapsed + JoinRetryInterval * 2;
+            MpHarness.Log($"rejoin attempt {_rejoinAttempts} to {MpConfig.HostIp}:33771");
+
+            _scene = SceneHelper.Instantiate<NMultiplayerTest>("debug/multiplayer_test");
+            NGame.Instance!.RootSceneContainer.SetCurrentScene(_scene);
+            var initializer = new ENetClientConnectionInitializer(MpConfig.NetId, MpConfig.HostIp, 33771);
+            _ = Invoke(_scene, "JoinToHost", initializer);
+            return;
+        }
+
+        if (LobbyOf(_scene) != null)
+        {
+            Finish($"{MpHarness.CompleteSentinel} rejoined the running game on attempt {_rejoinAttempts}", failed: false);
+            return;
+        }
+
         if (_stageElapsed < _nextJoinAttempt)
         {
             return;
         }
 
-        if (LobbyOf(_scene) != null || _rejoinAttempts >= 2)
+        if (_rejoinAttempts >= 2)
         {
-            Finish($"{MpHarness.CompleteSentinel} rejoin attempted {_rejoinAttempts} time(s); lobby={(LobbyOf(_scene) != null)}", failed: false);
+            Finish(
+                $"{MpHarness.CompleteSentinel} could not rejoin after {_rejoinAttempts} attempt(s) - see the game's own "
+                + "\"Failed join\" line for the reason it gave",
+                failed: false);
             return;
         }
 
-        _rejoinAttempts++;
-        _nextJoinAttempt = _stageElapsed + JoinRetryInterval * 2;
-
-        MpHarness.Log($"rejoin attempt {_rejoinAttempts} to {MpConfig.HostIp}:33771");
-
-        _scene = SceneHelper.Instantiate<NMultiplayerTest>("debug/multiplayer_test");
-        NGame.Instance!.RootSceneContainer.SetCurrentScene(_scene);
-        var initializer = new ENetClientConnectionInitializer(MpConfig.NetId, MpConfig.HostIp, 33771);
-        _ = Invoke(_scene, "JoinToHost", initializer);
+        // Drop the scene so the branch above builds a fresh one; JoinToHost leaves a failed attempt's lobby null.
+        _scene = null;
     }
 
     /// <summary>

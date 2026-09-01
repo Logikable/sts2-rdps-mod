@@ -118,7 +118,7 @@ internal static class MpScenarios
     {
         return scenario switch
         {
-            "echoform" => "EchoForm",
+            "echoform" or "echobuff" => "EchoForm",
             _ => null,
         };
     }
@@ -134,6 +134,18 @@ internal static class MpScenarios
                 yield return ModelDb.Card<EchoForm>().ToMutable();
                 yield return ModelDb.Card<EchoForm>().ToMutable();
                 yield return ModelDb.Card<EchoForm>().ToMutable();
+                break;
+
+            case "echobuff":
+                // The intersection of the two: Echo Form doubles a play, and Bash/Debilitate make every one of those
+                // plays go through the counterfactual engine. Worth its own scenario because the meter's per-target
+                // pending queue and its modifier-keyed calc table now see two settled hits from a single card play
+                // while Recompute is running on each - which neither of the other two scenarios puts together.
+                yield return ModelDb.Card<EchoForm>().ToMutable();
+                yield return ModelDb.Card<EchoForm>().ToMutable();
+                yield return ModelDb.Card<Bash>().ToMutable();
+                yield return ModelDb.Card<Bash>().ToMutable();
+                yield return ModelDb.Card<Debilitate>().ToMutable();
                 break;
 
             case "crossbuff":
