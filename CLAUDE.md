@@ -479,6 +479,47 @@ to an enemy. `CoveredPower` reads other models elsewhere in its file but its
 damage hook is self-contained. Those three are the whole class as of 0.110.1;
 `grep -rn "public decimal Modify.*Multiplier"` over a decompile re-derives it.
 
+## An extra play is not a modifier
+
+The counterfactual engine can only credit a model the game's modifier list
+mentions, and that list holds the models whose `ModifyDamage*` returned something
+other than the identity. Tag Team returns nothing of the sort: it raises a *play
+count*, so an ally's attack on the marked enemy happens twice and the second time
+arrives as an ordinary hit of the ally's with nothing on it to credit. The engine
+is blind to it by construction, not by an omission anyone could find by auditing
+the modifier list.
+
+The credit is the whole extra play, less whatever other teammates' buffs took of
+it — that is, the share that would otherwise have been the dealer's own. Without
+the mark that play does not happen, which is the same rule Vulnerable is credited
+under; a teammate's Vulnerable on the same hit is still worth exactly what it was
+worth, and the two credits cannot overlap because one is taken from what the
+other leaves.
+
+Which of the plays are the granted ones is decided by index — the loop runs the
+base plays first, so the granted ones are the last of them. When something else
+raised the count too (Echo Form doubling the same card) the split between
+grantors is arbitrary and harmlessly so, since an echo is the dealer's own work
+and stays with the dealer either way. Only the count matters, never which index.
+
+**Drop the grant on the way in, not on the way out.** A play loop can end without
+playing every play it planned — `CombatManager.IsOverOrEnding`, the owner dying —
+so consuming the grant on the last play leaves one standing after every loop that
+ends early, and the card's *next* play would spend it. The prefix on
+`Hook.ModifyCardPlayCount` clears it instead: that hook runs once per play loop,
+for every card, before any of that loop's plays exist, and `TagTeamPower`'s own
+postfix records into the cleared slot from inside the same call.
+
+Echo Form needs none of this, and that is why the gap survived so long: it is the
+same mechanic granted to yourself, so the extra play is already the dealer's own
+damage and already lands on the right row. A working Echo Form proves nothing
+about Tag Team.
+
+The Blocked meter is not covered. An attack that also grants block, played twice
+off a mark, still books both lots of block to the card's owner — `BlockSource`
+reads the call stack and knows nothing about play indices. Rare enough to leave
+alone, and worth naming so it is not rediscovered as a bug.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three
