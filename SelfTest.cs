@@ -2118,18 +2118,42 @@ internal static class SelfTest
     }
 
     /// <summary>
-    /// Two appliers stack Doom 20:10 onto the enemy, whose HP is set to 15. Doom is not damage - it instakills - so
-    /// the removed HP (15) is credited as the appliers' own damage, split by stacks: 10 to NetId 2, 5 to NetId 3.
+    /// Doom is not damage - it instakills - so the HP it removes is credited to whoever owns the stacks, split by
+    /// stack count. Two appliers stack it directly, 20 and 10, and the dealer's own Underworld converts a teammate's
+    /// 10-damage swing into 10 more: 40 Doom owned 20:10:10, so an enemy set to 20 HP splits 10 : 5 : 5.
+    ///
+    /// The Underworld arm is why there is a third contributor rather than the two the split needs. Underworld turns a
+    /// *teammate's* damage into stacks of its own owner's, so its stacks must be credited to the player who played
+    /// the card and never to the player whose hit generated them - and it reaches PowerCmd.Apply from inside the
+    /// damage funnel's own AfterDamageGiven, a route no other Doom source takes. It is folded into this scenario
+    /// rather than given one of its own because only one scenario can kill the enemy: the kill ends the combat, after
+    /// which nothing later records anything.
+    ///
     /// Run last, because it kills the target.
     /// </summary>
     private static async Task<bool> DoomScenario(
         NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
     {
         await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
 
         await PowerCmd.Apply<DoomPower>(ctx, enemy, 20m, applier2, null);
         await PowerCmd.Apply<DoomPower>(ctx, enemy, 10m, applier3, null);
-        await CreatureCmd.SetCurrentHp(enemy, 15m);
+
+        await PowerCmd.Apply<UnderworldPower>(ctx, dealer, 1m, dealer, null);
+        UnderworldPower? underworld = dealer.GetPower<UnderworldPower>();
+        if (underworld != null)
+        {
+            await underworld.AfterDamageGiven(
+                ctx,
+                applier2,
+                new DamageResult(enemy, DamageProps.card) { UnblockedDamage = 10 },
+                DamageProps.card,
+                enemy,
+                null);
+        }
+
+        await CreatureCmd.SetCurrentHp(enemy, 20m);
 
         DoomPower? doom = enemy.GetPower<DoomPower>();
         LogShares("Doom", doom);
@@ -2137,8 +2161,10 @@ internal static class SelfTest
 
         CombatLedger l = CombatLedger.Current;
         return Report("Doom",
+            Expect("Underworld applied", underworld == null ? 0m : 1m, 1m),
             Expect("2 aDPS Doom", l.DealtWith(2uL, "Doom"), 10m),
-            Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m));
+            Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m),
+            Expect("you aDPS Doom (via Underworld)", l.DealtWith(you, "Doom"), 5m));
     }
 
     /// <summary>
@@ -3004,6 +3030,12 @@ internal static class SelfTest
         if (enemy.GetPower<DoomPower>() != null)
         {
             await PowerCmd.Remove<DoomPower>(enemy);
+        }
+
+        // Underworld would otherwise sit on the dealer converting every later scenario's teammate damage into Doom.
+        if (dealer.GetPower<UnderworldPower>() != null)
+        {
+            await PowerCmd.Remove<UnderworldPower>(dealer);
         }
 
         if (enemy.GetPower<DemisePower>() != null)

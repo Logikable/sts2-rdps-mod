@@ -122,6 +122,7 @@ internal static class MpScenarios
         {
             "echoform" or "echobuff" => "EchoForm",
             "tagteam" => "TagTeam",
+            "underworld" => "Underworld",
             _ => null,
         };
     }
@@ -170,6 +171,16 @@ internal static class MpScenarios
                 yield return ModelDb.Card<TagTeam>().ToMutable();
                 yield return ModelDb.Card<TagTeam>().ToMutable();
                 yield return ModelDb.Card<TagTeam>().ToMutable();
+                break;
+
+            case "underworld":
+                // Underworld converts a *teammate's* damage into Doom on the enemy - stacks owned by the player who
+                // played the card, applied from inside the damage funnel's own AfterDamageGiven. When the Doom
+                // finally kills, the HP it removes has to land on the Underworld player, which is the report this
+                // scenario exists for. Both decks carry it, so both directions of the cross-player credit run.
+                yield return ModelDb.Card<Underworld>().ToMutable();
+                yield return ModelDb.Card<Underworld>().ToMutable();
+                yield return ModelDb.Card<Underworld>().ToMutable();
                 break;
 
             default:
