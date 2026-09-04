@@ -515,10 +515,25 @@ same mechanic granted to yourself, so the extra play is already the dealer's own
 damage and already lands on the right row. A working Echo Form proves nothing
 about Tag Team.
 
-The Blocked meter is not covered. An attack that also grants block, played twice
-off a mark, still books both lots of block to the card's owner — `BlockSource`
-reads the call stack and knows nothing about play indices. Rare enough to leave
-alone, and worth naming so it is not rediscovered as a bug.
+**The Blocked meter follows the same rule, down a different funnel.** An attack
+that also grants block, played twice off a mark, gives the second lot of block to
+the buyer too — for the same reason the damage goes there, since without the mark
+that block is never gained. The insertion point is not the modifier list, though:
+block credit starts from `BlockAttributionEngine`'s *base strand*, the part left
+once every player-owned modifier has taken its share, so that is the part
+`BaseStrands` splits out. A teammate's Dexterity on the same gain keeps its own
+strand either way. The two halves therefore share nothing but `BuyersOf`, and the
+damage half passing says nothing about the block half — each needs its own
+scenario.
+
+Two smaller asymmetries, both deliberate. A block strand carries one name for
+both the wearer's own breakdown and the given/received rows, so a bought play's
+block reads "Tag Team" in the wearer's list rather than the card's name — where
+the damage side keeps the card on the dealt row and says "Tag Team" only on the
+given/received line. And the block side does not filter out a buyer who is the
+card's own owner, where the damage side does: Tag Team cannot double its
+applier's own card, so it cannot arise, and a strand owned by the wearer is block
+the pool already treats as their own.
 
 ## Checking a new game version
 

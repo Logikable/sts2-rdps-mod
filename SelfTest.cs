@@ -1672,8 +1672,12 @@ internal static class SelfTest
         return card;
     }
 
-    /// <summary>A card being played, which is all a block gain needs to name itself and say whose it is.</summary>
-    private static CardPlay Play(CardModel card, Player player, Creature target)
+    /// <summary>
+    /// A card being played, which is all a block gain needs to name itself and say whose it is. The index and count
+    /// say where in a series of plays this one falls, which is the only thing that distinguishes a play a teammate's
+    /// Tag Team bought from the card owner's own.
+    /// </summary>
+    private static CardPlay Play(CardModel card, Player player, Creature target, int index = 0, int count = 1)
     {
         return new CardPlay
         {
@@ -1683,8 +1687,8 @@ internal static class SelfTest
             ResultPile = PileType.Discard,
             Resources = default,
             IsAutoPlay = false,
-            PlayIndex = 0,
-            PlayCount = 1,
+            PlayIndex = index,
+            PlayCount = count,
         };
     }
 
@@ -2060,6 +2064,11 @@ internal static class SelfTest
     /// one the mark bought, so all 6 of it is credited to the teammate who played Tag Team. The first play is the
     /// negative control: crediting the card rather than the play would hand the teammate both, and the two are
     /// indistinguishable in a scenario that swings only once.
+    ///
+    /// Then the same again for the block half, which travels an entirely separate funnel: block is credited from
+    /// BlockAttributionEngine's base strand rather than from a modifier list, so the damage half passing says nothing
+    /// about it. Both plays grant 5 and a 10-damage hit spends the lot, which is what puts the block on the meter at
+    /// all - a gain that is never hit is worth nothing and is never booked.
     /// </summary>
     private static async Task<bool> TagTeamScenario(
         NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
@@ -2089,18 +2098,8 @@ internal static class SelfTest
 
         for (int i = 0; i < playCount; i++)
         {
-            var cardPlay = new CardPlay
-            {
-                Card = attack,
-                Player = dealer.Player!,
-                Target = enemy,
-                ResultPile = PileType.Discard,
-                Resources = default,
-                IsAutoPlay = false,
-                PlayIndex = i,
-                PlayCount = playCount,
-            };
-            await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, attack, cardPlay);
+            await CreatureCmd.Damage(
+                ctx, new[] { enemy }, 6m, DamageProps.card, dealer, attack, Play(attack, dealer.Player!, enemy, i, playCount));
         }
 
         // Printed rather than compared against the same expression: the row takes its name from the game's own card
@@ -2110,11 +2109,37 @@ internal static class SelfTest
         GD.Print($"[RdpsMeter] Tag Team: {playCount} play(s) of '{attackName}', credited as '{tagTeam}'");
 
         CombatLedger l = CombatLedger.Current;
-        return Report("Tag Team",
+        bool dealt = Report("Tag Team (damage)",
             Expect("play count", playCount, 2m),
             Expect("you aDPS", l.DealtWith(you, attackName), 12m),
             Expect("given 2->you", l.GivenTo(2uL, tagTeam, you), 6m),
             Expect("recv <-2", l.ReceivedFrom(you, tagTeam, 2uL), 6m));
+
+        // The same mark against an attack that also grants block. Both plays grant 5, and a 10-damage hit spends all
+        // of it - block only reaches the meter when something hits it. Your own 5 goes first, so the 5 that stops the
+        // rest of the hit is the one the mark bought.
+        await Prep(dealer, enemy);
+        await PowerCmd.Apply<TagTeamPower>(ctx, enemy, 1m, applier2, null);
+        int blockPlays = Hook.ModifyCardPlayCount(enemy.CombatState!, attack, 1, enemy, out List<AbstractModel> _);
+
+        for (int i = 0; i < blockPlays; i++)
+        {
+            await CreatureCmd.GainBlock(
+                dealer, 5m, BlockProps.card, Play(attack, dealer.Player!, dealer, i, blockPlays));
+        }
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 10m, DamageProps.card, enemy, null, null);
+
+        bool blocked = Report("Tag Team (block)",
+            Expect("play count", blockPlays, 2m),
+            Expect("your own 5 goes first", l.BlockedWith(you, attackName), 5m),
+            Expect("then the 5 they bought", l.BlockedWith(you, tagTeam), 5m),
+            Expect("given 2->you", l.BlockGivenTo(2uL, tagTeam, you), 5m),
+            Expect("you stopped 5", l.RBlockOf(you), 5m),
+            Expect("they stopped 5", l.RBlockOf(2uL), 5m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        return dealt && blocked;
     }
 
     /// <summary>

@@ -70,6 +70,12 @@ internal static class TagTeamPlayCountPatches
 /// Which of a card's plays a Tag Team bought, and for whom. Keyed weakly by the card being played, since a grant is
 /// only ever read during that card's own play loop.
 /// </summary>
+/// <summary>
+/// Who bought an extra card play, and the name to file their credit under: fractions summing to 1, so the same answer
+/// serves the damage the play dealt and the block it granted.
+/// </summary>
+internal readonly record struct Buyers(string Effect, IReadOnlyList<(ulong NetId, decimal Fraction)> Shares);
+
 internal static class TagTeamCredit
 {
     private sealed class Grant
@@ -118,19 +124,21 @@ internal static class TagTeamCredit
     }
 
     /// <summary>
-    /// The attribution again, with the dealer's own share moved to whoever bought this play. Returns it untouched
-    /// unless the hit belongs to a play a Tag Team added.
+    /// Who bought this play and what to file it under, or null when the play is not one a Tag Team added.
     ///
     /// Which of the plays those are is decided by index: the loop runs the base plays first, so the granted ones are
     /// the last <c>Extras</c> of them. When something else added plays too - Echo Form doubling the same card - the
     /// split between the two grantors is arbitrary, and harmlessly so: an echo is the dealer's own work and is
     /// credited to the dealer either way, so only the count of Tag Team plays matters, never which index they are.
+    ///
+    /// The fractions sum to 1, so a caller can hand out a share of anything: the damage the play dealt, or the block
+    /// it granted.
     /// </summary>
-    public static HitAttribution Redirect(HitAttribution attribution, CardPlay? cardPlay)
+    public static Buyers? BuyersOf(CardPlay? cardPlay)
     {
-        if (cardPlay is not { } play || attribution.DealerPreBlock <= 0m || attribution.DealerNetId is not ulong dealer)
+        if (cardPlay is not { } play)
         {
-            return attribution;
+            return null;
         }
 
         Grant? grant;
@@ -138,34 +146,52 @@ internal static class TagTeamCredit
         {
             if (!Grants.TryGetValue(play.Card, out grant))
             {
-                return attribution;
+                return null;
             }
         }
 
         if (play.PlayIndex < play.PlayCount - grant.Extras)
         {
-            return attribution;
+            return null;
         }
 
-        decimal totalWeight = grant.Weights.Values.Sum();
-        if (totalWeight <= 0m)
+        decimal total = grant.Weights.Values.Sum();
+        if (total <= 0m)
+        {
+            return null;
+        }
+
+        return new Buyers(
+            EffectName(),
+            grant.Weights.Select(w => (w.Key, w.Value / total)).ToList());
+    }
+
+    /// <summary>
+    /// The attribution again, with the dealer's own share moved to whoever bought this play. Returns it untouched
+    /// unless the hit belongs to a play a Tag Team added.
+    /// </summary>
+    public static HitAttribution Redirect(HitAttribution attribution, CardPlay? cardPlay)
+    {
+        if (attribution.DealerPreBlock <= 0m
+            || attribution.DealerNetId is not ulong dealer
+            || BuyersOf(cardPlay) is not { } bought)
         {
             return attribution;
         }
 
         // A Tag Team cannot double its own applier's card - the power returns early on that - so the dealer is never
-        // among the grantors. Skipping them anyway keeps this true of any future caller rather than by luck.
+        // among the buyers. Skipping them anyway keeps this true of any future caller rather than by luck.
         var externals = attribution.Externals.ToList();
         decimal moved = 0m;
-        foreach ((ulong netId, decimal weight) in grant.Weights)
+        foreach ((ulong netId, decimal fraction) in bought.Shares)
         {
             if (netId == dealer)
             {
                 continue;
             }
 
-            decimal portion = attribution.DealerPreBlock * weight / totalWeight;
-            externals.Add(new ExternalContribution(netId, EffectName(), portion));
+            decimal portion = attribution.DealerPreBlock * fraction;
+            externals.Add(new ExternalContribution(netId, bought.Effect, portion));
             moved += portion;
         }
 

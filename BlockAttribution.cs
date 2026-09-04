@@ -69,7 +69,7 @@ internal static class BlockAttributionEngine
 
         if (owned.Count == 0)
         {
-            return Whole(target, finalResult, baseOwner, baseName);
+            return Whole(target, finalResult, baseOwner, baseName, cardPlay);
         }
 
         var ownedSet = new HashSet<AbstractModel>(owned.Select(o => o.Mod));
@@ -81,7 +81,7 @@ internal static class BlockAttributionEngine
         // would read as nonsense, so the whole gain - already reduced - stays on what granted it.
         if (combinedGain <= 0m)
         {
-            return Whole(target, finalResult, baseOwner, baseName);
+            return Whole(target, finalResult, baseOwner, baseName, cardPlay);
         }
 
         var rawGain = new Dictionary<AbstractModel, decimal>();
@@ -113,7 +113,7 @@ internal static class BlockAttributionEngine
         decimal own = finalResult - attributed;
         if (own > 0m)
         {
-            strands.Add(new BlockStrand(baseOwner, baseName, own));
+            strands.AddRange(BaseStrands(own, baseOwner, baseName, cardPlay));
         }
 
         foreach (((ulong netId, string effect), decimal amount) in byKey)
@@ -127,16 +127,42 @@ internal static class BlockAttributionEngine
         return new BlockGrant { Receiver = target, Amount = finalResult, Strands = strands };
     }
 
-    private static BlockGrant Whole(Creature target, decimal amount, ulong owner, string name)
+    private static BlockGrant Whole(Creature target, decimal amount, ulong owner, string name, CardPlay? cardPlay)
     {
         return new BlockGrant
         {
             Receiver = target,
             Amount = amount,
             Strands = amount > 0m
-                ? new[] { new BlockStrand(owner, name, amount) }
+                ? BaseStrands(amount, owner, name, cardPlay).ToList()
                 : Array.Empty<BlockStrand>(),
         };
+    }
+
+    /// <summary>
+    /// The grant's own strand - what is left once every player-owned modifier has taken its share - split out to
+    /// whoever bought the play, when a teammate's Tag Team is what bought it.
+    ///
+    /// Same rule as the damage side, and for the same reason: without the mark the play does not happen, so the block
+    /// it grants is no more the card owner's own work than the damage is. A teammate's Dexterity on the same gain
+    /// keeps its own strand either way - this only ever moves the part that would have been the card owner's.
+    ///
+    /// No filtering for a buyer who is the card's owner, unlike the damage side. Tag Team cannot double its own
+    /// applier's card, so it cannot happen; and were it ever to, a strand owned by the wearer is block the pool
+    /// already treats as their own, so the answer would still be right.
+    /// </summary>
+    private static IEnumerable<BlockStrand> BaseStrands(decimal amount, ulong owner, string name, CardPlay? cardPlay)
+    {
+        if (Patches.TagTeamCredit.BuyersOf(cardPlay) is not { } bought)
+        {
+            yield return new BlockStrand(owner, name, amount);
+            yield break;
+        }
+
+        foreach ((ulong netId, decimal fraction) in bought.Shares)
+        {
+            yield return new BlockStrand(netId, bought.Effect, amount * fraction);
+        }
     }
 
     /// <summary>
