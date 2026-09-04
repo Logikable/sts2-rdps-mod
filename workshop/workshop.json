@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.26 - a co-op crash fix. Loading a saved co-op run - the way you come back after everyone has disconnected - made the meter throw on every frame and flood the log, because it was still holding the class icons it had resolved back at the main menu, and loading a run frees them. It now looks the icon up fresh each time, so the rows draw and the run loads normally. Solo runs were never affected. A saved breakdown that has been damaged now also costs you that breakdown rather than the run it belongs to. Verified against game v0.111.0; still works on v0.107.1 and later.",
+  "changeNote": "0.1.27 - Tag Team now pays the player who played it. Marking an enemy so a teammate's next attack hits twice was worth nothing on the meter beyond the card's own 11: the extra attack is a whole extra hit rather than a bigger one, so all of it was booked to the teammate who swung it. Both the damage and the block of that bought play now go to you, while any other teammate's buffs on the same hit keep exactly what they were worth. Underworld was checked over after a report and is credited correctly - the Doom it makes out of a teammate's damage belongs to whoever played Underworld, and the kill pays them the health it removes. Verified against game v0.111.0; still works on v0.107.1 and later.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
