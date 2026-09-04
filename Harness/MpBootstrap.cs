@@ -121,6 +121,7 @@ internal static class MpScenarios
         return scenario switch
         {
             "echoform" or "echobuff" => "EchoForm",
+            "tagteam" => "TagTeam",
             _ => null,
         };
     }
@@ -159,6 +160,16 @@ internal static class MpScenarios
                 yield return ModelDb.Card<Bash>().ToMutable();
                 yield return ModelDb.Card<Bash>().ToMutable();
                 yield return ModelDb.Card<Debilitate>().ToMutable();
+                break;
+
+            case "tagteam":
+                // Tag Team is the cross-player Echo Form: it marks an enemy, and the *other* player's next attack at
+                // it plays twice. That makes it the only card whose whole payload is damage somebody else deals, and
+                // the only one whose credit the counterfactual engine cannot reach - a play count is not a modifier.
+                // Both decks carry it so either peer can be the one who buys the other the extra swing.
+                yield return ModelDb.Card<TagTeam>().ToMutable();
+                yield return ModelDb.Card<TagTeam>().ToMutable();
+                yield return ModelDb.Card<TagTeam>().ToMutable();
                 break;
 
             default:

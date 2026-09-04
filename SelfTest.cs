@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Helpers;
+using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Cards;
 using MegaCrit.Sts2.Core.Models.Potions;
@@ -146,6 +147,7 @@ internal static class SelfTest
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
         all &= await OutbreakScenario(context, dealer, enemy, applier2);
+        all &= await TagTeamScenario(context, dealer, enemy, applier2);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
         all &= FightLabelScenario();
         all &= PersistenceRoundTrip();
@@ -2049,6 +2051,73 @@ internal static class SelfTest
     }
 
     /// <summary>
+    /// Tag Team: a teammate marks the enemy, and the dealer's next attack at it plays twice. The extra play is a
+    /// whole further hit rather than a bigger one, so it carries no modifier the counterfactual engine can credit -
+    /// Tag Team changes a play count, and the modifier list Hook.ModifyDamageInternal builds never mentions it. The
+    /// credit therefore has to be moved by play index instead, which is what this asserts.
+    ///
+    /// Both plays of a 6-damage attack are swung. The first is the dealer's own and stays theirs; the second is the
+    /// one the mark bought, so all 6 of it is credited to the teammate who played Tag Team. The first play is the
+    /// negative control: crediting the card rather than the play would hand the teammate both, and the two are
+    /// indistinguishable in a scenario that swings only once.
+    /// </summary>
+    private static async Task<bool> TagTeamScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<TagTeamPower>(ctx, enemy, 1m, applier2, null);
+
+        // A card out of the dealer's own deck rather than a named class: the starting decks are per-character, and
+        // any of their attacks is what Tag Team doubles.
+        CardModel? attack = dealer.Player!.Deck.Cards
+            .FirstOrDefault(c => c.Type == CardType.Attack && c.TargetType == TargetType.AnyEnemy);
+        if (attack == null)
+        {
+            return Report("Tag Team", Expect("an attack in the deck", 0m, 1m));
+        }
+
+        if (attack.Owner != dealer.Player)
+        {
+            attack.Owner = dealer.Player!;
+        }
+
+        // The real entry point the game calls once per play loop, so the mod sees the grant exactly as it does in a
+        // fight - including the prefix that clears any previous one.
+        int playCount = Hook.ModifyCardPlayCount(enemy.CombatState!, attack, 1, enemy, out List<AbstractModel> _);
+
+        for (int i = 0; i < playCount; i++)
+        {
+            var cardPlay = new CardPlay
+            {
+                Card = attack,
+                Player = dealer.Player!,
+                Target = enemy,
+                ResultPile = PileType.Discard,
+                Resources = default,
+                IsAutoPlay = false,
+                PlayIndex = i,
+                PlayCount = playCount,
+            };
+            await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, attack, cardPlay);
+        }
+
+        // Printed rather than compared against the same expression: the row takes its name from the game's own card
+        // title, and a test that recomputed it would agree with itself whatever the game said.
+        string tagTeam = ModelDb.Card<TagTeam>().TitleLocString.GetFormattedText();
+        string attackName = attack.TitleLocString.GetFormattedText();
+        GD.Print($"[RdpsMeter] Tag Team: {playCount} play(s) of '{attackName}', credited as '{tagTeam}'");
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Tag Team",
+            Expect("play count", playCount, 2m),
+            Expect("you aDPS", l.DealtWith(you, attackName), 12m),
+            Expect("given 2->you", l.GivenTo(2uL, tagTeam, you), 6m),
+            Expect("recv <-2", l.ReceivedFrom(you, tagTeam, 2uL), 6m));
+    }
+
+    /// <summary>
     /// Two appliers stack Doom 20:10 onto the enemy, whose HP is set to 15. Doom is not damage - it instakills - so
     /// the removed HP (15) is credited as the appliers' own damage, split by stacks: 10 to NetId 2, 5 to NetId 3.
     /// Run last, because it kills the target.
@@ -2945,6 +3014,13 @@ internal static class SelfTest
         if (enemy.GetPower<StranglePower>() != null)
         {
             await PowerCmd.Remove<StranglePower>(enemy);
+        }
+
+        // The game removes a Tag Team mark as soon as it has doubled a play; a scenario that drives the play-count
+        // hook directly never reaches that, so one left standing would double a later scenario's swing.
+        if (enemy.GetPower<TagTeamPower>() != null)
+        {
+            await PowerCmd.Remove<TagTeamPower>(enemy);
         }
 
         if (dealer.GetPower<DexterityPower>() != null)
