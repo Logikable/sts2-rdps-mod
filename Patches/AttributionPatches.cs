@@ -190,6 +190,8 @@ internal static class AttributionPatches
         ExecutingEffect.Clear();
         ConcoctAttribution.Clear();
         TagTeamCredit.Clear();
+        GiftedCardCredit.Clear();
+        PlayInFlight.Clear();
         BlockPatches.Clear();
     }
 }

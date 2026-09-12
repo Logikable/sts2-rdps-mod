@@ -70,12 +70,6 @@ internal static class TagTeamPlayCountPatches
 /// Which of a card's plays a Tag Team bought, and for whom. Keyed weakly by the card being played, since a grant is
 /// only ever read during that card's own play loop.
 /// </summary>
-/// <summary>
-/// Who bought an extra card play, and the name to file their credit under: fractions summing to 1, so the same answer
-/// serves the damage the play dealt and the block it granted.
-/// </summary>
-internal readonly record struct Buyers(string Effect, IReadOnlyList<(ulong NetId, decimal Fraction)> Shares);
-
 internal static class TagTeamCredit
 {
     private sealed class Grant
@@ -164,51 +158,6 @@ internal static class TagTeamCredit
         return new Buyers(
             EffectName(),
             grant.Weights.Select(w => (w.Key, w.Value / total)).ToList());
-    }
-
-    /// <summary>
-    /// The attribution again, with the dealer's own share moved to whoever bought this play. Returns it untouched
-    /// unless the hit belongs to a play a Tag Team added.
-    /// </summary>
-    public static HitAttribution Redirect(HitAttribution attribution, CardPlay? cardPlay)
-    {
-        if (attribution.DealerPreBlock <= 0m
-            || attribution.DealerNetId is not ulong dealer
-            || BuyersOf(cardPlay) is not { } bought)
-        {
-            return attribution;
-        }
-
-        // A Tag Team cannot double its own applier's card - the power returns early on that - so the dealer is never
-        // among the buyers. Skipping them anyway keeps this true of any future caller rather than by luck.
-        var externals = attribution.Externals.ToList();
-        decimal moved = 0m;
-        foreach ((ulong netId, decimal fraction) in bought.Shares)
-        {
-            if (netId == dealer)
-            {
-                continue;
-            }
-
-            decimal portion = attribution.DealerPreBlock * fraction;
-            externals.Add(new ExternalContribution(netId, bought.Effect, portion));
-            moved += portion;
-        }
-
-        if (moved <= 0m)
-        {
-            return attribution;
-        }
-
-        return new HitAttribution
-        {
-            Target = attribution.Target,
-            Total = attribution.Total,
-            DealerNetId = attribution.DealerNetId,
-            DealerCard = attribution.DealerCard,
-            DealerPreBlock = attribution.DealerPreBlock - moved,
-            Externals = externals,
-        };
     }
 
     /// <summary>

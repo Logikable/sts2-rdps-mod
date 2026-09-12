@@ -535,6 +535,47 @@ card's own owner, where the damage side does: Tag Team cannot double its
 applier's own card, so it cannot arise, and a strand owned by the wearer is block
 the pool already treats as their own.
 
+## A card you were given is not your own
+
+Blade Symphony and Largesse are the same blind spot one step further on. Tag
+Team buys an ally an extra play of a card they own; these two create the card
+itself — two Shivs in every ally's hand, a colourless card into one ally's —
+and the receiver then plays an ordinary card of theirs. Nothing modified the
+hit, so the modifier list holds nothing to remove and the counterfactual engine
+credits the giver nothing. `BoughtPlay` treats both mechanics as one thing,
+since the answer has the same shape: whoever paid, and the fractions to pay
+them. Tag Team is asked first, so a gifted card doubled by a mark splits
+arbitrarily between the two — the same harmless call the Echo Form case makes.
+
+**The giver is not on the hook that reports the card.**
+`Hook.AfterCardGeneratedForCombat` carries a `creator`, and for Largesse it is
+right. `Shiv.CreateInHand` defaults `creator` to the *receiving* player, and
+Blade Symphony passes none, so the hook names the person being handed the Shiv
+as the person who made it. Nothing else on the hook recovers the giver, and the
+card's `OnPlay` is an async method whose state machine is not a patch target
+worth having. `PlayInFlight` tracks who is mid-play from `Hook.BeforeCardPlayed`
+and `Hook.AfterCardPlayed` instead, and the giver is whoever else is playing
+something. It answers only when exactly one other player is: two at once cannot
+be told apart this way, and crediting neither is the honest result.
+
+That tracker's entries can go stale — `OnPlayWrapper` returns without reaching
+`Hook.AfterCardPlayed` when the owner dies or the combat ends — and that is
+survivable rather than lucky. An entry is overwritten by that player's next
+play, dropped at combat end, and only ever read to explain a card generated
+*for somebody else*, which nothing but a card play does.
+
+**The line is a card that did not exist.** Plot draws an ally cards and Tutor
+moves one of theirs into hand; those cards were already the ally's, the
+counterfactual is unknowable — which card? — and neither is credited. A created
+card has an exact one: this Shiv, four damage. Without that line the same
+argument reaches Energy Surge and every tempo card in the game.
+
+The receiver's own Strength and Fan of Knives inflate a gifted Shiv, and all of
+that inflation moves to the giver. It follows from the rule the engine uses
+everywhere (a play is worth the damage it actually did), and it is the part most
+likely to be questioned on screen: a Silent with stacked Strength makes somebody
+else's Blade Symphony row large. That is the rule working, not a bug to fix.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three

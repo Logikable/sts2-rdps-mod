@@ -61,10 +61,11 @@ internal static class AttributionEngine
     public const string UnknownSource = "(none)";
 
     /// <summary>
-    /// The counterfactual decomposition of one hit, then one correction the counterfactual cannot make on its own:
-    /// a play a teammate's Tag Team bought is not a modified hit but an extra one, so nothing in the modifier list
-    /// mentions it. <see cref="Patches.TagTeamCredit"/> moves the dealer's own share of such a play to whoever bought
-    /// it, leaving every other teammate's share exactly where the engine put it.
+    /// The counterfactual decomposition of one hit, then one correction the counterfactual cannot make on its own: a
+    /// play a teammate paid for is not a modified hit, so nothing in the modifier list mentions it. A Tag Team mark
+    /// buys an extra play of a card the dealer owns; a gifted card buys every play of a card they would not have had
+    /// at all. <see cref="Patches.BoughtPlay"/> moves the dealer's own share of such a play to whoever bought it,
+    /// leaving every other teammate's share exactly where the engine put it.
     /// </summary>
     public static HitAttribution Attribute(
         decimal baseAmount,
@@ -79,7 +80,7 @@ internal static class AttributionEngine
     {
         HitAttribution attribution = Decompose(
             baseAmount, props, target, dealer, cardSource, cardPlay, flags, gameModifiers, finalResult);
-        return Patches.TagTeamCredit.Redirect(attribution, cardPlay);
+        return Patches.BoughtPlay.Redirect(attribution, cardPlay);
     }
 
     private static HitAttribution Decompose(

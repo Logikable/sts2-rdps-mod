@@ -47,6 +47,13 @@ code-identical assembly, so one build covers both.
   Strength pool and the pool's name alone would not say who did what. Other
   effects are named after themselves — a Vulnerable share reads "Vulnerable"
   whichever card applied it.
+- A play a teammate paid for is theirs, even though nothing modified it. A Tag
+  Team mark buys an extra play of a card you own; a card made for you — Blade
+  Symphony's Shivs, a colourless card off Largesse — buys every play of a card
+  you would not have had. Either way the part that would have been yours goes
+  to whoever bought it, and any other teammate's buffs on the same hit keep
+  what they were worth. A card you make for yourself stays your own work, and a
+  card merely drawn for you (Plot, Tutor) was already yours.
 
 ### Blocked
 

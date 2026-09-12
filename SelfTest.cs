@@ -148,6 +148,7 @@ internal static class SelfTest
         all &= await HauntScenario(context, dealer, enemy);
         all &= await OutbreakScenario(context, dealer, enemy, applier2);
         all &= await TagTeamScenario(context, dealer, enemy, applier2);
+        all &= await GiftedCardScenario(context, dealer, enemy, applier2);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
         all &= FightLabelScenario();
         all &= PersistenceRoundTrip();
@@ -1233,7 +1234,13 @@ internal static class SelfTest
     /// </summary>
     private static CardModel CardOwnedBy(Creature owner)
     {
-        var card = (LegionOfBone)ModelDb.Card<LegionOfBone>().MutableClone();
+        return CardOwnedBy<LegionOfBone>(owner);
+    }
+
+    /// <summary>A fresh card of the given model belonging to the creature's player, for the same reason.</summary>
+    private static T CardOwnedBy<T>(Creature owner) where T : CardModel
+    {
+        var card = (T)ModelDb.Card<T>().MutableClone();
         card.Owner = owner.Player!;
         return card;
     }
@@ -2137,6 +2144,91 @@ internal static class SelfTest
             Expect("given 2->you", l.BlockGivenTo(2uL, tagTeam, you), 5m),
             Expect("you stopped 5", l.RBlockOf(you), 5m),
             Expect("they stopped 5", l.RBlockOf(2uL), 5m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+
+        return dealt && blocked;
+    }
+
+    /// <summary>
+    /// A card you make for a teammate is yours: what it deals, and the block it grants, are credited to you rather
+    /// than to the player holding it.
+    ///
+    /// Blade Symphony puts two Shivs in every ally's hand; Largesse hands one ally a colourless card. Neither is a
+    /// modifier - the card simply exists where it did not - so the counterfactual engine has nothing in the modifier
+    /// list to remove, the same blind spot Tag Team has. What the gift is worth is the whole play, less whatever
+    /// other teammates' buffs took of it.
+    ///
+    /// The two cards reach the giver by different routes and both are driven here. Largesse passes itself as the
+    /// generating hook's creator, so the giver is read straight off it. Blade Symphony passes none, and
+    /// Shiv.CreateInHand then defaults it to the *receiving* player, so the hook reports the person being handed the
+    /// Shiv as the person who made it; the giver has to come from who else is mid-play. Covering one route says
+    /// nothing about the other.
+    ///
+    /// Two negative controls on the damage half. A Shiv the giver made for themselves stays their own work - Blade
+    /// Symphony hands them to every ally including the player who plays it, so this is the common case, not an edge
+    /// one. And the gifted Shiv is thrown after the giving play has finished, because the credit rides the card and
+    /// not a window of time: a Shiv held for three turns is still the giver's when it is finally thrown.
+    /// </summary>
+    private static async Task<bool> GiftedCardScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        ICombatState combat = enemy.CombatState!;
+
+        // The real hooks that bracket a card play, so the mod learns who is generating cards exactly as it does in a
+        // fight.
+        CardModel symphony = CardOwnedBy<BladeSymphony>(applier2);
+        CardPlay giving = Play(symphony, applier2.Player!, dealer);
+        await Hook.BeforeCardPlayed(combat, giving);
+
+        CardModel gifted = CardOwnedBy<Shiv>(dealer);
+        CardModel theirOwn = CardOwnedBy<Shiv>(applier2);
+        await Hook.AfterCardGeneratedForCombat(combat, gifted, dealer.Player!);
+        await Hook.AfterCardGeneratedForCombat(combat, theirOwn, applier2.Player!);
+        await Hook.AfterCardPlayed(combat, ctx, giving);
+
+        await CreatureCmd.Damage(
+            ctx, new[] { enemy }, 4m, DamageProps.card, dealer, gifted, Play(gifted, dealer.Player!, enemy));
+        await CreatureCmd.Damage(
+            ctx, new[] { enemy }, 4m, DamageProps.card, applier2, theirOwn, Play(theirOwn, applier2.Player!, enemy));
+
+        // Printed rather than compared against the same expression: the rows take their names from the game's own
+        // card titles, and a test that recomputed them would agree with itself whatever the game said.
+        string bladeSymphony = symphony.TitleLocString.GetFormattedText();
+        string shiv = gifted.TitleLocString.GetFormattedText();
+        GD.Print($"[RdpsMeter] Gifted card: '{shiv}' credited as '{bladeSymphony}'");
+
+        CombatLedger l = CombatLedger.Current;
+        bool dealt = Report("Blade Symphony (damage)",
+            Expect("you aDPS", l.DealtWith(you, shiv), 4m),
+            Expect("given 2->you", l.GivenTo(2uL, bladeSymphony, you), 4m),
+            Expect("recv <-2", l.ReceivedFrom(you, bladeSymphony, 2uL), 4m),
+            Expect("their own shiv is theirs", l.DealtWith(2uL, shiv), 4m),
+            Expect("and is given to nobody", l.GivenTo(2uL, bladeSymphony, 2uL), 0m));
+
+        // The block half travels an entirely separate funnel - block is credited from BlockAttributionEngine's base
+        // strand rather than from a modifier list - so the damage half passing says nothing about it. Largesse hands
+        // over Finesse, the dealer gains its 5, and a 5-damage hit spends the lot: a gain that is never hit is worth
+        // nothing and is never booked.
+        await Prep(dealer, enemy);
+        CardModel largesse = CardOwnedBy<Largesse>(applier2);
+        CardPlay handing = Play(largesse, applier2.Player!, dealer);
+        await Hook.BeforeCardPlayed(combat, handing);
+
+        CardModel handed = CardOwnedBy<Finesse>(dealer);
+        await Hook.AfterCardGeneratedForCombat(combat, handed, applier2.Player!);
+        await Hook.AfterCardPlayed(combat, ctx, handing);
+
+        await CreatureCmd.GainBlock(dealer, 5m, BlockProps.card, Play(handed, dealer.Player!, dealer));
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 5m, DamageProps.card, enemy, null, null);
+
+        string largesseName = largesse.TitleLocString.GetFormattedText();
+        bool blocked = Report("Largesse (block)",
+            Expect("the strand is the giver's", l.BlockedWith(you, largesseName), 5m),
+            Expect("given 2->you", l.BlockGivenTo(2uL, largesseName, you), 5m),
+            Expect("they stopped 5", l.RBlockOf(2uL), 5m),
+            Expect("you stopped none", l.RBlockOf(you), 0m),
             Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
 
         return dealt && blocked;

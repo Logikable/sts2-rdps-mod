@@ -141,19 +141,21 @@ internal static class BlockAttributionEngine
 
     /// <summary>
     /// The grant's own strand - what is left once every player-owned modifier has taken its share - split out to
-    /// whoever bought the play, when a teammate's Tag Team is what bought it.
+    /// whoever bought the play, when a teammate is what bought it.
     ///
-    /// Same rule as the damage side, and for the same reason: without the mark the play does not happen, so the block
-    /// it grants is no more the card owner's own work than the damage is. A teammate's Dexterity on the same gain
-    /// keeps its own strand either way - this only ever moves the part that would have been the card owner's.
+    /// Same rule as the damage side, and for the same reason: without the mark, or without the card being given away,
+    /// the play does not happen, so the block it grants is no more the card owner's own work than the damage is. A
+    /// teammate's Dexterity on the same gain keeps its own strand either way - this only ever moves the part that
+    /// would have been the card owner's.
     ///
-    /// No filtering for a buyer who is the card's owner, unlike the damage side. Tag Team cannot double its own
-    /// applier's card, so it cannot happen; and were it ever to, a strand owned by the wearer is block the pool
-    /// already treats as their own, so the answer would still be right.
+    /// No filtering for a buyer who is the card's owner, unlike the damage side. Neither mechanic can buy a play for
+    /// the player who paid - Tag Team cannot double its own applier's card, and a gift to yourself is never recorded -
+    /// and were it ever to, a strand owned by the wearer is block the pool already treats as their own, so the answer
+    /// would still be right.
     /// </summary>
     private static IEnumerable<BlockStrand> BaseStrands(decimal amount, ulong owner, string name, CardPlay? cardPlay)
     {
-        if (Patches.TagTeamCredit.BuyersOf(cardPlay) is not { } bought)
+        if (Patches.BoughtPlay.BuyersOf(cardPlay) is not { } bought)
         {
             yield return new BlockStrand(owner, name, amount);
             yield break;
