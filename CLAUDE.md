@@ -219,7 +219,15 @@ scale down in the same proportion as the wasted excess.
 It does work, contrary to an earlier conclusion. Build `-p:Harness=true`, copy
 the dll into the game's `mods/RdpsMeter/`, and drop an empty `autotest.marker`
 beside it; the mod then starts a run, enters a combat, runs every scenario and
-quits. Launch the game **directly** — `cd "<game dir>" && ./SlayTheSpire2.exe`
+quits.
+
+**Build it against the installed game, not the default reference.** The
+scenarios call game methods directly, so the harness needs
+`-p:Sts2Ref=lib/sts2-<installed ver>.dll` — `lib/sts2.dll` is an older capture
+and the harness does not compile against it (`PoisonPower.Trigger` is the one
+that bites). Ship builds are unaffected: they reach version differences through
+Prepare-gates, not the compiler. Check which version is installed by comparing
+`md5sum` of the game's `sts2.dll` against the captures in `lib/`. Launch the game **directly** — `cd "<game dir>" && ./SlayTheSpire2.exe`
 from WSL — and read stdout for `HARNESS COMPLETE` / `HARNESS FAILED`.
 
 Two traps. `--headless` never reaches the main menu (exits 5 after ~2s), so the
@@ -227,7 +235,10 @@ harness never fires. And the launch is flaky: roughly half of attempts exit at
 ~3s having logged only ~65 lines, ending at the `SteamStatsManager` line — that
 is a failed launch, not a failed test, so just retry until the log runs long.
 Afterwards remove the marker and redeploy a plain `-c Release` build, or normal
-play keeps auto-running the harness.
+play keeps auto-running the harness. Do that only once the run has finished: a
+launch with no marker loads the mod and goes straight to the main menu, and the
+log then shows `Initialized` with no `Auto-harness armed` line — which reads
+like a broken harness and is only a missing marker.
 
 Two things a new scenario must respect. The fight has **one** enemy, and killing
 it ends the combat — after which `CreatureCmd.Damage` stops running the hooks the
