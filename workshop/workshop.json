@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.27 - Tag Team now pays the player who played it. Marking an enemy so a teammate's next attack hits twice was worth nothing on the meter beyond the card's own 11: the extra attack is a whole extra hit rather than a bigger one, so all of it was booked to the teammate who swung it. Both the damage and the block of that bought play now go to you, while any other teammate's buffs on the same hit keep exactly what they were worth. Underworld was checked over after a report and is credited correctly - the Doom it makes out of a teammate's damage belongs to whoever played Underworld, and the kill pays them the health it removes. Verified against game v0.111.0; still works on v0.107.1 and later.",
+  "changeNote": "0.1.28 - A card you make for a teammate now pays you. Blade Symphony puts two Shivs in every ally's hand and Largesse hands one ally a colourless card; until now the meter credited every point those cards dealt to the player who happened to be holding them, so a card whose whole purpose is arming the party read as nothing. The damage and the block of a gifted card now go to the player who gave it, while any other teammate's buffs on the same hit keep exactly what they were worth. A card you make for yourself is unchanged, and so is a card that merely draws for a teammate - Plot and Tutor hand over cards the ally already owned. Verified against game v0.111.0; still works on v0.107.1 and later.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
