@@ -59,8 +59,37 @@ text belongs in the other tables, where the game's substitute font does the work
 Set `DOTNET_ROOT=$HOME/.dotnet`, `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`, and
 put `~/.dotnet` on PATH (`deploy.sh` / `package.sh` bake these in). Ship builds
 are plain `-c Release` (harness compiled out); `-p:Harness=true` enables the
-dev harness. Cross-version: run the binding verifier under `tools/` against each
-captured `sts2.dll` before shipping.
+dev harness. Cross-version: run `tools/binding-verifier/verify.sh` before
+shipping — it compiles against and binds every captured `sts2.dll`.
+
+## One build, several game versions
+
+A release is compiled against `lib/sts2.dll` and runs on everything back to the
+manifest's `min_game_version`, so **anything the source touches directly has to
+exist on the oldest supported build**. A member the reference has and 0.107.1
+does not compiles clean, ships, and throws `MissingMethodException` on the
+player's machine. Differences between versions go through reflection or a
+`Prepare` gate — that is what the convention is for, not a style preference.
+
+0.1.28 is the case, and it is worth knowing what it looked like. `PlayInFlight`
+read `CardPlay.Player`, a property added after 0.107.1, from a prefix on
+`Hook.BeforeCardPlayed` — a hook every card goes through. On an older build the
+prefix threw before the play began, so the card's energy was spent and the card
+then hung on the stack doing nothing. **A prefix that throws does not degrade the
+meter, it stops the game**, which is why this class of mistake is worth a gate of
+its own rather than a code review.
+
+The gate is the first pass of `tools/binding-verifier/verify.sh`, which now
+compiles the mod against every captured assembly before binding anything. The
+two passes see different things and neither subsumes the other: the compiler
+reads patch bodies but knows nothing of Harmony's name-based binding, and the
+verifier binds targets but never runs a body. Note what still gets past both — a
+member reached by reflection, which is not the compiler's business and not a
+patch target either.
+
+The same thought applies to a release note. 0.1.28's said "still works on
+v0.107.1 and later" when nothing had checked that; only claim a version the
+compile pass covers.
 
 ## Overlay width
 
