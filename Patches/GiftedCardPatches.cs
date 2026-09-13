@@ -65,22 +65,45 @@ internal static class PlayInFlight
 
     public static void Begin(CardPlay cardPlay)
     {
+        if (PlayerOf(cardPlay) is not { } player)
+        {
+            return;
+        }
+
         lock (Lock)
         {
-            ByPlayer[cardPlay.Player.NetId] = cardPlay;
+            ByPlayer[player.NetId] = cardPlay;
         }
     }
 
     public static void End(CardPlay cardPlay)
     {
+        if (PlayerOf(cardPlay) is not { } player)
+        {
+            return;
+        }
+
         lock (Lock)
         {
             // Only the play that is actually standing, so a nested play finishing does not drop its parent's entry.
-            if (ByPlayer.TryGetValue(cardPlay.Player.NetId, out CardPlay? current) && current == cardPlay)
+            if (ByPlayer.TryGetValue(player.NetId, out CardPlay? current) && current == cardPlay)
             {
-                ByPlayer.Remove(cardPlay.Player.NetId);
+                ByPlayer.Remove(player.NetId);
             }
         }
+    }
+
+    /// <summary>
+    /// Who is playing this card. Read off the card rather than from <c>CardPlay.Player</c>, which does not exist on
+    /// 0.107.1, the oldest version the manifest supports: a release compiles against a newer assembly than that and
+    /// still has to run there, so a member added since is a MissingMethodException on every card played. The two are
+    /// the same value by construction - the one place the game builds a CardPlay sets <c>Player = Owner</c> - so
+    /// nothing is given up by taking the route that exists everywhere, which is the route the mod's other card patches
+    /// already take.
+    /// </summary>
+    private static Player? PlayerOf(CardPlay cardPlay)
+    {
+        return cardPlay.Card.Owner;
     }
 
     /// <summary>The card <paramref name="netId"/> is playing, or null when they are not playing one.</summary>
