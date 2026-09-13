@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.28 - A card you make for a teammate now pays you. Blade Symphony puts two Shivs in every ally's hand and Largesse hands one ally a colourless card; until now the meter credited every point those cards dealt to the player who happened to be holding them, so a card whose whole purpose is arming the party read as nothing. The damage and the block of a gifted card now go to the player who gave it, while any other teammate's buffs on the same hit keep exactly what they were worth. A card you make for yourself is unchanged, and so is a card that merely draws for a teammate - Plot and Tutor hand over cards the ally already owned. Verified against game v0.111.0; still works on v0.107.1 and later.",
+  "changeNote": "0.1.29 - Fixes a bug in 0.1.28 that stopped cards being playable on older versions of the game. The card's energy was spent and the card then hung on the stack doing nothing, because the meter read a property of a card play that older builds do not have, and it read it on the path every single card takes. The meter now takes the same value off the card itself, which works on every supported version. Nothing else changed - the credit for a card you make for a teammate, new in 0.1.28, works as it did. Verified on game v0.111.0, and this release is compiled against v0.107.1 as well, which is the check that was missing.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
