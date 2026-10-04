@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.29 - Fixes a bug in 0.1.28 that stopped cards being playable on older versions of the game. The card's energy was spent and the card then hung on the stack doing nothing, because the meter read a property of a card play that older builds do not have, and it read it on the path every single card takes. The meter now takes the same value off the card itself, which works on every supported version. Nothing else changed - the credit for a card you make for a teammate, new in 0.1.28, works as it did. Verified on game v0.111.0, and this release is compiled against v0.107.1 as well, which is the check that was missing.",
+  "changeNote": "0.1.30 - The Blocked meter now counts what you do to the enemy, not only the block you stand behind. Damage an enemy never dealt because you made it Weak or took its Strength away (Piercing Wail, Enfeebling Touch, Malaise, Shackling Potion, ...) is credited to you under the card or potion that did it, so Malaise's Weak and Strength loss read as one row. Debuffs act before block, so a hit they shrank spends less block, and the block they saved is overblock like any other. It works the other way too: Strength you give an enemy (Fight Me!, Philosopher's Stone, Brimstone) makes its hits land harder, and that extra damage is booked against you as a negative row - an outline in your colour with the number in red. A teammate's Fight Me! shows on your breakdown, but the cost is theirs. Verified in game on v0.111.0 and v0.107.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
