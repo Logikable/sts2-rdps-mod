@@ -204,9 +204,10 @@ internal static class AttributionEngine
     /// Replays the damage pipeline over the participating modifiers, skipping any in <paramref name="exclude"/>.
     /// With an empty exclusion set the result equals Hook.ModifyDamage's return value.
     ///
-    /// <paramref name="restoredStrength"/> is Strength added back to the dealer for the replay, for a loss that is not a
-    /// modifier of its own (see <see cref="StrengthLoss"/>). It joins the additive stage, the one Strength acts in; the
-    /// caller decides whether the hit is one Strength feeds at all.
+    /// <paramref name="strengthAdjustment"/> changes the dealer's Strength for the replay - positive to give back a loss,
+    /// negative to take away a gain - for Strength that is not a modifier of its own (see <see cref="EnemyStrength"/>).
+    /// It joins the additive stage, the one Strength acts in; the caller decides whether the hit is one Strength feeds
+    /// at all.
     /// </summary>
     public static decimal Recompute(
         decimal baseAmount,
@@ -218,7 +219,7 @@ internal static class AttributionEngine
         ModifyDamageHookType flags,
         IReadOnlyList<AbstractModel> modifiers,
         ISet<AbstractModel> exclude,
-        decimal restoredStrength = 0m)
+        decimal strengthAdjustment = 0m)
     {
         // A hidden Vulnerable booster cannot be skipped by leaving it out of the loop below - it is not a listener,
         // and the game reads it from inside VulnerablePower's own multiplier. Suppressing it for the span of the
@@ -227,7 +228,7 @@ internal static class AttributionEngine
         try
         {
             return RecomputeInternal(
-                baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, exclude, restoredStrength);
+                baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, exclude, strengthAdjustment);
         }
         finally
         {
@@ -245,7 +246,7 @@ internal static class AttributionEngine
         ModifyDamageHookType flags,
         IReadOnlyList<AbstractModel> modifiers,
         ISet<AbstractModel> exclude,
-        decimal restoredStrength)
+        decimal strengthAdjustment)
     {
         decimal num = baseAmount;
 
@@ -266,7 +267,7 @@ internal static class AttributionEngine
 
         if (flags.HasFlag(ModifyDamageHookType.Additive))
         {
-            num += restoredStrength;
+            num += strengthAdjustment;
             foreach (AbstractModel modifier in modifiers)
             {
                 if (!exclude.Contains(modifier))

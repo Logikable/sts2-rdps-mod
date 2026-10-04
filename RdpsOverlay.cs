@@ -122,7 +122,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         public required Label Rdps { get; init; }
         public required Label Percent { get; init; }
         public required Color Color { get; init; }
+
+        // The two looks the bar switches between as the player's total changes sign (see CostBarStyle).
+        public required StyleBoxFlat Fill { get; init; }
+        public required StyleBoxFlat Hollow { get; init; }
+        public bool ShowingCost { get; set; }
     }
+
+    // A cost - a negative tally on the Blocked meter, damage a player's gift to an enemy added - is drawn as an outline
+    // in the owner's own colour, with its number in this red. Any single "cost colour" would sit beside some class's
+    // own: red is the obvious one and it is already the Ironclad's. The outline keeps whose it is, and red text appears
+    // nowhere else in the meter.
+    private static readonly Color CostTextColor = new(1f, 0.541f, 0.502f);
 
     // A player's look, captured while they are on-screen so their row keeps its class colour, icon and name after
     // combat ends and the live combat state (the only place these come from) is gone.
@@ -509,16 +520,18 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             .ThenBy(id => id)
             .ToList();
 
+        // A cost's bar is as long as it is big, so the scale is the biggest tally either way. The header's total takes
+        // costs off; the shares are of what the party gained, since a percentage of a total that costs pulled down says
+        // nothing about either.
         decimal max = 1m;
         decimal team = 0m;
+        decimal gained = 0m;
         foreach (ulong id in ordered)
         {
             decimal value = Value(_snapshot.GetValueOrDefault(id));
             team += value;
-            if (value > max)
-            {
-                max = value;
-            }
+            gained += Math.Max(0m, value);
+            max = Math.Max(max, Math.Abs(value));
         }
 
         // Solo: there is nobody to credit, so a one-row table hiding the interesting part behind a hover is just in the
@@ -550,9 +563,17 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             seen.Add(id);
             Row widget = Ensure(id);
             decimal value = Value(_snapshot.GetValueOrDefault(id));
+            bool cost = value < 0m;
+            if (widget.ShowingCost != cost)
+            {
+                widget.ShowingCost = cost;
+                widget.Bar.AddThemeStyleboxOverride("fill", cost ? widget.Hollow : widget.Fill);
+                widget.Rdps.AddThemeColorOverride("font_color", cost ? CostTextColor : Colors.White);
+            }
+
             widget.Rdps.Text = Round(value).ToString();
-            widget.Percent.Text = team > 0m ? $"{Round(value / team * 100m)}%" : "0%";
-            widget.Bar.Value = (double)Math.Clamp(value / max, 0m, 1m);
+            widget.Percent.Text = cost ? string.Empty : Percent(value, gained);
+            widget.Bar.Value = (double)Math.Clamp(Math.Abs(value) / max, 0m, 1m);
             _list.MoveChild(widget.Container, index++);
         }
 
@@ -604,6 +625,12 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
     }
 
 #if RDPS_HARNESS
+    /// <summary>Hovers a party row as the mouse would, so the self-test can capture its breakdown.</summary>
+    internal void HarnessHover(ulong? netId)
+    {
+        _hovered = netId;
+    }
+
     /// <summary>
     /// The caption the view picker is currently showing, so the self-test can assert which view the meter opens on.
     /// Harness-only: a shipped build has no reason to expose the picker's internals.
@@ -1148,8 +1175,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        decimal max = Math.Max(1m, items.Max(i => i.Amount));
-        decimal total = items.Sum(i => i.Amount);
+        decimal max = Math.Max(1m, items.Max(i => Math.Abs(i.Amount)));
+        decimal total = items.Sum(i => Math.Max(0m, i.Amount));
         if (header != null)
         {
             list.AddChild(SectionHeader(header));
@@ -1157,6 +1184,14 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
         foreach ((string name, decimal amount, decimal buff) in items)
         {
+            if (amount < 0m)
+            {
+                // A cost: no own-versus-teammate split, since the received section below already says whose it was.
+                list.AddChild(BarRow(
+                    SourceName(name), Round(amount).ToString(), string.Empty, CostBackground(-amount, max, color), CostTextColor));
+                continue;
+            }
+
             // Always the split bar, with nothing split off it on the aDPS meter. Drawing that one solid instead would
             // tint it differently: the split bar's own segment sits over the fainter one behind it, and two translucent
             // layers of a colour do not composite to the same shade as one.
@@ -1193,12 +1228,27 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             return;
         }
 
-        decimal max = Math.Max(1m, items.Max(i => i.Amount));
-        decimal total = items.Sum(i => i.Amount);
+        decimal max = Math.Max(1m, items.Max(i => Math.Abs(i.Amount)));
+        decimal total = items.Sum(i => Math.Max(0m, i.Amount));
         list.AddChild(SectionHeader(title));
         foreach ((string effect, decimal amount) in items)
         {
-            list.AddChild(BarRow(SourceName(effect), sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
+            if (amount >= 0m)
+            {
+                list.AddChild(BarRow(SourceName(effect), sign + Round(amount), Percent(amount, total), EffectBackground(amount, max, color)));
+                continue;
+            }
+
+            // A cost keeps its outline wherever it appears. Its number is what it does to this player's total: a cost
+            // given away takes it down and reads red, while a teammate's cost received comes back off the Blocked
+            // section above, so it reads "+" in plain white.
+            bool takesAway = sign == "+";
+            list.AddChild(BarRow(
+                SourceName(effect),
+                (takesAway ? "-" : "+") + Round(-amount),
+                string.Empty,
+                CostBackground(-amount, max, color),
+                takesAway ? CostTextColor : null));
         }
     }
 
@@ -1323,7 +1373,8 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
             ShowPercentage = false,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        bar.AddThemeStyleboxOverride("fill", RowBarStyle(new Color(color.R, color.G, color.B, 0.55f)));
+        StyleBoxFlat fill = RowBarStyle(new Color(color.R, color.G, color.B, 0.55f));
+        bar.AddThemeStyleboxOverride("fill", fill);
         bar.AddThemeStyleboxOverride("background", RowBarStyle(new Color(1f, 1f, 1f, 0.05f)));
         container.AddChild(bar);
         bar.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
@@ -1381,7 +1432,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         };
         _list.AddChild(container);
 
-        var widget = new Row { Container = container, Bar = bar, Rdps = rdps, Percent = percent, Color = color };
+        var widget = new Row
+        {
+            Container = container,
+            Bar = bar,
+            Rdps = rdps,
+            Percent = percent,
+            Color = color,
+            Fill = fill,
+            Hollow = CostBarStyle(color),
+        };
         _rows[netId] = widget;
         return widget;
     }
@@ -1466,6 +1526,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         return button;
     }
 
+    // The outline a cost is drawn as: the owner's colour as a border over the faintest wash of it, so the row still
+    // reads as theirs. A plain style, like the fill it stands in for.
+    private static StyleBoxFlat CostBarStyle(Color color)
+    {
+        StyleBoxFlat style = RowBarStyle(new Color(color.R, color.G, color.B, 0.10f));
+        style.BorderColor = new Color(color.R, color.G, color.B, 0.85f);
+        style.SetBorderWidthAll(2);
+        return style;
+    }
+
     private static StyleBoxFlat RowBarStyle(Color color)
     {
         return new StyleBoxFlat
@@ -1491,7 +1561,7 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
 
     // A breakdown row in the same layered style as the main overlay: the given background bar spans the row with the
     // label (left), value (right) and its share of the section (right) drawn over it.
-    private static Control BarRow(string label, string valueText, string percentText, Control background)
+    private static Control BarRow(string label, string valueText, string percentText, Control background, Color? valueColor = null)
     {
         var container = new Control { CustomMinimumSize = new Vector2(0f, 20f), MouseFilter = Control.MouseFilterEnum.Ignore };
         container.AddChild(background);
@@ -1503,6 +1573,11 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         text.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
 
         Label value = OverlayLabel(valueText);
+        if (valueColor is { } tint)
+        {
+            value.AddThemeColorOverride("font_color", tint);
+        }
+
         value.CustomMinimumSize = new Vector2(ValueColumn, 0f);
         value.HorizontalAlignment = HorizontalAlignment.Right;
         value.ClipText = true;
@@ -1534,6 +1609,16 @@ internal sealed partial class RdpsOverlayNode : CanvasLayer
         bar.AddThemeStyleboxOverride("fill", RowBarStyle(new Color(color.R, color.G, color.B, 0.55f)));
         bar.AddThemeStyleboxOverride("background", RowBarStyle(new Color(1f, 1f, 1f, 0.05f)));
         bar.Value = (double)Math.Clamp(amount / max, 0m, 1m);
+        return bar;
+    }
+
+    // A cost's bar: the hollow style, as long as the cost is big.
+    private static ProgressBar CostBackground(decimal size, decimal max, Color color)
+    {
+        var bar = new ProgressBar { MinValue = 0d, MaxValue = 1d, ShowPercentage = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+        bar.AddThemeStyleboxOverride("fill", CostBarStyle(color));
+        bar.AddThemeStyleboxOverride("background", RowBarStyle(new Color(1f, 1f, 1f, 0.05f)));
+        bar.Value = (double)Math.Clamp(size / max, 0m, 1m);
         return bar;
     }
 

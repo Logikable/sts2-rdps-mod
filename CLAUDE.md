@@ -418,6 +418,13 @@ what it would have cost extra is credited to whoever applied them. Booked as
 ordinary `BlockStrand`s on the wearer, so a teammate's Piercing Wail reads as
 given/received exactly like their Beacon of Hope.
 
+Strength a player *gives* an enemy (Fight Me!, Philosopher's Stone, Brimstone)
+is the same thing with the sign flipped: a **negative** strand, booked by the
+same rules, so a teammate's Fight Me! lands on the wearer's breakdown as a cost,
+is received back, and leaves the cost on whoever played it. This is the only
+negative anything in the meter, and the user chose it deliberately over leaving
+gifts out.
+
 **Counted before block** — the user's call, and the game's order: `ModifyDamage`,
 then `DamageBlockInternal`, then HP. So total mitigation of a hit is what it
 would have cost minus the HP it did cost, however block and debuffs split it.
@@ -428,6 +435,15 @@ zero whenever a teammate overblocked, which is exactly backwards.
 The total is taken in **whole points**, `trunc(without) - trunc(actual)`,
 because the game truncates the damage it deals; the decimal shares are scaled to
 that. 12 → 4.5 is 8 prevented, not 7.5.
+
+**Gifts are measured first, debuffs from what is left.** The cost is the
+real hit minus the hit without the gifts, debuffs in place — the damage the
+gift actually added, so Weak makes it cheaper. The debuffs are then measured
+from that gift-less hit. The order is not cosmetic: measuring each against the
+other's world (gift with Weak in place, Weak with the gift in place) counts the
+Weak × Strength overlap twice — 12 with +1 and Weak would net 2.5 instead of the
+true 12 − 9.75 = 2.25. One side has to absorb the overlap, and this way it is
+the debuffs, so the cost always matches what the gift really did.
 
 **Strength loss is not a modifier.** Every source stacks into one
 `StrengthPower`, the enemy's own Ritual included, so excluding it from the list
@@ -461,10 +477,27 @@ interaction: Weak multiplies after Strength is added, so each makes the other
 worth less.
 
 Which hits count: an enemy dealer, and a target that is a player or a player's
-pet (a pet's hit spends its owner's block first). Positive Strength a player
-gives an enemy (Fight Me!, Philosopher's Stone, Brimstone) is deliberately
-ignored for now — `StrengthPower` is excluded from the debuff pass, and the
-ledger records only losses.
+pet (a pet's hit spends its owner's block first).
+
+`EnemyStrength` is keyed **weakly by the enemy and never reset with the
+combat**. That is load-bearing, not tidiness: Philosopher's Stone gives its
+Strength from `AfterRoomEntered`, which runs *before* `StartCombatInternal` —
+where `ClearPending` resets everything else — so a combat-start reset would
+erase every gift it had just made. The harness reuses one enemy across
+scenarios, so `Prep` clears it by hand.
+
+The two relics apply with a **null applier**, so the owner is carried for the
+span of their hooks by `RelicStrengthPatches` (Beacon of Hope's pattern, Task
+wrapped). Fight Me! names its player as applier and needs nothing.
+
+**Drawing a cost.** A negative tally is a hollow bar — the owner's class colour
+as a 2px border over a faint wash — with its number in red (`CostTextColor`).
+Not a shared "cost colour": any one would sit beside some class's own, and red
+is the Ironclad's. Bars scale by magnitude; the percent column is blank on a
+cost, and the shares are of what the party *gained*; the header total includes
+costs. In a Received section a cost reads `+N` in white, because it comes back
+off the Blocked section above. The harness's `CaptureCostLook` screenshots this
+into the game's user folder (`rdps-cost-*.png`) for a person to check.
 
 ## When a row says "(none)"
 

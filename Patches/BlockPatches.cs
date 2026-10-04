@@ -131,8 +131,9 @@ internal static class BlockPatches
         BlockPool.Clear();
         BlockSource.Clear();
 
-        // Strength players took off this fight's enemies; the enemies do not outlive it.
-        StrengthLoss.Clear();
+        // Balanced by its own postfix, and cleared for the same reason ForeignBlockGrant is below. EnemyStrength is not
+        // cleared here: it lives as long as each enemy does, and Philosopher's Stone writes to it before this runs.
+        RelicStrengthGrant.Clear();
 
         // Pet redirects in flight. Same reasoning as the pool: a fight that ends mid-sequence must not leave one
         // standing for the next combat's first hit on that pet to claim.

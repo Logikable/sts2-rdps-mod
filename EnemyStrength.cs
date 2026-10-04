@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Powers;
 using MegaCrit.Sts2.Core.Models;
@@ -6,8 +7,11 @@ using MegaCrit.Sts2.Core.Models.Powers;
 namespace RdpsMeter;
 
 /// <summary>
-/// The Strength players have taken off each enemy, by who took it and with what, so a hit the enemy lands can be
-/// re-run as if they had not.
+/// The Strength players have taken off each enemy and given to it, by who and with what, so a hit the enemy lands can
+/// be re-run as if they had not.
+///
+/// Gains are the simple half: Fight Me! and the Strength relics (Philosopher's Stone, Brimstone) give it outright and
+/// never take it back, so each is recorded as it happens. Losses are the rest of this note.
 ///
 /// The enemy's <see cref="StrengthPower"/> cannot answer this itself. Every source stacks into that one instance - the
 /// enemy's own Ritual as well as a player's Piercing Wail - so removing it from a hit's modifier list would also remove
@@ -29,13 +33,15 @@ namespace RdpsMeter;
 /// cancels the first. Pairing deliberately ignores the amount: a hook that adjusts how much Strength is applied could
 /// make the two differ, and a missed pair would count the same loss twice for the rest of the combat.
 /// </summary>
-internal static class StrengthLoss
+internal static class EnemyStrength
 {
     private sealed record Entry(ulong NetId, string Source, decimal Amount);
 
     private sealed class State
     {
         public List<Entry> Permanent { get; } = new();
+
+        public List<Entry> Gained { get; } = new();
 
         // A debuff change whose inner Strength change has not arrived yet, by applier.
         public List<ulong> AwaitingStrength { get; } = new();
@@ -44,7 +50,10 @@ internal static class StrengthLoss
         public Entry? Unpaired { get; set; }
     }
 
-    private static readonly Dictionary<Creature, State> ByEnemy = new();
+    // Weak, keyed by the enemy itself, and never reset with the combat: the state goes when its enemy does. A reset at
+    // combat start would be too late as well as unneeded - Philosopher's Stone hands out its Strength on room entry,
+    // before the combat starts, and a reset there would erase every gift it just made.
+    private static readonly ConditionalWeakTable<Creature, State> ByEnemy = new();
     private static readonly object Lock = new();
 
     /// <summary>A player lowered an enemy's Strength by <paramref name="lost"/> (a positive number).</summary>
@@ -63,6 +72,26 @@ internal static class StrengthLoss
             var entry = new Entry(netId, source, lost);
             state.Permanent.Add(entry);
             state.Unpaired = entry;
+        }
+    }
+
+    /// <summary>A player raised an enemy's Strength by <paramref name="gained"/>.</summary>
+    public static void StrengthRaised(Creature enemy, ulong netId, string source, decimal gained)
+    {
+        lock (Lock)
+        {
+            StateOf(enemy).Gained.Add(new Entry(netId, source, gained));
+        }
+    }
+
+    /// <summary>Every player share of the Strength this enemy was given, as (who, what did it, how much).</summary>
+    public static IReadOnlyList<(ulong NetId, string Source, decimal Amount)> GainedOf(Creature enemy)
+    {
+        lock (Lock)
+        {
+            return ByEnemy.TryGetValue(enemy, out State? state)
+                ? state.Gained.Select(e => (e.NetId, e.Source, e.Amount)).ToList()
+                : Array.Empty<(ulong, string, decimal)>();
         }
     }
 
@@ -94,7 +123,7 @@ internal static class StrengthLoss
     /// Every player share of the Strength this enemy is missing, as (applier, what did it, how much). Empty when no
     /// player has lowered it.
     /// </summary>
-    public static IReadOnlyList<(ulong NetId, string Source, decimal Amount)> Of(Creature enemy)
+    public static IReadOnlyList<(ulong NetId, string Source, decimal Amount)> LostOf(Creature enemy)
     {
         var lost = new List<(ulong NetId, string Source, decimal Amount)>();
         lock (Lock)
@@ -129,6 +158,7 @@ internal static class StrengthLoss
         return lost;
     }
 
+    /// <summary>For the self-test, which reuses one enemy across scenarios that each need a clean slate.</summary>
     public static void Clear()
     {
         lock (Lock)
@@ -139,13 +169,7 @@ internal static class StrengthLoss
 
     private static State StateOf(Creature enemy)
     {
-        if (!ByEnemy.TryGetValue(enemy, out State? state))
-        {
-            state = new State();
-            ByEnemy[enemy] = state;
-        }
-
-        return state;
+        return ByEnemy.GetOrCreateValue(enemy);
     }
 
     private static string TitleOf(PowerModel power)

@@ -135,6 +135,10 @@ internal static class SelfTest
         all &= await WeakAndStrengthDownScenario(context, dealer, enemy, applier2, applier3);
         all &= await MalaiseScenario(context, dealer, enemy, applier2);
         all &= await StrengthDownBeforeBlockScenario(context, dealer, enemy, applier2);
+        all &= await FightMeScenario(context, dealer, enemy, applier2);
+        all &= await GiftAndWeakScenario(context, dealer, enemy, applier2, applier3);
+        all &= await PhilosophersStoneScenario(context, dealer, enemy, applier2);
+        await CaptureCostLook(context, dealer, enemy, applier2, applier3);
         all &= await OstyAbsorptionScenario(context, dealer, enemy);
         all &= await LegionOfBoneScenario(context, dealer, enemy, applier2, applier3);
         all &= await OstyReviveScenario(context, dealer, enemy, applier2);
@@ -1478,6 +1482,132 @@ internal static class SelfTest
             Expect("the Wail stopped the rest", l.BlockGivenTo(2uL, wail, you), 6m),
             Expect("the unspent block still stands", dealer.Block, 14m),
             Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+    }
+
+    /// <summary>
+    /// Strength a player gives an enemy is a cost on their Blocked meter. A teammate's Fight Me! puts 1 Strength on the
+    /// enemy, whose 12 swing at the dealer then lands as 13. The extra 1 lands on the dealer's own breakdown as a cost
+    /// and is received back, so the dealer's total is untouched and the teammate's goes to -1.
+    /// </summary>
+    private static async Task<bool> FightMeScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        FightMe fightMe = CardOwnedBy<FightMe>(applier2);
+        string name = fightMe.TitleLocString.GetFormattedText();
+        await PowerCmd.Apply<StrengthPower>(ctx, enemy, 1m, applier2, fightMe);
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Fight Me! costs its player",
+            Expect("a cost on the dealer's breakdown", l.BlockedWith(you, name), -1m),
+            Expect("given by the teammate", l.BlockGivenTo(2uL, name, you), -1m),
+            Expect("the teammate's total", l.RBlockOf(2uL), -1m),
+            Expect("the dealer's total untouched", l.RBlockOf(you), 0m),
+            Expect("the dealer took 13", dealer.CurrentHp, dealer.MaxHp - 13));
+    }
+
+    /// <summary>
+    /// A gift and a debuff on the same hit sum to the whole. A teammate gives the enemy 2 Strength and another makes it
+    /// Weak; the 12 swing lands as (12 + 2) x 0.75 = 10.5, dealt as 10. The gift's cost is measured with Weak in place -
+    /// the damage it actually added, 10 against the 9 the hit would have been without it - and Weak is measured from
+    /// that 9 to the 12 an untouched enemy would have dealt. Weak 3, gift -1: net 2, which is 12 - 10.
+    /// </summary>
+    private static async Task<bool> GiftAndWeakScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        FightMe fightMe = CardOwnedBy<FightMe>(applier2);
+        string name = fightMe.TitleLocString.GetFormattedText();
+        await PowerCmd.Apply<StrengthPower>(ctx, enemy, 2m, applier2, fightMe);
+        await PowerCmd.Apply<WeakPower>(ctx, enemy, 2m, applier3, null);
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("A gift and Weak on one hit",
+            Expect("the gift's cost", l.BlockGivenTo(2uL, name, you), -1m),
+            Expect("Weak's credit", l.BlockGivenTo(3uL, "Weak", you), 3m),
+            Expect("net on the dealer", l.BlockedWith(you, name) + l.BlockedWith(you, "Weak"), 2m),
+            Expect("the dealer took 10", dealer.CurrentHp, dealer.MaxHp - 10));
+    }
+
+    /// <summary>
+    /// A relic's gift is its owner's cost. Philosopher's Stone applies its Strength with no applier and no card, so the
+    /// owner is known only for the span of the relic's own hook. A teammate's Stone is driven through the hook it uses
+    /// for an enemy joining mid-fight, which gives that enemy 1 Strength; a 12 swing then lands as 13 and the 1 is the
+    /// teammate's, under the relic's name.
+    /// </summary>
+    private static async Task<bool> PhilosophersStoneScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        var stone = (PhilosophersStone)ModelDb.Relic<PhilosophersStone>().MutableClone();
+        stone.Owner = applier2.Player!;
+        string name = stone.Title.GetFormattedText();
+        await stone.AfterCreatureAddedToCombat(enemy);
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Philosopher's Stone costs its owner",
+            Expect("the enemy gained 1 Strength", enemy.GetPower<StrengthPower>()?.Amount ?? 0, 1m),
+            Expect("given by the relic's owner", l.BlockGivenTo(2uL, name, you), -1m),
+            Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
+            Expect("the dealer took 13", dealer.CurrentHp, dealer.MaxHp - 13));
+    }
+
+    /// <summary>
+    /// Not a check: screenshots the Blocked meter with a cost on it, for a person to look at. A teammate's Fight Me!
+    /// (+3) and another's Piercing Wail (-6) on one 12 swing into 5 block leaves the party at Wail 6, the dealer 5 and
+    /// Fight Me!'s player -3 - one hollow row - and the two hovered breakdowns show a cost given and a cost received.
+    /// </summary>
+    private static async Task CaptureCostLook(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
+        if (overlay == null || Engine.GetMainLoop() is not SceneTree tree)
+        {
+            return;
+        }
+
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        await Shield(dealer, 5m, you, "Block Potion");
+        await PowerCmd.Apply<StrengthPower>(ctx, enemy, 3m, applier2, CardOwnedBy<FightMe>(applier2));
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 6m, applier3, null);
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        MeterMode entered = overlay.HarnessMode;
+        for (int guard = 0; overlay.HarnessMode != MeterMode.Blocked && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        foreach ((ulong? hovered, string file) in new[] { ((ulong?)2uL, "cost-given"), (you, "cost-received") })
+        {
+            overlay.HarnessHover(hovered);
+            await Settle();
+            await tree.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            string path = ProjectSettings.GlobalizePath($"user://rdps-{file}.png");
+            tree.Root.GetTexture().GetImage().SavePng(path);
+            GD.Print($"[RdpsMeter] Self-test: captured {path}");
+        }
+
+        overlay.HarnessHover(null);
+        for (int guard = 0; overlay.HarnessMode != entered && guard < 4; guard++)
+        {
+            overlay.HarnessStepMode(1);
+        }
+
+        OverlayLayout.SaveMode(entered);
     }
 
     private static void KillOsty(Creature owner)
@@ -3380,9 +3510,11 @@ internal static class SelfTest
             await CreatureCmd.LoseBlock(new NoOpChoiceContext(), dealer, dealer.Block, null);
         }
 
-        // Cleared last: the removals above run block and power hooks, which can book more of both.
+        // Cleared last: the removals above run block and power hooks, which can book more of both. The enemy's Strength
+        // ledger lives as long as the enemy does, which here is every scenario, so it is wiped by hand.
         CombatLedger.Current.Reset();
         Patches.AttributionPatches.ClearPending();
+        EnemyStrength.Clear();
 
         // The block scenarios swing at the dealer, so their health is restored alongside the enemy's - a scenario that
         // fails must not go on to kill the player and end the combat every later scenario needs.

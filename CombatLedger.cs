@@ -231,6 +231,10 @@ internal sealed class CombatLedger
     /// seen. The wearer books all of it as their own aBlock, since it is damage that did not reach them whoever paid
     /// for it, and any strand a teammate paid for is additionally booked as received on the wearer and given on the
     /// teammate, so the two cancel across the table and the party's rBlock sums to the block the party actually spent.
+    ///
+    /// A strand can be negative: damage a player's gift to an enemy added (Fight Me!, Philosopher's Stone). It is booked
+    /// by exactly the same rules, so a teammate's Fight Me! lands on the wearer as a cost and is received back, leaving
+    /// the wearer's rBlock untouched and the cost on whoever played the card.
     /// </summary>
     public void ApplyBlock(ulong wearerNetId, IReadOnlyList<BlockStrand> spent)
     {
@@ -239,7 +243,7 @@ internal sealed class CombatLedger
             PlayerLedger wearer = Ledger(wearerNetId);
             foreach ((ulong ownerNetId, string source, decimal amount) in spent)
             {
-                if (amount <= 0m)
+                if (amount == 0m)
                 {
                     continue;
                 }
@@ -450,7 +454,7 @@ internal sealed class CombatLedger
                     GD.Print($"[RdpsMeter]     recv   {effect} <- {NameOf(other)} {Round(amount)}");
                 }
 
-                if (ledger.ABlock > 0m || ledger.BlockGiven > 0m)
+                if (ledger.ABlock != 0m || ledger.BlockGiven != 0m)
                 {
                     GD.Print($"[RdpsMeter]     block  aBlock {Round(ledger.ABlock)} + given {Round(ledger.BlockGiven)} "
                         + $"- recv {Round(ledger.BlockReceived)} = rBlock {Round(ledger.RBlock)}");

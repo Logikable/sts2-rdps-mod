@@ -37,23 +37,37 @@ internal static class PowerOwnershipPatches
 
         if (applier?.Player?.NetId is not ulong applierNetId)
         {
+            // A relic that hands enemies Strength names no applier at all; its owner is carried for the span of its
+            // hook instead (see RelicStrengthPatches).
+            if (power is StrengthPower && amount > 0m
+                && power.Owner is { Side: CombatSide.Enemy } gifted
+                && RelicStrengthGrant.Current is { } relic)
+            {
+                EnemyStrength.StrengthRaised(gifted, relic.OwnerNetId, relic.Name, amount);
+            }
+
             return;
         }
 
         string? grantedBy = GrantedBy(power, applierNetId, cardSource);
         PowerOwnership.Instance.Record(power, applierNetId, amount, grantedBy);
 
-        // Strength a player takes off an enemy, for the Blocked meter. The ledger pairs a temporary debuff's stacks
-        // with the negative Strength it applies under the hood, so only a direct loss is kept as its own.
+        // Strength a player takes off an enemy or gives it, for the Blocked meter. The ledger pairs a temporary
+        // debuff's stacks with the negative Strength it applies under the hood, so only a direct loss is kept as its
+        // own.
         if (power.Owner is { Side: CombatSide.Enemy } enemy)
         {
             if (power is StrengthPower && amount < 0m)
             {
-                StrengthLoss.StrengthLowered(enemy, applierNetId, grantedBy ?? "Strength", -amount);
+                EnemyStrength.StrengthLowered(enemy, applierNetId, grantedBy ?? "Strength", -amount);
+            }
+            else if (power is StrengthPower && amount > 0m)
+            {
+                EnemyStrength.StrengthRaised(enemy, applierNetId, grantedBy ?? "Strength", amount);
             }
             else if (power is TemporaryStrengthPower { Type: PowerType.Debuff } && amount > 0m)
             {
-                StrengthLoss.TemporaryApplied(enemy, applierNetId, fresh: power.Amount == amount);
+                EnemyStrength.TemporaryApplied(enemy, applierNetId, fresh: power.Amount == amount);
             }
         }
     }

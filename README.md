@@ -75,6 +75,12 @@ Malaise's Weak and Strength loss read as one "Malaise" row. Debuffs act on the
 swing before block does, so a hit they shrank spends less block, and the block
 they saved is overblock like any other.
 
+It works the other way too. Strength you give an enemy (Fight Me!,
+Philosopher's Stone, Brimstone) makes its hits land harder, and that extra
+damage is booked against you as a negative row: an outline in your colour with
+the number in red. A teammate's Fight Me! shows on your breakdown, but the cost
+is theirs.
+
 ## Languages
 
 The meter follows the language the game is set to. English and Simplified
