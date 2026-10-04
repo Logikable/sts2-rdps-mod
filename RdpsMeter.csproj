@@ -17,6 +17,11 @@
   <PropertyGroup Condition="'$(Harness)' == 'true'">
     <DefineConstants>$(DefineConstants);RDPS_HARNESS</DefineConstants>
   </PropertyGroup>
+  <!-- The harness against 0.107.1, whose PlayerChoiceContext predates the owner-aware members the harness's no-op
+       context overrides on every later build. Keyed off the reference's file name, so only the harness ever sees it. -->
+  <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.107.1'))">
+    <DefineConstants>$(DefineConstants);STS2_0_107</DefineConstants>
+  </PropertyGroup>
 
   <!-- Which game assembly the mod compiles against. A release is built against lib/sts2.dll and carries one DLL for
        every supported version, reaching the differences between them through Prepare-gates and reflection rather than

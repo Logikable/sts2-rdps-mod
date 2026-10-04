@@ -254,7 +254,12 @@ quits.
 scenarios call game methods directly, so the harness needs
 `-p:Sts2Ref=lib/sts2-<installed ver>.dll` — `lib/sts2.dll` is an older capture
 and the harness does not compile against it (`PoisonPower.Trigger` is the one
-that bites). Ship builds are unaffected: they reach version differences through
+that bites). Against `lib/sts2-0.107.1.dll` the csproj also defines `STS2_0_107`,
+which swaps in that build's `PlayerChoiceContext` shape and its `Damage` /
+`LoseBlock` overloads (`HarnessDamage`, `HarnessLoseBlock`), and leaves out the
+scenarios for things 0.107.1 lacks — Outbreak's rework, Blade Symphony,
+Underworld, and Tag Team's *damage* half: that build's `Hook.ModifyDamage` has
+no `cardPlay`, so a bought play's damage cannot be told apart there at all. Ship builds are unaffected: they reach version differences through
 Prepare-gates, not the compiler. Check which version is installed by comparing
 `md5sum` of the game's `sts2.dll` against the captures in `lib/`. Launch the game **directly** — `cd "<game dir>" && ./SlayTheSpire2.exe`
 from WSL — and read stdout for `HARNESS COMPLETE` / `HARNESS FAILED`.
