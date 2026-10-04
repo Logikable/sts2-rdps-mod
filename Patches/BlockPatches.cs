@@ -131,6 +131,9 @@ internal static class BlockPatches
         BlockPool.Clear();
         BlockSource.Clear();
 
+        // Strength players took off this fight's enemies; the enemies do not outlive it.
+        StrengthLoss.Clear();
+
         // Pet redirects in flight. Same reasoning as the pool: a fight that ends mid-sequence must not leave one
         // standing for the next combat's first hit on that pet to claim.
         PetAbsorption.Clear();

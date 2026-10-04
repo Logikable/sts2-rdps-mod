@@ -128,6 +128,13 @@ internal static class SelfTest
         all &= await BlockProRataScenario(context, dealer, enemy, applier2, applier3);
         all &= await BlockFourPlayerScenario(context, dealer, enemy, applier2, applier3, applier4);
         all &= await BlockReconcileScenario(context, dealer, enemy);
+        // Before the Osty scenarios: these assert on the dealer's HP, and those leave a pet alive to soak the swing.
+        all &= await StrengthDownScenario(context, dealer, enemy, applier2);
+        all &= await StrengthDownExpiryScenario(context, dealer, enemy, applier2);
+        all &= await StrengthDownInterleavedScenario(context, dealer, enemy, applier2);
+        all &= await WeakAndStrengthDownScenario(context, dealer, enemy, applier2, applier3);
+        all &= await MalaiseScenario(context, dealer, enemy, applier2);
+        all &= await StrengthDownBeforeBlockScenario(context, dealer, enemy, applier2);
         all &= await OstyAbsorptionScenario(context, dealer, enemy);
         all &= await LegionOfBoneScenario(context, dealer, enemy, applier2, applier3);
         all &= await OstyReviveScenario(context, dealer, enemy, applier2);
@@ -1313,6 +1320,166 @@ internal static class SelfTest
     /// game keeps a dead Osty in both, since DieForYouPower declines to have it removed - without spending the owner's
     /// block or booking anything on the meter on the way.
     /// </summary>
+    /// <summary>
+    /// A teammate's Piercing Wail takes 6 Strength off the enemy, which then swings 12 at the dealer. The 6 it never
+    /// dealt is the teammate's mitigation, named after the card - read off the debuff's own title, so the check holds
+    /// in any language. Applied as 3 and then 3 more, so the second application is a merge rather than a fresh one: the
+    /// two paths deliver the debuff and its hidden negative Strength in opposite orders, and a pairing that only knew
+    /// one order would book the merge's Strength a second time, as if it were permanent.
+    /// </summary>
+    private static async Task<bool> StrengthDownScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 3m, applier2, null);
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 3m, applier2, null);
+        string wail = enemy.GetPower<PiercingWailPower>()!.Title.GetFormattedText();
+        GD.Print($"[RdpsMeter] Self-test: Strength-down row named '{wail}'");
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Strength down (teammate's Piercing Wail)",
+            Expect("the enemy is down 6 Strength", enemy.GetPower<StrengthPower>()?.Amount ?? 0, -6m),
+            Expect("on the dealer's Blocked meter", l.BlockedWith(you, wail), 6m),
+            Expect("given by the teammate", l.BlockGivenTo(2uL, wail, you), 6m),
+            Expect("the teammate's bar", l.RBlockOf(2uL), 6m),
+            Expect("the dealer took the other 6", dealer.CurrentHp, dealer.MaxHp - 6));
+    }
+
+    /// <summary>
+    /// A temporary Strength loss is worth nothing once it has worn off. The debuff's own end-of-turn hook is driven,
+    /// which removes it and gives the Strength back; a swing after that must book nothing - so this would catch the
+    /// debuff's hidden Strength having been kept as a permanent loss.
+    /// </summary>
+    private static async Task<bool> StrengthDownExpiryScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 6m, applier2, null);
+        await enemy.GetPower<PiercingWailPower>()!.AfterSideTurnEnd(ctx, CombatSide.Enemy, new[] { enemy });
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Strength down (worn off)",
+            Expect("Strength given back", enemy.GetPower<StrengthPower>()?.Amount ?? 0, 0m),
+            Expect("nothing booked", l.RBlockOf(2uL), 0m),
+            Expect("the whole 12 landed", dealer.CurrentHp, dealer.MaxHp - 12));
+    }
+
+    /// <summary>
+    /// A permanent loss between two temporary ones from the same player: Piercing Wail 3, Malaise's 2 Strength, then
+    /// Piercing Wail 3 more. The second Wail merges, so its debuff stacks arrive before its hidden Strength, and the
+    /// nearest Strength change before them is Malaise's. Pairing them would drop Malaise and keep the Wail's Strength
+    /// as permanent, so the enemy would read as down 6 + 3 + 3. Down 8 and a 12 swing dealt as 4: Wail 6, Malaise 2.
+    /// </summary>
+    private static async Task<bool> StrengthDownInterleavedScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        Malaise malaise = CardOwnedBy<Malaise>(applier2);
+        string name = malaise.TitleLocString.GetFormattedText();
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 3m, applier2, null);
+        await PowerCmd.Apply<StrengthPower>(ctx, enemy, -2m, applier2, malaise);
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 3m, applier2, null);
+        string wail = enemy.GetPower<PiercingWailPower>()!.Title.GetFormattedText();
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Strength down, permanent between temporary",
+            Expect("the enemy is down 8 Strength", enemy.GetPower<StrengthPower>()?.Amount ?? 0, -8m),
+            Expect("the Wail's share", l.BlockGivenTo(2uL, wail, you), 6m),
+            Expect("Malaise's share", l.BlockGivenTo(2uL, name, you), 2m),
+            Expect("the dealer took 4", dealer.CurrentHp, dealer.MaxHp - 4));
+    }
+
+    /// <summary>
+    /// Weak and Strength down from two teammates on one 12-damage swing. Strength is added before Weak multiplies, so
+    /// each makes the other worth less: the hit is (12 - 6) x 0.75 = 4.5, which the game deals as 4.
+    ///
+    ///   Wail alone would have left 9, so it is worth 4.5;   Weak alone would have left 6, so it is worth 1.5.
+    ///
+    /// Together they prevented 8 whole points (12 - 4), and the 4.5 : 1.5 split is scaled up to that: Wail 6, Weak 2.
+    /// Weak was applied with no card, potion or relic behind it, so it falls back to the power's own name.
+    /// </summary>
+    private static async Task<bool> WeakAndStrengthDownScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 6m, applier2, null);
+        await PowerCmd.Apply<WeakPower>(ctx, enemy, 2m, applier3, null);
+        string wail = enemy.GetPower<PiercingWailPower>()!.Title.GetFormattedText();
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Weak and Strength down share a hit",
+            Expect("Wail's share", l.BlockGivenTo(2uL, wail, you), 6m),
+            Expect("Weak's share", l.BlockGivenTo(3uL, "Weak", you), 2m),
+            Expect("all of it on the dealer's meter", l.BlockedWith(you, wail) + l.BlockedWith(you, "Weak"), 8m),
+            Expect("the dealer took 4", dealer.CurrentHp, dealer.MaxHp - 4));
+    }
+
+    /// <summary>
+    /// A card that applies both Weak and a permanent Strength loss reads as one row under its own name. Malaise's two
+    /// halves are applied the way the card applies them, with the card as their source: 3 Strength and Weak, so a
+    /// 12-damage swing is (12 - 3) x 0.75 = 6.75, dealt as 6, and the 6 prevented all belong to "Malaise".
+    /// </summary>
+    private static async Task<bool> MalaiseScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        Malaise malaise = CardOwnedBy<Malaise>(applier2);
+        string name = malaise.TitleLocString.GetFormattedText();
+        await PowerCmd.Apply<StrengthPower>(ctx, enemy, -3m, applier2, malaise);
+        await PowerCmd.Apply<WeakPower>(ctx, enemy, 3m, applier2, malaise);
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Weak and Strength down under one card",
+            Expect("one row for both halves", l.BlockGivenTo(2uL, name, you), 6m),
+            Expect("nothing under Weak", l.BlockGivenTo(2uL, "Weak", you), 0m),
+            Expect("nothing under Strength", l.BlockGivenTo(2uL, "Strength", you), 0m),
+            Expect("the dealer took 6", dealer.CurrentHp, dealer.MaxHp - 6));
+    }
+
+    /// <summary>
+    /// Debuffs are counted before block. The dealer stands behind 20 block when a 12 swing comes in, Wail-ed down to 6:
+    /// block is credited the 6 it actually stopped, the Wail the 6 that never arrived, and the 14 block left standing
+    /// is overblock like any other. Counting the Wail only when it saved HP would have booked it nothing here.
+    /// </summary>
+    private static async Task<bool> StrengthDownBeforeBlockScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await Shield(dealer, 20m, you, "Block Potion");
+        await PowerCmd.Apply<PiercingWailPower>(ctx, enemy, 6m, applier2, null);
+        string wail = enemy.GetPower<PiercingWailPower>()!.Title.GetFormattedText();
+
+        await CreatureCmd.Damage(ctx, new[] { dealer }, 12m, DamageProps.monsterMove, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Strength down counts before block",
+            Expect("block stopped what reached it", l.BlockedWith(you, "Block Potion"), 6m),
+            Expect("the Wail stopped the rest", l.BlockGivenTo(2uL, wail, you), 6m),
+            Expect("the unspent block still stands", dealer.Block, 14m),
+            Expect("no HP lost", dealer.CurrentHp, dealer.MaxHp));
+    }
+
     private static void KillOsty(Creature owner)
     {
         if (owner.Player!.Osty is { IsAlive: true } osty)
@@ -3175,6 +3342,23 @@ internal static class SelfTest
         if (dealer.GetPower<DexterityPower>() != null)
         {
             await PowerCmd.Remove<DexterityPower>(dealer);
+        }
+
+        // The enemy's Weak and Strength, and the temporary debuff behind the Strength: either left on it would shrink
+        // every later swing at the dealer and book that on the Blocked meter.
+        if (enemy.GetPower<WeakPower>() != null)
+        {
+            await PowerCmd.Remove<WeakPower>(enemy);
+        }
+
+        if (enemy.GetPower<PiercingWailPower>() != null)
+        {
+            await PowerCmd.Remove<PiercingWailPower>(enemy);
+        }
+
+        if (enemy.GetPower<StrengthPower>() != null)
+        {
+            await PowerCmd.Remove<StrengthPower>(enemy);
         }
 
         // Plating grants block off its own hooks, so one left standing would quietly shield a later scenario.

@@ -1,5 +1,7 @@
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Powers;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
@@ -33,9 +35,26 @@ internal static class PowerOwnershipPatches
             return;
         }
 
-        if (applier?.Player?.NetId is ulong applierNetId)
+        if (applier?.Player?.NetId is not ulong applierNetId)
         {
-            PowerOwnership.Instance.Record(power, applierNetId, amount, GrantedBy(power, applierNetId, cardSource));
+            return;
+        }
+
+        string? grantedBy = GrantedBy(power, applierNetId, cardSource);
+        PowerOwnership.Instance.Record(power, applierNetId, amount, grantedBy);
+
+        // Strength a player takes off an enemy, for the Blocked meter. The ledger pairs a temporary debuff's stacks
+        // with the negative Strength it applies under the hood, so only a direct loss is kept as its own.
+        if (power.Owner is { Side: CombatSide.Enemy } enemy)
+        {
+            if (power is StrengthPower && amount < 0m)
+            {
+                StrengthLoss.StrengthLowered(enemy, applierNetId, grantedBy ?? "Strength", -amount);
+            }
+            else if (power is TemporaryStrengthPower { Type: PowerType.Debuff } && amount > 0m)
+            {
+                StrengthLoss.TemporaryApplied(enemy, applierNetId, fresh: power.Amount == amount);
+            }
         }
     }
 
@@ -47,6 +66,9 @@ internal static class PowerOwnershipPatches
     /// player wants to see that their block came from a Speed Potion. Every other power names its own effect - a
     /// Vulnerable share should read "Vulnerable", not "Bash" - so they record no source and are unchanged.
     ///
+    /// Weak is named by its source too, for the Blocked meter: there it sits beside the Strength a card took away, and
+    /// a card that does both (Malaise) should read as one row under its own name rather than as "Malaise" and "Weak".
+    ///
     /// The card is the direct source (Blaze applies Strength with itself as cardSource; Coordinate's own power passes
     /// its card through when it re-applies Strength internally, and the temporary-Dexterity powers pass theirs through
     /// to the plain Dexterity they grant). A potion carries no cardSource, so it comes from the potion being resolved,
@@ -54,7 +76,7 @@ internal static class PowerOwnershipPatches
     /// </summary>
     private static string? GrantedBy(PowerModel power, ulong applierNetId, CardModel? cardSource)
     {
-        if (power is not (StrengthPower or DexterityPower))
+        if (power is not (StrengthPower or DexterityPower or WeakPower))
         {
             return null;
         }

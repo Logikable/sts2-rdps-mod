@@ -33,6 +33,23 @@ internal static class AttributionPatches
     // vanish with their list.
     private static readonly ConditionalWeakTable<object, HitAttribution> Calcs = new();
 
+    // An enemy's hit on the party, held until the funnel proves it real, for what players' debuffs on the enemy
+    // prevented of it. Only the arguments are kept: the counterfactual is not worth running for every intent preview,
+    // and nothing it reads can change between the two hooks, which the funnel calls back to back.
+    private sealed record EnemyHit(
+        Creature Target,
+        Creature Dealer,
+        ulong WearerNetId,
+        decimal Damage,
+        ValueProp Props,
+        CardModel? CardSource,
+        CardPlay? CardPlay,
+        ModifyDamageHookType Flags,
+        IReadOnlyList<AbstractModel> Modifiers,
+        decimal Result);
+
+    private static readonly ConditionalWeakTable<object, EnemyHit> EnemyHits = new();
+
     private static readonly Dictionary<Creature, Queue<HitAttribution>> Pending = new();
     private static readonly object PendingLock = new();
 
@@ -72,6 +89,18 @@ internal static class AttributionPatches
             return;
         }
 
+        IReadOnlyList<AbstractModel> modifierList = modifiers as IReadOnlyList<AbstractModel> ?? modifiers.ToList();
+
+        // An enemy swinging at the party - at a player, or at a pet, which spends its owner's block on the way in - is
+        // the Blocked meter's business: players' debuffs on the enemy may have shrunk it.
+        if (target != null
+            && dealer is { Side: CombatSide.Enemy }
+            && (target.PetOwner ?? target.Player)?.NetId is ulong wearerNetId)
+        {
+            EnemyHits.AddOrUpdate(modifiers, new EnemyHit(
+                target, dealer, wearerNetId, damage, props, cardSource, cardPlay, modifyDamageHookType, modifierList, __result));
+        }
+
         // Damage that lands on a player - Infection and similar self/ally-damaging cards, a Doubt/retaliation hit
         // onto a teammate - is not offensive output, so it never belongs in the meter. Drop it before it is stashed.
         if (target?.Player != null)
@@ -79,7 +108,6 @@ internal static class AttributionPatches
             return;
         }
 
-        IReadOnlyList<AbstractModel> modifierList = modifiers as IReadOnlyList<AbstractModel> ?? modifiers.ToList();
         HitAttribution attribution = AttributionEngine.Attribute(
             damage, props, target, dealer, cardSource, cardPlay, modifyDamageHookType, modifierList, __result);
 
@@ -100,6 +128,12 @@ internal static class AttributionPatches
     [HarmonyPrefix]
     private static void AfterModifyingDamageAmountPrefix(IEnumerable<AbstractModel> modifiers)
     {
+        if (EnemyHits.TryGetValue(modifiers, out EnemyHit? hit))
+        {
+            EnemyHits.Remove(modifiers);
+            BookMitigation(hit);
+        }
+
         if (!Calcs.TryGetValue(modifiers, out HitAttribution? attribution) || attribution.Target == null)
         {
             return;
@@ -115,6 +149,29 @@ internal static class AttributionPatches
 
             queue.Enqueue(attribution);
         }
+    }
+
+    /// <summary>
+    /// Books what players' debuffs on the attacker prevented of a real enemy hit, on the Blocked meter of whoever it was
+    /// aimed at. Booked here rather than once the hit settles because it is counted before block: what block and HP
+    /// then make of the smaller hit changes nothing about how much smaller it was.
+    /// </summary>
+    private static void BookMitigation(EnemyHit hit)
+    {
+        IReadOnlyList<BlockStrand>? prevented = DebuffMitigation.Attribute(
+            hit.Damage, hit.Props, hit.Target, hit.Dealer, hit.CardSource, hit.CardPlay, hit.Flags, hit.Modifiers, hit.Result);
+        if (prevented == null || prevented.Count == 0)
+        {
+            return;
+        }
+
+        CombatLedger.Name(hit.WearerNetId, PlayerIdentity.Name(hit.WearerNetId));
+        foreach (BlockStrand strand in prevented)
+        {
+            CombatLedger.Name(strand.OwnerNetId, PlayerIdentity.Name(strand.OwnerNetId));
+        }
+
+        CombatLedger.RecordBlock(hit.WearerNetId, prevented);
     }
 
     [HarmonyPatch(nameof(Hook.AfterDamageGiven))]

@@ -68,6 +68,13 @@ never-needed block that goes uncounted. In co-op, block or Dexterity you put on
 a teammate is yours: what they could not cover themselves is credited to you,
 split pro-rata when several of you topped them up.
 
+Weakening an enemy counts too. Damage it never dealt because of Weak or a
+Strength loss (Piercing Wail, Enfeebling Touch, Malaise, Shackling Potion, ...)
+is credited to whoever applied it, under the card or potion that did it — so
+Malaise's Weak and Strength loss read as one "Malaise" row. Debuffs act on the
+swing before block does, so a hit they shrank spends less block, and the block
+they saved is overblock like any other.
+
 ## Languages
 
 The meter follows the language the game is set to. English and Simplified

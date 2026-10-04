@@ -410,6 +410,62 @@ there the potion is out of scope by the time block lands, here the game hands us
 the model. Don't copy the `PotionSource` dance into a path that was given the
 source.
 
+## Debuffs on the attacker
+
+Weak and Strength loss on an enemy are mitigation, so they go on the Blocked
+meter: `DebuffMitigation` re-runs each enemy hit on the party without them, and
+what it would have cost extra is credited to whoever applied them. Booked as
+ordinary `BlockStrand`s on the wearer, so a teammate's Piercing Wail reads as
+given/received exactly like their Beacon of Hope.
+
+**Counted before block** — the user's call, and the game's order: `ModifyDamage`,
+then `DamageBlockInternal`, then HP. So total mitigation of a hit is what it
+would have cost minus the HP it did cost, however block and debuffs split it.
+The block a debuff saved stays standing as overblock and is never booked. The
+alternative (debuffs only count HP they saved) would read a debuff player as
+zero whenever a teammate overblocked, which is exactly backwards.
+
+The total is taken in **whole points**, `trunc(without) - trunc(actual)`,
+because the game truncates the damage it deals; the decimal shares are scaled to
+that. 12 → 4.5 is 8 prevented, not 7.5.
+
+**Strength loss is not a modifier.** Every source stacks into one
+`StrengthPower`, the enemy's own Ritual included, so excluding it from the list
+would also remove the enemy's own Strength — and when the two cancel to zero
+it is not in the list at all. So the counterfactual *adds back* what players
+took (`restoredStrength` in `AttributionEngine.Recompute`, at the start of the
+additive stage, gated by the caller on `IsPoweredAttack`). `StrengthLoss`
+supplies the amount, two ways:
+
+- **Temporary** losses are `TemporaryStrengthPower` debuffs standing on the
+  enemy, read live — amount, `PowerOwnership` shares, and the name from its
+  `Title`, which is its origin card/potion/relic. Expiry needs no bookkeeping.
+- **Permanent** losses (Malaise, Resonance, Shared Fate) are negative Strength
+  applied directly, recorded in `PowerOwnershipPatches`.
+
+The trap is that a temporary debuff *also* applies a direct negative Strength,
+which must not be recorded as permanent. They are paired by applier, and the
+order flips: a fresh debuff applies its Strength from `BeforeApplied` (Strength
+first), a merge from its `AfterPowerAmountChanged` (debuff first). Only a
+*fresh* one may claim the Strength change before it, or a merge would claim a
+Malaise the same player cast in between (`StrengthDownInterleavedScenario`).
+Pairing ignores the amount on purpose: a hook that changes how much Strength
+lands would make them differ, and a missed pair double-counts for the rest of
+the fight.
+
+Weak is named by its **granting card** like Strength and Dexterity
+(`GrantedBy`), so a card doing both reads as one row — Malaise is one
+"Malaise" row, not "Malaise" plus "Weak". Debuffs from several sources on one
+hit share it by the usual scaled counterfactual, which is what splits the
+interaction: Weak multiplies after Strength is added, so each makes the other
+worth less.
+
+Which hits count: an enemy dealer, and a target that is a player or a player's
+pet (a pet's hit spends its owner's block first). Positive Strength a player
+gives an enemy (Fight Me!, Philosopher's Stone, Brimstone) is deliberately
+ignored for now — `StrengthPower` is excluded from the debuff pass, and the
+ledger records only losses.
+
 ## When a row says "(none)"
 
 Damage with a real dealer but no card is named from the game's executing-model
@@ -512,10 +568,14 @@ when the dealer is amplifying it. That is the engine's rule everywhere (a buff
 is worth the damage it actually enabled), not a Vulnerable special case.
 
 Weak has the identical shape — `WeakPower` folds in **Paper Krane** and
-Debilitate's `ModifyWeakMultiplier` — and needs nothing, twice over: Krane is
-read off `target.Player`, and the meter never books damage aimed at a player,
-while Debilitate's Weak arm needs the power on the *dealer*, which only happens
-to an enemy. `CoveredPower` reads other models elsewhere in its file but its
+Debilitate's `ModifyWeakMultiplier` — and on the damage side needs nothing,
+twice over: Krane is read off `target.Player`, and the damage meter never books
+damage aimed at a player, while Debilitate's Weak arm needs the power on the
+*dealer*, which only happens to an enemy. The Blocked meter does book enemy hits
+on players now (see "Debuffs on the attacker"), and there both fold into Weak's
+credit: Krane's share goes to whoever applied Weak rather than the player
+wearing Krane, and a teammate's Debilitate goes to the Weak applier too. Moving
+them out is the `VulnerableBoosts` pattern, unbuilt so far. `CoveredPower` reads other models elsewhere in its file but its
 damage hook is self-contained. Those three are the whole class as of 0.110.1;
 `grep -rn "public decimal Modify.*Multiplier"` over a decompile re-derives it.
 
