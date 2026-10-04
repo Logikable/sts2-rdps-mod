@@ -20,9 +20,9 @@ namespace RdpsMeter.Patches;
 ///   here (where the modifier list and powers are freshest and reproduce the returned damage exactly) but only stash
 ///   it, keyed by the modifier-list reference.
 /// - Hook.AfterModifyingDamageAmount is called solely from the damage funnel, so it is a reliable "this is a real
-///   hit" gate: it promotes the stashed attribution into a per-target queue. Preview/intent calcs never reach it and
+///   hit" gate: it promotes the stashed attribution onto a per-target stack. Preview/intent calcs never reach it and
 ///   are discarded when their modifier list is garbage-collected.
-/// - Hook.AfterDamageGiven delivers the settled DamageResult per target; we dequeue the matching attribution and
+/// - Hook.AfterDamageGiven delivers the settled DamageResult per target; we pop the matching attribution and
 ///   fold it into the ledger.
 /// </summary>
 [HarmonyPatch(typeof(Hook))]
@@ -50,7 +50,12 @@ internal static class AttributionPatches
 
     private static readonly ConditionalWeakTable<object, EnemyHit> EnemyHits = new();
 
-    private static readonly Dictionary<Creature, Queue<HitAttribution>> Pending = new();
+    // Per target, newest on top. A target only ever has more than one hit in flight when one lands inside another -
+    // the Engineer's Oil burns the enemy from inside the very hit that sets it off, between that hit's
+    // AfterModifyingDamageAmount and its AfterDamageGiven - and the inner hit always settles first, so the newest entry
+    // is always the one settling. First-in-first-out would hand the inner hit the outer one's attribution, and the outer
+    // the inner's.
+    private static readonly Dictionary<Creature, Stack<HitAttribution>> Pending = new();
     private static readonly object PendingLock = new();
 
     // cardPlay for the ModifyDamage call in flight, captured by CardPlayCapturePatch just before this postfix on the
@@ -63,6 +68,23 @@ internal static class AttributionPatches
     {
         _cardPlay = cardPlay;
     }
+
+    // The modded power behind a dealer-less damage call, captured by EffectSourcePatches in the prefix of the same
+    // call. Set - or cleared - on every call, and read in this ModifyDamage, which the funnel reaches with no await in
+    // between, so it is never a stale call's.
+    [ThreadStatic]
+    private static PowerModel? _dealerlessPower;
+
+    internal static void CaptureDealerlessPower(PowerModel? power)
+    {
+        _dealerlessPower = power;
+    }
+
+    // A dealer-less modded hit, held like the enemy hits above until the funnel proves it real: registering it at the
+    // damage call instead would leave an entry behind for every target the funnel skips as already dead.
+    private sealed record DealerlessHit(Creature Target, string Effect, IReadOnlyDictionary<ulong, decimal> Shares);
+
+    private static readonly ConditionalWeakTable<object, DealerlessHit> DealerlessHits = new();
 
     [HarmonyPatch(nameof(Hook.ModifyDamage))]
     [HarmonyPostfix]
@@ -108,6 +130,11 @@ internal static class AttributionPatches
             return;
         }
 
+        if (dealer == null && target != null && _dealerlessPower is { } power && DealerlessShares(power) is { } owners)
+        {
+            DealerlessHits.AddOrUpdate(modifiers, new DealerlessHit(target, ModdedModels.NameOf(power), owners));
+        }
+
         HitAttribution attribution = AttributionEngine.Attribute(
             damage, props, target, dealer, cardSource, cardPlay, modifyDamageHookType, modifierList, __result);
 
@@ -134,6 +161,13 @@ internal static class AttributionPatches
             BookMitigation(hit);
         }
 
+        // Booked through the same path as the game's own dealer-less effects, which AfterDamageGiven consults first.
+        if (DealerlessHits.TryGetValue(modifiers, out DealerlessHit? dealerless))
+        {
+            DealerlessHits.Remove(modifiers);
+            SourceAttribution.Register(dealerless.Target, dealerless.Effect, dealerless.Shares);
+        }
+
         if (!Calcs.TryGetValue(modifiers, out HitAttribution? attribution) || attribution.Target == null)
         {
             return;
@@ -141,14 +175,30 @@ internal static class AttributionPatches
 
         lock (PendingLock)
         {
-            if (!Pending.TryGetValue(attribution.Target, out Queue<HitAttribution>? queue))
+            if (!Pending.TryGetValue(attribution.Target, out Stack<HitAttribution>? stack))
             {
-                queue = new Queue<HitAttribution>();
-                Pending[attribution.Target] = queue;
+                stack = new Stack<HitAttribution>();
+                Pending[attribution.Target] = stack;
             }
 
-            queue.Enqueue(attribution);
+            stack.Push(attribution);
         }
+    }
+
+    /// <summary>
+    /// Who a modded power's dealer-less damage belongs to: the players who applied it, split by the stacks each put on
+    /// (the Engineer's Oil on an enemy), or failing any record of that, the player wearing it (a buff that deals damage
+    /// with no dealer, like the Engineer's Train Ramp). Null for a power no player has a hand in - an enemy's own.
+    /// </summary>
+    private static IReadOnlyDictionary<ulong, decimal>? DealerlessShares(PowerModel power)
+    {
+        if (PowerOwnership.Instance.Shares(power) is { Count: > 0 } shares)
+        {
+            return shares;
+        }
+
+        ulong? netId = power.Applier?.Player?.NetId ?? power.Owner?.Player?.NetId;
+        return netId is ulong id ? new Dictionary<ulong, decimal> { [id] = 1m } : null;
     }
 
     /// <summary>
@@ -178,15 +228,15 @@ internal static class AttributionPatches
     [HarmonyPrefix]
     private static void AfterDamageGivenPrefix(Creature target, DamageResult results)
     {
-        // Drain the queued (dealer-less) calc for this tick first so the queue never leaks, then decide how to book
+        // Drain the pending (dealer-less) calc for this tick first so the stack never leaks, then decide how to book
         // it. A poison tick's calc has no dealer and would be discarded by ApplyHit anyway; the poison path owns it.
         HitAttribution? attribution = null;
         lock (PendingLock)
         {
-            if (Pending.TryGetValue(target, out Queue<HitAttribution>? queue) && queue.Count > 0)
+            if (Pending.TryGetValue(target, out Stack<HitAttribution>? stack) && stack.Count > 0)
             {
-                attribution = queue.Dequeue();
-                if (queue.Count == 0)
+                attribution = stack.Pop();
+                if (stack.Count == 0)
                 {
                     Pending.Remove(target);
                 }

@@ -38,7 +38,7 @@ namespace RdpsMeter;
 /// AfterDamageGiven, and the stack-ownership hooks - exactly as a real co-op hit would. It runs on F9 (see
 /// <see cref="SelfTestNode"/>) or from the headless auto-harness, and returns whether every assertion passed.
 /// </summary>
-internal static class SelfTest
+internal static partial class SelfTest
 {
     private const decimal Tolerance = 0.01m;
 
@@ -138,6 +138,7 @@ internal static class SelfTest
         all &= await FightMeScenario(context, dealer, enemy, applier2);
         all &= await GiftAndWeakScenario(context, dealer, enemy, applier2, applier3);
         all &= await PhilosophersStoneScenario(context, dealer, enemy, applier2);
+        all &= await ModdedScenarios(context, dealer, enemy, applier2);
         await CaptureCostLook(context, dealer, enemy, applier2, applier3);
         all &= await OstyAbsorptionScenario(context, dealer, enemy);
         all &= await LegionOfBoneScenario(context, dealer, enemy, applier2, applier3);

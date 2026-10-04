@@ -8,6 +8,8 @@ namespace RdpsMeter;
 [ModInitializer("Initialize")]
 public static class Mod
 {
+    private const string HarmonyId = "com.rdpsmeter.sts2";
+
     public static void Initialize()
     {
         ApplyPatches();
@@ -22,6 +24,9 @@ public static class Mod
             return;
         }
 #endif
+
+        // Other mods' models are named by a scan that has to wait for them to load; see ModdedSourcePatches.
+        Patches.ModdedSourcePatches.ApplyWhenModsLoaded(new Harmony(HarmonyId));
 
         // Come up showing the run that was last played, so the meter is readable from the main menu on. Whichever run
         // is then started or continued takes over.
@@ -52,7 +57,7 @@ public static class Mod
     /// </summary>
     private static void ApplyPatches()
     {
-        var harmony = new Harmony("com.rdpsmeter.sts2");
+        var harmony = new Harmony(HarmonyId);
 
         foreach (Type type in LoadableTypes(typeof(Mod).Assembly))
         {

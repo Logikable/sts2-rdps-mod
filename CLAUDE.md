@@ -553,8 +553,8 @@ the inner effect is what dealt the hit; the outer merely caused it. A relic doin
 the same draw was never wrong, so a working relic proves nothing about the potion
 path. That precedence is only safe because `EffectSource` is set *or cleared* in
 the prefix of the hit it names, so it can never be a leftover: a potion's own
-damage runs with the potion on top of the stack, which is not a power/relic/orb,
-and the entry clears.
+damage runs with the potion on top of the stack, which is not a power/relic/orb
+(and is skipped by the any-other-model fallback below), and the entry clears.
 
 `BlockSource` deliberately goes the other way — a potion outranks the call stack
 there — and that is not the same call: block from a thrown potion must be
@@ -562,6 +562,54 @@ credited to the *thrower*, and only `PotionSource` knows who that was. No
 draw-triggered effect grants block or Strength today, so the two orderings do not
 currently collide; a game update that adds one would need this thought through
 again.
+
+## Other mods' models
+
+A character mod's turrets, runes and powers deal damage through the same
+`CreatureCmd.Damage` as the game's, so **who** gets credit was never the
+problem - the dealer is the player. What breaks is the **name**, and for
+dealer-less damage the **credit**, because every fix above is a hand-kept list
+of the game's own types. Three generic paths cover mods instead, none of which
+knows any mod by name:
+
+- **`ModdedSourcePatches`** pushes every non-card model from another mod's
+  assembly onto `ExecutingEffect` around each of its `Task`-returning methods
+  (151 across the Engineer, Runesmith and BaseLib, ~160 ms at startup). That
+  covers a modded orb's unpushed end-of-turn passive (the Engineer's turrets), a
+  model kind a mod invented (Runesmith's runes derive from `AbstractModel`
+  directly), and a mod's own helper called from a card (Turret Push firing every
+  turret). The name and owner are read by convention - a `Title` LocString, an
+  `Owner` that is a Player or Creature - in `ModdedModels`, and only when a hit
+  asks.
+- **It is applied late**, from a deferred call after mod loading, not with the
+  other patches. The meter's initializer runs before the mods loaded after it,
+  so a scan at init - which is what `OrbPassiveSourcePatches` does - sees
+  none of their types. That is exactly why turrets read "(none)" before this.
+- **`EffectSource`'s fallback order** is: a power/relic/orb on the game's stack,
+  then `ExecutingEffect`, then whatever other model the game pushed (a card, a
+  rune). The card is last on purpose: a turret fired by Turret Push has the
+  card on the game's stack and the turret on ours, and the turret dealt it. A
+  potion is skipped there so `PotionSource` keeps naming potions as before.
+- **A dealer-less hit while a modded power is on the game's stack** (the
+  Engineer's Oil, which burns like Poison) is booked through `SourceAttribution`
+  to the players who applied that power, or to the wearer if nobody did (Train
+  Ramp). Game powers are excluded - Poison, Demise and Doom have their own
+  paths, and a second registration would double-book them.
+
+The trap this uncovered is general, not modded: **a hit can land on a target
+inside another hit on that same target.** Oil burns from `BeforeDamageReceived`,
+which runs after the outer attack's attribution is already pending and before it
+settles. The per-target pending entries were a FIFO queue, so the burn settled
+with the attack's attribution and the attack with the burn's - and the attack,
+now dealer-less, was dropped. They are a stack now: the inner hit always settles
+first. The Oil scenario fails without it.
+
+What stays "(none)": a mod that deals damage from a method that is not on any
+model (a static helper called from a non-model loop), or from a `Task<T>`
+method (only plain `Task` is wrapped). Credit is still right in both cases. The
+harness's `SelfTestModded.cs` drives the real Turret, Flamma rune and Oil by type
+name and passes as skipped when a mod is not installed - so run it with the
+Engineer and Runesmith subscribed when touching any of this.
 
 ## One modifier can be several models' work
 

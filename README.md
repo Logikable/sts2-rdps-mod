@@ -54,6 +54,10 @@ code-identical assembly, so one build covers both.
   to whoever bought it, and any other teammate's buffs on the same hit keep
   what they were worth. A card you make for yourself stays your own work, and a
   card merely drawn for you (Plot, Tutor) was already yours.
+- Character mods are covered without the meter knowing them. A mod's turret,
+  rune or power is named after itself (its title, or failing that its class
+  name), and a modded debuff that deals damage on its own — like the Engineer's
+  Oil — is credited to whoever applied it, the way Poison is.
 
 ### Blocked
 
