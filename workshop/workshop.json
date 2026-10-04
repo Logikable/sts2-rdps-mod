@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.30 - The Blocked meter now counts what you do to the enemy, not only the block you stand behind. Damage an enemy never dealt because you made it Weak or took its Strength away (Piercing Wail, Enfeebling Touch, Malaise, Shackling Potion, ...) is credited to you under the card or potion that did it, so Malaise's Weak and Strength loss read as one row. Debuffs act before block, so a hit they shrank spends less block, and the block they saved is overblock like any other. It works the other way too: Strength you give an enemy (Fight Me!, Philosopher's Stone, Brimstone) makes its hits land harder, and that extra damage is booked against you as a negative row - an outline in your colour with the number in red. A teammate's Fight Me! shows on your breakdown, but the cost is theirs. Verified in game on v0.111.0 and v0.107.1.",
+  "changeNote": "0.1.31 - Character mods now show up properly. Turrets, runes and other modded effects (tested with The Engineer and The Runesmith) are named after themselves instead of \"(none)\" - a turret fired by Turret Push reads as the turret - and a modded debuff that deals damage on its own, like the Engineer's Oil, is credited to whoever applied it, the way Poison is. None of this is specific to those two mods, so most other character mods are covered too. Also fixes a bug where a hit that set off damage on the same enemy mid-swing (Oil burning under an attack) could lose the attack itself from the meter. Verified in game on v0.111.0 and v0.107.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
