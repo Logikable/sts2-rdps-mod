@@ -35,12 +35,27 @@ internal static class ModdedSourcePatches
     private static bool _applied;
 
     /// <summary>
-    /// Queues the scan for once mod loading has finished. Mod loading is one synchronous loop over every mod, so the
-    /// next idle frame is already past it; the state check only guards a loader that ever starts yielding mid-loop.
+    /// Queues the scan for once mod loading has finished. The game's own loader is one synchronous loop, so the next
+    /// frame is already past it - but Mod Launch Manager takes over and loads the rest one mod per frame, holding
+    /// <c>ModManager.State</c> at None until the last, so the check is re-asked every frame until it clears.
+    ///
+    /// Each retry waits for the next <em>frame</em>, never a CallDeferred. Godot runs a call deferred from inside a
+    /// deferred call in the same flush, so a CallDeferred retry spins without ever letting a frame pass - the state
+    /// can't change, the message queue fills, and the game dies with an access violation on startup. That shipped in
+    /// 0.1.31 and crashed every player using Mod Launch Manager.
     /// </summary>
     public static void ApplyWhenModsLoaded(Harmony harmony)
     {
-        Callable.From(() => ApplyOrRequeue(harmony)).CallDeferred();
+        if (Engine.GetMainLoop() is not SceneTree tree)
+        {
+            GD.PrintErr("[RdpsMeter] No scene tree to wait on; other mods' models will not be named");
+            return;
+        }
+
+        tree.Connect(
+            SceneTree.SignalName.ProcessFrame,
+            Callable.From(() => ApplyOrRequeue(harmony)),
+            (uint)GodotObject.ConnectFlags.OneShot);
     }
 
     private static void ApplyOrRequeue(Harmony harmony)
