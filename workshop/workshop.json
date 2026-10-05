@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.31 - Character mods now show up properly. Turrets, runes and other modded effects (tested with The Engineer and The Runesmith) are named after themselves instead of \"(none)\" - a turret fired by Turret Push reads as the turret - and a modded debuff that deals damage on its own, like the Engineer's Oil, is credited to whoever applied it, the way Poison is. None of this is specific to those two mods, so most other character mods are covered too. Also fixes a bug where a hit that set off damage on the same enemy mid-swing (Oil burning under an attack) could lose the attack itself from the meter. Verified in game on v0.111.0 and v0.107.1.",
+  "changeNote": "0.1.32 - Fixes a crash on startup for anyone using Mod Launch Manager. 0.1.31 waited for the other mods to finish loading in a way that never let the game advance a frame under Mod Launch Manager, so the game closed right after the meter loaded. It now waits properly, and modded turrets, runes and powers are named under Mod Launch Manager as they are without it. Verified in game on v0.111.0 with Mod Launch Manager; builds against every version back to v0.107.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
