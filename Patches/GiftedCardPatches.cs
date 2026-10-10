@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Runs;
 
 namespace RdpsMeter.Patches;
 
@@ -53,6 +54,11 @@ internal static class GiftedCardPatches
 /// hook names the person being handed the Shiv as the person who made it. There is nothing on the hook to recover the
 /// giver from, and the card's own OnPlay is an async method whose state machine is not a patch target worth having, so
 /// the play is tracked from the two hooks that bracket it instead.
+///
+/// An open play is not the same as a running one. A play waiting on a choice - Burning Pact asking which card to
+/// exhaust - stays open while the game runs every other player's queue, so "the one teammate mid-play" named it the
+/// giver of every card the others made for themselves meanwhile. Who is generating is whoever owns the action the
+/// game is executing (<see cref="Executing"/>); the open play only supplies the card to name the row after.
 ///
 /// An entry can outlive its play: OnPlayWrapper returns without reaching Hook.AfterCardPlayed when the owner dies or
 /// the combat ends. A stale one is harmless by construction - it is overwritten by that player's next play, dropped at
@@ -116,32 +122,18 @@ internal static class PlayInFlight
     }
 
     /// <summary>
-    /// The card being played by the single player other than <paramref name="exclude"/> who is playing one, or null
-    /// when nobody is or more than one is. Two players mid-play at once cannot be told apart by this route, so the
-    /// honest answer is to credit neither.
+    /// The player whose action the game is executing and the card they are playing, or null when no action is running
+    /// or its owner is not mid-play. A play paused on a choice stops being the executor's action as soon as another
+    /// queue's action starts, and is its action again when it resumes.
     /// </summary>
-    public static (ulong NetId, CardModel Card)? SoleOther(ulong exclude)
+    public static (ulong NetId, CardModel Card)? Executing()
     {
-        lock (Lock)
+        if (RunManager.Instance?.ActionExecutor?.CurrentlyRunningAction is not { } action)
         {
-            (ulong, CardModel)? only = null;
-            foreach ((ulong netId, CardPlay play) in ByPlayer)
-            {
-                if (netId == exclude)
-                {
-                    continue;
-                }
-
-                if (only != null)
-                {
-                    return null;
-                }
-
-                only = (netId, play.Card);
-            }
-
-            return only;
+            return null;
         }
+
+        return CardOf(action.OwnerId) is { } card ? (action.OwnerId, card) : null;
     }
 
     public static void Clear()
@@ -208,9 +200,12 @@ internal static class GiftedCardCredit
                 : null;
         }
 
-        // No usable creator - the Blade Symphony shape, where the hook names the receiver. The giver is then whoever
-        // else is mid-play, and only when exactly one player is.
-        return PlayInFlight.SoleOther(receiverNetId) is { } other ? (other.NetId, Name(other.Card)) : null;
+        // No usable creator - the Blade Symphony shape, where the hook names the receiver, which is also exactly what a
+        // card made for oneself looks like. The executing action tells them apart: a gift is being made while somebody
+        // else's play runs.
+        return PlayInFlight.Executing() is { } running && running.NetId != receiverNetId
+            ? (running.NetId, Name(running.Card))
+            : null;
     }
 
     public static void Record(CardModel card, ulong giverNetId, string effect)

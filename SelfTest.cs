@@ -2,7 +2,9 @@
 // ship: NoOpChoiceContext below subclasses PlayerChoiceContext, whose abstract members differ between game versions,
 // so a shipped copy would fail to load on any version it wasn't built against and take the whole mod down with it.
 #if RDPS_HARNESS
+using System.Reflection;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Assets;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
@@ -10,6 +12,7 @@ using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Hooks;
@@ -1262,6 +1265,29 @@ internal static partial class SelfTest
         return card;
     }
 
+    private static readonly MethodInfo SetRunningAction =
+        AccessTools.PropertySetter(typeof(ActionExecutor), nameof(ActionExecutor.CurrentlyRunningAction));
+
+    /// <summary>
+    /// Runs <paramref name="body"/> with a play of <paramref name="card"/> as the action the game is executing, which is
+    /// what the executor reports while a real play resolves. The harness calls hooks directly, outside any action, so
+    /// without this nothing would be executing at all.
+    /// </summary>
+    private static async Task WhileExecuting(CardModel card, Func<Task> body)
+    {
+        ActionExecutor executor = RunManager.Instance.ActionExecutor;
+        GameAction? before = executor.CurrentlyRunningAction;
+        SetRunningAction.Invoke(executor, new object?[] { new PlayCardAction(card, null) });
+        try
+        {
+            await body();
+        }
+        finally
+        {
+            SetRunningAction.Invoke(executor, new object?[] { before });
+        }
+    }
+
     /// <summary>
     /// A revived Osty is made only of the summon that brought it back, and its funding has to be forgotten with it.
     ///
@@ -2481,10 +2507,13 @@ internal static partial class SelfTest
     /// Shiv as the person who made it; the giver has to come from who else is mid-play. Covering one route says
     /// nothing about the other.
     ///
-    /// Two negative controls on the damage half. A Shiv the giver made for themselves stays their own work - Blade
+    /// Three negative controls on the damage half. A Shiv the giver made for themselves stays their own work - Blade
     /// Symphony hands them to every ally including the player who plays it, so this is the common case, not an edge
-    /// one. And the gifted Shiv is thrown after the giving play has finished, because the credit rides the card and
-    /// not a window of time: a Shiv held for three turns is still the giver's when it is finally thrown.
+    /// one. The gifted Shiv is thrown after the giving play has finished, because the credit rides the card and not a
+    /// window of time: a Shiv held for three turns is still the giver's when it is finally thrown. And a teammate's play
+    /// left open on a choice is no gift: Burning Pact waits on its exhaust pick while the game runs the dealer's own
+    /// Blade Dance, whose Shivs reach the hook looking exactly like Blade Symphony's. Only the action the game is
+    /// executing tells them apart, so the scenario sets it as the executor would.
     /// </summary>
     private static async Task<bool> GiftedCardScenario(
         NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
@@ -2501,28 +2530,46 @@ internal static partial class SelfTest
 
         CardModel gifted = CardOwnedBy<Shiv>(dealer);
         CardModel theirOwn = CardOwnedBy<Shiv>(applier2);
-        await Hook.AfterCardGeneratedForCombat(combat, gifted, dealer.Player!);
-        await Hook.AfterCardGeneratedForCombat(combat, theirOwn, applier2.Player!);
+        await WhileExecuting(symphony, async () =>
+        {
+            await Hook.AfterCardGeneratedForCombat(combat, gifted, dealer.Player!);
+            await Hook.AfterCardGeneratedForCombat(combat, theirOwn, applier2.Player!);
+        });
         await Hook.AfterCardPlayed(combat, ctx, giving);
+
+        CardModel pact = CardOwnedBy<BurningPact>(applier2);
+        CardPlay pondering = Play(pact, applier2.Player!, applier2);
+        await Hook.BeforeCardPlayed(combat, pondering);
+        CardModel dance = CardOwnedBy<BladeDance>(dealer);
+        CardPlay dancing = Play(dance, dealer.Player!, dealer);
+        await Hook.BeforeCardPlayed(combat, dancing);
+        CardModel yourOwn = CardOwnedBy<Shiv>(dealer);
+        await WhileExecuting(dance, () => Hook.AfterCardGeneratedForCombat(combat, yourOwn, dealer.Player!));
+        await Hook.AfterCardPlayed(combat, ctx, dancing);
+        await Hook.AfterCardPlayed(combat, ctx, pondering);
 
         await HarnessDamage(
             ctx, new[] { enemy }, 4m, DamageProps.card, dealer, gifted, Play(gifted, dealer.Player!, enemy));
         await HarnessDamage(
             ctx, new[] { enemy }, 4m, DamageProps.card, applier2, theirOwn, Play(theirOwn, applier2.Player!, enemy));
+        await HarnessDamage(
+            ctx, new[] { enemy }, 4m, DamageProps.card, dealer, yourOwn, Play(yourOwn, dealer.Player!, enemy));
 
         // Printed rather than compared against the same expression: the rows take their names from the game's own
         // card titles, and a test that recomputed them would agree with itself whatever the game said.
         string bladeSymphony = symphony.TitleLocString.GetFormattedText();
+        string burningPact = pact.TitleLocString.GetFormattedText();
         string shiv = gifted.TitleLocString.GetFormattedText();
         GD.Print($"[RdpsMeter] Gifted card: '{shiv}' credited as '{bladeSymphony}'");
 
         CombatLedger l = CombatLedger.Current;
         bool dealt = Report("Blade Symphony (damage)",
-            Expect("you aDPS", l.DealtWith(you, shiv), 4m),
+            Expect("you aDPS", l.DealtWith(you, shiv), 8m),
             Expect("given 2->you", l.GivenTo(2uL, bladeSymphony, you), 4m),
             Expect("recv <-2", l.ReceivedFrom(you, bladeSymphony, 2uL), 4m),
             Expect("their own shiv is theirs", l.DealtWith(2uL, shiv), 4m),
-            Expect("and is given to nobody", l.GivenTo(2uL, bladeSymphony, 2uL), 0m));
+            Expect("and is given to nobody", l.GivenTo(2uL, bladeSymphony, 2uL), 0m),
+            Expect("an open Burning Pact gave nothing", l.ReceivedFrom(you, burningPact, 2uL), 0m));
 
         // The block half travels an entirely separate funnel - block is credited from BlockAttributionEngine's base
         // strand rather than from a modifier list - so the damage half passing says nothing about it. Largesse hands
