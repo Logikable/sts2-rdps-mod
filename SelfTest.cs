@@ -1604,8 +1604,9 @@ internal static partial class SelfTest
     private static async Task CaptureCostLook(
         NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2, Creature applier3)
     {
+        // A headless game never draws a frame, so FramePostDraw below would wait forever and hang the whole harness.
         RdpsOverlayNode? overlay = RdpsOverlayNode.HarnessInstance;
-        if (overlay == null || Engine.GetMainLoop() is not SceneTree tree)
+        if (overlay == null || Engine.GetMainLoop() is not SceneTree tree || DisplayServer.GetName() == "headless")
         {
             return;
         }
