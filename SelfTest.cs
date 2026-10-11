@@ -1269,15 +1269,16 @@ internal static partial class SelfTest
         AccessTools.PropertySetter(typeof(ActionExecutor), nameof(ActionExecutor.CurrentlyRunningAction));
 
     /// <summary>
-    /// Runs <paramref name="body"/> with a play of <paramref name="card"/> as the action the game is executing, which is
-    /// what the executor reports while a real play resolves. The harness calls hooks directly, outside any action, so
-    /// without this nothing would be executing at all.
+    /// Runs <paramref name="body"/> with an action of <paramref name="card"/>'s owner as the one the game is executing,
+    /// which is what the executor reports while a real play resolves. The harness calls hooks directly, outside any
+    /// action, so without this nothing would be executing at all. Only the owner is read, and a PlayCardAction would
+    /// need the card registered in combat, so a bare hook action stands in.
     /// </summary>
     private static async Task WhileExecuting(CardModel card, Func<Task> body)
     {
         ActionExecutor executor = RunManager.Instance.ActionExecutor;
         GameAction? before = executor.CurrentlyRunningAction;
-        SetRunningAction.Invoke(executor, new object?[] { new PlayCardAction(card, null) });
+        SetRunningAction.Invoke(executor, new object?[] { new GenericHookGameAction(0, card.Owner.NetId, GameActionType.Combat) });
         try
         {
             await body();
