@@ -27,6 +27,8 @@ CHARACTER="${2:-4}"        # 0 Ironclad, 1 Silent, 2 Regent, 3 Necrobinder, 4 De
 HOST_METER="${HOST_METER:-on}"
 CLIENT_METER="${CLIENT_METER:-off}"
 TIMEOUT="${TIMEOUT:-300}"
+# The client's net id comes from the game's own --clientId (see MpConfig.NetId); without it both peers are player 1.
+CLIENT_ID="${CLIENT_ID:-1000}"
 
 OUT="${OUT:-/tmp/rdps-mp}"
 mkdir -p "$OUT"
@@ -65,7 +67,7 @@ args() {
 
 echo "== launching host (meter=$HOST_METER) and client (meter=$CLIENT_METER), scenario=$SCENARIO =="
 mapfile -t HOST_ARGS < <(args host "$HOST_METER")
-mapfile -t CLIENT_ARGS < <(args client "$CLIENT_METER")
+mapfile -t CLIENT_ARGS < <(args client "$CLIENT_METER"; echo "--clientId=$CLIENT_ID")
 
 ( cd "$GAME_DIR" && exec ./SlayTheSpire2.exe "${HOST_ARGS[@]}" ) >"$OUT/host.log" 2>&1 </dev/null &
 HOST_PID=$!
