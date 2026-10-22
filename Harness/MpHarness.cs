@@ -210,6 +210,7 @@ internal sealed partial class MpHarnessNode : Node
 
                 if (_fight!.Step(delta) is { } outcome)
                 {
+                    LogBlock();
                     Finish(outcome, failed: false);
                 }
 
@@ -426,6 +427,17 @@ internal sealed partial class MpHarnessNode : Node
             $"{MpHarness.CompleteSentinel} resumed the saved co-op run: {state.Players.Count} player(s), "
             + $"meter has data={RunLedger.HasData}, fights={RunLedger.Fights().Count}",
             failed: false);
+    }
+
+    /// <summary>The Blocked meter as this peer saw the fight, for scenarios judged on who gave whom block.</summary>
+    private static void LogBlock()
+    {
+        foreach (RdpsRow row in CombatLedger.Current.Snapshot())
+        {
+            string given = string.Join(", ", row.BlockGivenBy.Select(g => $"{g.Effect}->{g.Other}={g.Amount}"));
+            string blocked = string.Join(", ", row.Blocked.Select(b => $"{b.Source}={b.Amount}"));
+            MpHarness.Log($"block {row.NetId}: absorbed={row.ABlock} gave={row.BlockGiven} got={row.BlockReceived} given=[{given}] blocked=[{blocked}]");
+        }
     }
 
     private void Advance(Stage next)

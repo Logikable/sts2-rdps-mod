@@ -47,8 +47,9 @@ MODEL_DIRS = (
 
 BLOCK_DIRS = MODEL_DIRS + ("MegaCrit.Sts2.Core.Models.Potions",)
 
-# Block granted to one of these is the granter's own, so crediting the wearer is right and needs no patch.
-SELF_TARGETS = ("base.Owner", "base.Owner.Creature", "creature", "player.Creature")
+# Block granted to one of these is the granter's own, so crediting the wearer is right and needs no patch. Not
+# player.Creature: a loop over CombatState.Players reads the same way, and that is how Frost hid Hibernate's gift.
+SELF_TARGETS = ("base.Owner", "base.Owner.Creature", "creature")
 
 
 def hook_dispatchers(root):

@@ -92,6 +92,11 @@ internal sealed class MpFightDriver
     {
         foreach (CardModel card in InPreferenceOrder(combat.Hand.Cards))
         {
+            if (card.GetType().Name == MpScenarios.AvoidedCardFor(MpConfig.Scenario))
+            {
+                continue;
+            }
+
             Creature? target = card.CanPlayTargeting(enemy) ? enemy : (card.CanPlayTargeting(null) ? null : enemy);
             if (!card.CanPlayTargeting(target))
             {

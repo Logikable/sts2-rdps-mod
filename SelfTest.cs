@@ -122,6 +122,7 @@ internal static partial class SelfTest
         all &= await ThunderScenario(context, dealer, enemy);
         all &= await BlackHoleScenario(context, dealer, enemy);
         all &= await BeaconOfHopeScenario(context, dealer, enemy);
+        all &= await FrostScenario(context, dealer, enemy);
         all &= await BlockSpentScenario(context, dealer, enemy);
         all &= await BlockFromPowerScenario(context, dealer, enemy);
         all &= await BlockFromRelicScenario(context, dealer, enemy);
@@ -806,6 +807,44 @@ internal static partial class SelfTest
             Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
             Expect("the stack starts clean", clearBefore ? 1m : 0m, 1m),
             Expect("and the real hook leaves it clean", clearAfter ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Frost's block belongs to the orb's owner, and with Hibernate up that includes the copy it puts on every teammate.
+    /// The gift is the same mechanism as Beacon of Hope's, which <see cref="BeaconOfHopeScenario"/> follows through to a
+    /// spend; what this pins is that <see cref="Patches.FrostPassivePatch"/> and <see cref="Patches.FrostEvokePatch"/>
+    /// fire on a real orb, keep the owner's own block named after the orb and credited to the owner, and leave the stack
+    /// balanced. The harness has no teammate in the combat, so the copy itself is not granted here.
+    /// </summary>
+    private static async Task<bool> FrostScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        var frost = (FrostOrb)ModelDb.Orb<FrostOrb>().MutableClone();
+        frost.Owner = dealer.Player!;
+        string expected = frost.Title.GetFormattedText();
+        decimal passive = frost.PassiveVal;
+        decimal evoke = frost.EvokeVal;
+
+        bool clearBefore = ForeignBlockGrant.Current == null;
+        await frost.BeforeTurnEndOrbTrigger(ctx);
+        bool clearAfterPassive = ForeignBlockGrant.Current == null;
+        await frost.Evoke(ctx);
+        bool clearAfterEvoke = ForeignBlockGrant.Current == null;
+
+        decimal worn = dealer.Block;
+        await HarnessDamage(ctx, new[] { dealer }, worn, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Frost (passive and evoke, Hibernate's gift)",
+            Expect("passive and evoke both landed", worn, passive + evoke),
+            Expect("the owner's meter moves", l.RBlockOf(you), worn),
+            Expect("named after the orb", l.BlockedWith(you, expected), worn),
+            Expect("nothing left unnamed", l.BlockedWith(you, NoCard), 0m),
+            Expect("the stack starts clean", clearBefore ? 1m : 0m, 1m),
+            Expect("the passive leaves it clean", clearAfterPassive ? 1m : 0m, 1m),
+            Expect("and so does the evoke", clearAfterEvoke ? 1m : 0m, 1m));
     }
 
     /// <summary>

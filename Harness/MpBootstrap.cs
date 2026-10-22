@@ -123,8 +123,18 @@ internal static class MpScenarios
             "echoform" or "echobuff" => "EchoForm",
             "tagteam" => "TagTeam",
             "underworld" => "Underworld",
+            "hibernate" => "Hibernate",
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// A card the fight driver should never play. Hibernate's gift is spent only after the wearer's own block, so a
+    /// party that Defends every turn soaks every hit itself and the scenario never sees a teammate's Frost booked.
+    /// </summary>
+    public static string? AvoidedCardFor(string scenario)
+    {
+        return scenario == "hibernate" ? "DefendDefect" : null;
     }
 
     public static IEnumerable<CardModel> ExtraCardsFor(string scenario)
@@ -182,6 +192,15 @@ internal static class MpScenarios
                 yield return ModelDb.Card<Underworld>().ToMutable();
                 yield return ModelDb.Card<Underworld>().ToMutable();
                 yield return ModelDb.Card<Underworld>().ToMutable();
+                break;
+
+            case "hibernate":
+                // Hibernate makes the player's Frost orbs block for every teammate too, from the orb owner's own hook
+                // with no card attached - so the teammate's share has to land on the Frost owner's meter as block
+                // given, not on the teammate's as their own. Both decks carry it, so both directions run.
+                yield return ModelDb.Card<Hibernate>().ToMutable();
+                yield return ModelDb.Card<Hibernate>().ToMutable();
+                yield return ModelDb.Card<Hibernate>().ToMutable();
                 break;
 #endif
 

@@ -2,7 +2,9 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace RdpsMeter.Patches;
@@ -22,9 +24,10 @@ namespace RdpsMeter.Patches;
 /// Task rather than sitting in a plain postfix, because the hook awaits a GainBlock per teammate and an async method
 /// returns its Task long before any of that has happened.
 ///
-/// Only Beacon of Hope needs this on the current build - `tools/find-attribution-gaps.py` lists every source that grants
-/// block to something other than its owner, and the rest are either aimed at enemies (Rampart, at Turret Operators) or
-/// potions (Fortifier, Ship in a Bottle, Block Potion), which name their thrower through PotionSource instead.
+/// Beacon of Hope and Frost (below) need this on the current build - `tools/find-attribution-gaps.py` lists every source
+/// that grants block to something other than its owner, and the rest are either aimed at enemies (Rampart, at Turret
+/// Operators) or potions (Fortifier, Ship in a Bottle, Block Potion), which name their thrower through PotionSource
+/// instead.
 /// </summary>
 [HarmonyPatch]
 internal static class ForeignBlockPatches
@@ -54,7 +57,7 @@ internal static class ForeignBlockPatches
         }
     }
 
-    private static async Task PopAfter(Task inner)
+    internal static async Task PopAfter(Task inner)
     {
         try
         {
@@ -63,6 +66,75 @@ internal static class ForeignBlockPatches
         finally
         {
             ForeignBlockGrant.Pop();
+        }
+    }
+
+    internal static async Task<T> PopAfter<T>(Task<T> inner)
+    {
+        try
+        {
+            return await inner;
+        }
+        finally
+        {
+            ForeignBlockGrant.Pop();
+        }
+    }
+
+    /// <summary>Records an orb's owner as the giver for the span of its hook; false when the orb has none.</summary>
+    internal static bool PushOrb(OrbModel orb)
+    {
+        // Owner asserts on a canonical orb, and a prefix that throws stops the game rather than the meter.
+        if (!orb.IsMutable || orb.Owner is not { } giver)
+        {
+            return false;
+        }
+
+        ForeignBlockGrant.Push(orb.Title.GetFormattedText(), giver.NetId);
+        return true;
+    }
+}
+
+/// <summary>
+/// Frost with Hibernate up: the orb's passive and evoke put its block on every teammate too, from the orb owner's own
+/// hook, so the teammates' share is the owner's gift exactly as Beacon of Hope's is. Pushed whether or not Hibernate is
+/// up - the owner's own block names the owner either way - so nothing here names a power 0.107.1 does not have.
+/// </summary>
+[HarmonyPatch(typeof(FrostOrb), nameof(FrostOrb.Passive))]
+internal static class FrostPassivePatch
+{
+    [HarmonyPrefix]
+    private static void Prefix(FrostOrb __instance, out bool __state)
+    {
+        __state = ForeignBlockPatches.PushOrb(__instance);
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(bool __state, ref Task __result)
+    {
+        if (__state && __result != null)
+        {
+            __result = ForeignBlockPatches.PopAfter(__result);
+        }
+    }
+}
+
+/// <summary>Frost's evoke, for the same reason as <see cref="FrostPassivePatch"/>; it returns the creatures it hit.</summary>
+[HarmonyPatch(typeof(FrostOrb), nameof(FrostOrb.Evoke))]
+internal static class FrostEvokePatch
+{
+    [HarmonyPrefix]
+    private static void Prefix(FrostOrb __instance, out bool __state)
+    {
+        __state = ForeignBlockPatches.PushOrb(__instance);
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(bool __state, ref Task<IEnumerable<Creature>> __result)
+    {
+        if (__state && __result != null)
+        {
+            __result = ForeignBlockPatches.PopAfter(__result);
         }
     }
 }
