@@ -53,16 +53,23 @@ internal static class EffectSourcePatches
     }
 
     [HarmonyPrefix]
-    private static void Prefix(PlayerChoiceContext choiceContext, Creature? dealer, CardModel? cardSource)
+    private static void Prefix(
+        PlayerChoiceContext choiceContext, IEnumerable<Creature>? targets, Creature? dealer, CardModel? cardSource)
     {
         AbstractModel? running = choiceContext.LastInvolvedModel;
 
         // A hit with no dealer at all credits nobody unless something says whose it is. The game's own (Poison, Demise,
         // Doom) each have a path that does; a modded power's - the Engineer's Oil - is credited to whoever applied it.
+        // A modded power that dealt on a context of its own making (ARAM: Mayhem's Burn) left the game's stack empty,
+        // so it is recovered from what is running instead - never when a game power is on top, which owns its hit.
         if (dealer == null)
         {
-            AttributionPatches.CaptureDealerlessPower(
-                running is PowerModel power && ModdedModels.IsModded(power.GetType()) ? power : null);
+            AttributionPatches.CaptureDealerlessPower(running switch
+            {
+                PowerModel power when ModdedModels.IsModded(power.GetType()) => power,
+                PowerModel => null,
+                _ => RunningModdedPower.WornBy(targets),
+            });
             return;
         }
 

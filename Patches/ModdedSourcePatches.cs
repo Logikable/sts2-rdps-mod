@@ -156,30 +156,43 @@ internal static class ModdedSourcePatches
         }
     }
 
-    private static void Prefix(AbstractModel __instance, out ulong? __state)
+    /// <summary>
+    /// What a span pushed: the owner's entry on <see cref="ExecutingEffect"/>, for naming a player's hit, and - for a
+    /// power, whoever wears it - an entry on <see cref="RunningModdedPower"/>, for crediting a dealer-less one.
+    /// </summary>
+    internal readonly record struct Pushed(ulong? NetId, PowerModel? Power);
+
+    private static void Prefix(AbstractModel __instance, out Pushed __state)
     {
-        __state = null;
-        if (ModdedModels.OwnerOf(__instance)?.NetId is ulong netId)
+        ulong? netId = ModdedModels.OwnerOf(__instance)?.NetId;
+        if (netId is ulong id)
         {
-            __state = netId;
-            ExecutingEffect.Push(netId, __instance);
+            ExecutingEffect.Push(id, __instance);
         }
+
+        PowerModel? power = __instance as PowerModel;
+        if (power != null)
+        {
+            RunningModdedPower.Push(power);
+        }
+
+        __state = new Pushed(netId, power);
     }
 
-    private static void Postfix(ulong? __state, ref Task __result)
+    private static void Postfix(Pushed __state, ref Task __result)
     {
-        if (__state is not ulong netId)
+        if (__state is { NetId: null, Power: null })
         {
             return;
         }
 
         if (__result != null)
         {
-            __result = UnpushedSourcePatches.PopAfter(__result, netId);
+            __result = PopAfter(__result, __state);
         }
         else
         {
-            ExecutingEffect.Pop(netId);
+            Pop(__state);
         }
     }
 
@@ -188,13 +201,38 @@ internal static class ModdedSourcePatches
     /// exceptions travel in its Task. The postfix never runs then, and the push would otherwise stand until the
     /// fight ends, naming every later unnamed hit of that player's after a model that is no longer running.
     /// </summary>
-    private static Exception? Finalizer(Exception? __exception, ulong? __state)
+    private static Exception? Finalizer(Exception? __exception, Pushed __state)
     {
-        if (__exception != null && __state is ulong netId)
+        if (__exception != null)
+        {
+            Pop(__state);
+        }
+
+        return __exception;
+    }
+
+    private static async Task PopAfter(Task inner, Pushed pushed)
+    {
+        try
+        {
+            await inner;
+        }
+        finally
+        {
+            Pop(pushed);
+        }
+    }
+
+    private static void Pop(Pushed pushed)
+    {
+        if (pushed.NetId is ulong netId)
         {
             ExecutingEffect.Pop(netId);
         }
 
-        return __exception;
+        if (pushed.Power is { } power)
+        {
+            RunningModdedPower.Pop(power);
+        }
     }
 }

@@ -595,6 +595,13 @@ knows any mod by name:
   to the players who applied that power, or to the wearer if nobody did (Train
   Ramp). Game powers are excluded - Poison, Demise and Doom have their own
   paths, and a second registration would double-book them.
+- **The same hit on a context the power built itself** (ARAM: Mayhem's Burn
+  ticks on a fresh `ThrowingPlayerChoiceContext`) has an empty game stack -
+  the Black Hole trap, in a mod - and `ExecutingEffect` can't help, being keyed
+  by player while Burn is worn by an enemy. `RunningModdedPower` holds every
+  modded power mid-method whoever wears it, and the damage prefix falls back to
+  the innermost one **worn by the hit's target** - only when the game's stack
+  has no power on top, so Poison still owns its own tick.
 
 The trap this uncovered is general, not modded: **a hit can land on a target
 inside another hit on that same target.** Oil burns from `BeforeDamageReceived`,

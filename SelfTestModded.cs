@@ -3,6 +3,7 @@
 using System.Reflection;
 using Godot;
 using HarmonyLib;
+using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -21,6 +22,7 @@ namespace RdpsMeter;
 ///
 /// The Engineer and Runesmith are the mods the generic paths were built against: between them they cover a modded orb
 /// (the turret), a model kind a mod invented (the rune) and a modded power that deals damage with no dealer (Oil).
+/// ARAM: Mayhem's Burn is the same as Oil but for the context it deals on, which is the one thing Oil cannot test.
 /// </summary>
 internal static partial class SelfTest
 {
@@ -30,6 +32,7 @@ internal static partial class SelfTest
         all &= await ModdedTurretScenario(ctx, dealer, enemy);
         all &= await ModdedRuneScenario(ctx, dealer, enemy);
         all &= await ModdedOilScenario(ctx, dealer, enemy, applier2);
+        all &= await ModdedBurnScenario(dealer, enemy, applier2);
         return all;
     }
 
@@ -151,6 +154,61 @@ internal static partial class SelfTest
             Expect("the dealer took none of the burn", l.DealtWith(you, expected), 0m));
 
         // Oil leaves Residue behind; neither is a power the shared Prep knows to clear.
+        foreach (PowerModel power in enemy.Powers.Where(p => ModdedModels.IsModded(p.GetType())).ToList())
+        {
+            await PowerCmd.Remove(power);
+        }
+
+        return ok;
+    }
+
+    /// <summary>
+    /// A teammate's Burn (ARAM: Mayhem) ticking at the start of the enemy's turn. Oil without the game's stack: the tick
+    /// deals on a <c>ThrowingPlayerChoiceContext</c> it builds itself, so LastInvolvedModel is empty and only
+    /// <see cref="RunningModdedPower"/> knows Burn is resolving. Driven through the power's own turn-start hook rather
+    /// than its private tick, so the context is the one the real route makes, not one the harness hands in.
+    /// </summary>
+    private static async Task<bool> ModdedBurnScenario(Creature dealer, Creature enemy, Creature applier2)
+    {
+        const string scenario = "Modded dealer-less power on its own context (ARAM: Mayhem Burn)";
+        Type? type = AccessTools.TypeByName("HextechRunes.HextechBurnPower");
+        MethodInfo? turnStart = type?.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .FirstOrDefault(m => m.Name == "AfterSideTurnStart" && m.GetParameters().Length == 2);
+        MethodInfo? hpLoss = type == null ? null : AccessTools.Method(type, "CalculateHpLoss");
+        if (type == null || turnStart == null || hpLoss == null)
+        {
+            return Skipped(scenario, "ARAM: Mayhem is not loaded");
+        }
+
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        ulong teammate = applier2.Player!.NetId;
+
+        MethodInfo apply = typeof(PowerCmd).GetMethods()
+            .First(m => m.Name == nameof(PowerCmd.Apply) && m.IsGenericMethodDefinition
+                && m.GetParameters() is { Length: 6 } ps && ps[1].ParameterType == typeof(Creature))
+            .MakeGenericMethod(type);
+        await (Task)apply.Invoke(null, new object?[] { new BlockingPlayerChoiceContext(), enemy, 4m, applier2, null, false })!;
+
+        PowerModel? burn = enemy.Powers.FirstOrDefault(p => p.GetType() == type);
+        LogShares("Burn", burn);
+        string expected = burn != null ? ModdedModels.NameOf(burn) : "Burn";
+        int hpBefore = enemy.CurrentHp;
+        var tick = (int)hpLoss.Invoke(null, new object[] { hpBefore, burn?.Amount ?? 0 })!;
+
+        if (burn != null)
+        {
+            await (Task)turnStart.Invoke(burn, new object?[] { CombatSide.Enemy, enemy.CombatState })!;
+        }
+
+        GD.Print($"[RdpsMeter] Self-test: burn name = \"{expected}\", tick = {tick}");
+        CombatLedger l = CombatLedger.Current;
+        bool ok = Report(scenario,
+            Expect("the enemy burned", hpBefore - enemy.CurrentHp, tick),
+            Expect("the burn is the teammate's", l.DealtWith(teammate, expected), tick),
+            Expect("the dealer took none of it", l.DealtWith(you, expected), 0m),
+            Expect("nothing left running", RunningModdedPower.WornBy(new[] { enemy }) == null ? 1m : 0m, 1m));
+
         foreach (PowerModel power in enemy.Powers.Where(p => ModdedModels.IsModded(p.GetType())).ToList())
         {
             await PowerCmd.Remove(power);

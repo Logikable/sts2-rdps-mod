@@ -295,6 +295,7 @@ internal static class AttributionPatches
         PotionSource.Clear();
         EffectSource.Clear();
         ExecutingEffect.Clear();
+        RunningModdedPower.Clear();
         ConcoctAttribution.Clear();
         TagTeamCredit.Clear();
         GiftedCardCredit.Clear();
