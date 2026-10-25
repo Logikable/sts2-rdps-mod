@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.33 - Two co-op attribution fixes. A teammate's Burning Pact waiting on its exhaust pick was credited as the giver of every card the other players made for themselves in the meantime; a gifted card is now credited to the play the game is actually running. With Hibernate, the block a Frost orb gives each teammate is now credited to the orb's owner instead of showing as each teammate's own block. Builds and binds against every version from v0.107.1 to v0.111.0.",
+  "changeNote": "0.1.34 - Burn from ARAM: Mayhem is now credited. Its ticks on enemies were dropped from the meter entirely; they now count as damage for whoever applied the Burn, split by the stacks each player put on. The fix is generic, so other mods' damage-over-time powers that tick the same way are covered too. Builds and binds against every version from v0.107.1 to v0.111.0.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
