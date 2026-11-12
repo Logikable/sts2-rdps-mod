@@ -46,6 +46,10 @@ namespace RdpsMeter.Patches;
 /// AfterSideTurnEndLate, with that wearer as dealer, so either it is a player hitting a player - which the ledger does
 /// not book - or a monster hitting itself, which is nobody's row. There is nothing to misname either way.
 ///
+/// Two from 0.113.0's Dread mode need nothing either. Explosive is put on enemies by a Dominion and blasts the players'
+/// side, dealer-less, when its wearer dies; Insatiable Dominion is a curse on a player that hurts that same player.
+/// Neither is a player hitting an enemy, so neither has a row.
+///
 /// Three more the script reports as "UNKNOWN hook" and that are nonetheless fine. Fragrant Mushroom and Precarious
 /// Shears deal from AfterObtained, which is not a combat hook at all - the damage is a dealer-less HP loss outside a
 /// fight. And an orb's Passive is dispatched by OrbCmd rather than Hook.cs, so no Hook.cs dispatcher exists to find;
@@ -87,6 +91,15 @@ internal static class UnpushedSourcePatches
         // helper is private, and the hooks are where the owning player is still in hand.
         yield return AccessTools.Method(typeof(BlackHolePower), nameof(BlackHolePower.AfterCardPlayed));
         yield return AccessTools.Method(typeof(BlackHolePower), nameof(BlackHolePower.AfterStarsGained));
+
+        // The Fool's Explosive Arrows (0.113.0) blasts every enemy when one of its arrows lands, from AfterArrowImpaled,
+        // which does not push. Inside a card's play the card is on the game's stack, so the hit read as the card that
+        // shot the arrow rather than "(none)" - wrong all the same, and the entry here outranks it. By name: the power
+        // and its hook do not exist before 0.113.0.
+        foreach (MethodBase method in ByName("ExplosiveArrowsPower", "AfterArrowImpaled"))
+        {
+            yield return method;
+        }
     }
 
     /// <summary>
@@ -95,8 +108,14 @@ internal static class UnpushedSourcePatches
     /// </summary>
     private static IEnumerable<MethodBase> ByName(string powerType, string hook)
     {
-        Type? type = AccessTools.TypeByName($"MegaCrit.Sts2.Core.Models.Powers.{powerType}");
-        if (type != null && AccessTools.Method(type, hook) is { } method)
+        return ModelByName("MegaCrit.Sts2.Core.Models.Powers." + powerType, hook);
+    }
+
+    /// <summary>The same for any model, by full type name - relics and the like live in their own namespaces.</summary>
+    internal static IEnumerable<MethodBase> ModelByName(string fullTypeName, string hook)
+    {
+        Type? type = AccessTools.TypeByName(fullTypeName);
+        if (type != null && AccessTools.DeclaredMethod(type, hook) is { } method)
         {
             yield return method;
         }
@@ -137,7 +156,7 @@ internal static class UnpushedSourcePatches
 
 /// <summary>
 /// The same, for the relics that deal damage out of an unpushed hook: Parrying Shield when you end a turn still
-/// holding block, Screaming Flagon on an empty hand, Stone Calendar on its turn. All three read "(none)" without this.
+/// holding block, Screaming Flagon on an empty hand, Stone Calendar on its turn, Obsidian Vice per card held. All of them read "(none)" without this.
 ///
 /// A separate class from the powers above only because of the type: a relic's Owner is the Player itself, where a
 /// power's is that player's Creature, so the prefix cannot be shared even though everything it does is the same.
@@ -150,6 +169,14 @@ internal static class RelicSourcePatches
         yield return AccessTools.Method(typeof(ParryingShield), nameof(ParryingShield.AfterSideTurnEnd));
         yield return AccessTools.Method(typeof(ScreamingFlagon), nameof(ScreamingFlagon.BeforeSideTurnEnd));
         yield return AccessTools.Method(typeof(StoneCalendar), nameof(StoneCalendar.BeforeSideTurnEnd));
+
+        // Obsidian Vice (0.113.0, Museum of Torture) hits a random enemy per card left in hand at turn end. By name:
+        // it does not exist on older builds.
+        foreach (MethodBase method in UnpushedSourcePatches.ModelByName(
+                     "MegaCrit.Sts2.Core.Models.Relics.ObsidianVice", "BeforeSideTurnEnd"))
+        {
+            yield return method;
+        }
     }
 
     [HarmonyPrefix]

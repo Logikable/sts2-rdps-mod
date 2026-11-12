@@ -162,6 +162,13 @@ internal static partial class SelfTest
         all &= await MagicBombScenario(context, dealer, enemy, applier2);
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
+#if STS2_0_113
+        // 0.113.0's Fool and its event content. Before Doom, whose kill ends the harness's one-enemy combat - after that
+        // no hook runs and every scenario silently records nothing. Wuppy is killed by its own scenario, so it is not
+        // left standing in front of the dealer for the ones that follow.
+        all &= await ExplosiveArrowsScenario(context, dealer, enemy);
+        all &= await ObsidianViceScenario(context, dealer, enemy);
+#endif
 #if !STS2_0_107
         // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
         all &= await OutbreakScenario(context, dealer, enemy, applier2);
@@ -741,6 +748,83 @@ internal static partial class SelfTest
             Expect("named after the power", l.DealtWith(you, expected), hit),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
+
+#if STS2_0_113
+    /// <summary>
+    /// Explosive Arrows names itself. It blasts every enemy when one of its owner's arrows lands, out of
+    /// AfterArrowImpaled - a hook that pushes nothing - so on the harness's empty context the hit would read "(none)",
+    /// and inside a real card play it would read as the card that shot the arrow. The arrow is a bare slot owned by the
+    /// dealer on an Impaled instance that is never applied: the power only asks whose the first arrow is.
+    /// </summary>
+    private static async Task<bool> ExplosiveArrowsScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<ExplosiveArrowsPower>(ctx, dealer, 5m, dealer, null);
+        ExplosiveArrowsPower? explosive = dealer.GetPower<ExplosiveArrowsPower>();
+        if (explosive == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Explosive Arrows': FAIL (it did not apply)");
+            return false;
+        }
+
+        var impaled = (ImpaledPower)ModelDb.Power<ImpaledPower>().ToMutable();
+        var arrow = new MegaCrit.Sts2.Core.Entities.FoolArrows.ArrowSlot(dealer.Player!);
+        impaled.AddArrow(arrow);
+
+        string expected = explosive.Title.GetFormattedText();
+        decimal hit = explosive.Amount;
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {hit} on an arrow landing");
+
+        try
+        {
+            await explosive.AfterArrowImpaled(impaled, arrow, ctx, null);
+        }
+        finally
+        {
+            await PowerCmd.Remove<ExplosiveArrowsPower>(dealer);
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Explosive Arrows (damage when an arrow lands)",
+            Expect("it hits for what it says", hit, 5m),
+            Expect("named after the power", l.DealtWith(you, expected), hit),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Obsidian Vice names itself: a relic on BeforeSideTurnEnd, the same unpushed hook as Stone Calendar, hitting a
+    /// random enemy (the harness has one) for its damage times the cards left in hand. Draws a couple first if the hand
+    /// happens to be empty, since the relic does nothing then.
+    /// </summary>
+    private static async Task<bool> ObsidianViceScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        if (PileType.Hand.GetPile(dealer.Player!).Cards.Count == 0)
+        {
+            await CardPileCmd.Draw(ctx, 2m, dealer.Player!);
+        }
+
+        var vice = (ObsidianVice)ModelDb.Relic<ObsidianVice>().MutableClone();
+        vice.Owner = dealer.Player!;
+        string expected = vice.Title.GetFormattedText();
+        int held = PileType.Hand.GetPile(dealer.Player!).Cards.Count;
+        decimal hit = vice.DynamicVars.Damage.BaseValue * held;
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {hit} with {held} card(s) in hand");
+
+        await vice.BeforeSideTurnEnd(ctx, CombatSide.Player, new[] { dealer });
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Obsidian Vice (a relic on an unpushed hook)",
+            Expect("there was a hand to count", held > 0 ? 1m : 0m, 1m),
+            Expect("named after the relic", l.DealtWith(you, expected), hit),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+#endif
 
     /// <summary>
     /// Beacon of Hope's block belongs to the player who gave it away, not the one wearing it. It sits on one player and
