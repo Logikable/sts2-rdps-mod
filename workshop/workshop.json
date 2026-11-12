@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.34 - Burn from ARAM: Mayhem is now credited. Its ticks on enemies were dropped from the meter entirely; they now count as damage for whoever applied the Burn, split by the stacks each player put on. The fix is generic, so other mods' damage-over-time powers that tick the same way are covered too. Builds and binds against every version from v0.107.1 to v0.111.0.",
+  "changeNote": "0.1.35 - Supports the v0.113.0 beta and The Fool. Damage from relics, powers and orbs (Violent Chord, Thorns, and the like) read as (none) on v0.113.0; it is named again. Rain Shot and Omnislice's splash damage now counts, and a teammate's buffs keep their share of it. New credit: Covering Fire's block goes to the Fool who shot, cards from a Bottled Song thrown at a teammate count for the thrower, and Wuppy taking a hit for you counts as Blocked. Explosive Arrows and Obsidian Vice are named, and Aim, Stretch and Vigor read as the card or potion that gave them. Builds and binds against every version from v0.107.1 to v0.113.0.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
