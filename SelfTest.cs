@@ -172,6 +172,7 @@ internal static partial class SelfTest
         all &= await WuppyScenario(context, dealer, enemy);
         all &= await ViolentChordScenario(context, dealer, enemy);
         all &= await BottledSongScenario(context, dealer, enemy, applier2);
+        all &= await SpillScenario(context, dealer, enemy, applier2);
 #endif
 #if !STS2_0_107
         // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
@@ -948,6 +949,42 @@ internal static partial class SelfTest
             Expect("you aDPS", l.DealtWith(you, gifted.TitleLocString.GetFormattedText()), 8m),
             Expect("given 2->you", l.GivenTo(2uL, potion, you), 4m),
             Expect("recv <-2", l.ReceivedFrom(you, potion, 2uL), 4m));
+    }
+
+    /// <summary>
+    /// A spill is divided the way the hit it copies was. Rain Shot and Omnislice hit every other enemy for their first
+    /// hit's damage, with only the cap stage run - no modifiers, so nothing for the counterfactual to remove. The shipped
+    /// attribution skipped such calls entirely, so the spill was missing from the meter, not merely misattributed.
+    ///
+    /// A teammate's Vulnerable makes a 4 into a 6 - a third of it theirs - and the spill copies that 6 onto the enemy
+    /// (the harness has only the one) with the cap stage alone, where Vulnerable does not apply again. The spill must
+    /// arrive at 6, not 9, and split 4 / 2. Then a spill from a play with no first hit on record: still the dealer's
+    /// damage, and nobody else's.
+    /// </summary>
+    private static async Task<bool> SpillScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 2m, applier2, null);
+
+        CardModel rain = CardOwnedBy<RainShot>(dealer);
+        CardPlay play = Play(rain, dealer.Player!, enemy);
+        await HarnessDamage(ctx, new[] { enemy }, 4m, DamageProps.card, dealer, rain, play);
+        await CreatureCmd.Damage(ctx, new[] { enemy }, 6m, ValueProp.Move, dealer, rain, play, ModifyDamageHookType.Cap);
+
+        CardModel lone = CardOwnedBy<Omnislice>(dealer);
+        await CreatureCmd.Damage(
+            ctx, new[] { enemy }, 3m, ValueProp.Move, dealer, lone, Play(lone, dealer.Player!, enemy), ModifyDamageHookType.Cap);
+
+        string rainName = rain.TitleLocString.GetFormattedText();
+        CombatLedger l = CombatLedger.Current;
+        return Report("Rain Shot spill (inherits the first hit's split)",
+            Expect("both hits on the meter", l.DealtWith(you, rainName), 12m),
+            Expect("given 2->you, a third of each", l.GivenTo(2uL, "Vulnerable", you), 4m),
+            Expect("recv <-2", l.ReceivedFrom(you, "Vulnerable", 2uL), 4m),
+            Expect("an unpaired spill is still counted", l.DealtWith(you, lone.TitleLocString.GetFormattedText()), 3m));
     }
 
     /// <summary>

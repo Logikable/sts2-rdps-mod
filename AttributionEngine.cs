@@ -31,6 +31,25 @@ internal sealed class HitAttribution
     public required IReadOnlyList<ExternalContribution> Externals { get; init; }
 
     public bool HasDealer => DealerNetId.HasValue;
+
+    /// <summary>
+    /// The same split at a different size: every share scaled by <paramref name="total"/> / <see cref="Total"/>, on a
+    /// new target. For a hit whose size is copied from another hit rather than built up from modifiers (see
+    /// <c>SpillAttribution</c>), so the copy is divided the way the hit it copies was.
+    /// </summary>
+    public HitAttribution ScaledTo(Creature? target, decimal total)
+    {
+        decimal ratio = Total == 0m ? 0m : total / Total;
+        return new HitAttribution
+        {
+            Target = target,
+            Total = total,
+            DealerNetId = DealerNetId,
+            DealerCard = DealerCard,
+            DealerPreBlock = DealerPreBlock * ratio,
+            Externals = Externals.Select(e => e with { PreBlock = e.PreBlock * ratio }).ToList(),
+        };
+    }
 }
 
 /// <summary>

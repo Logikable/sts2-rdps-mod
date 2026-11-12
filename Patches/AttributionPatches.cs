@@ -99,7 +99,7 @@ internal static class AttributionPatches
         IEnumerable<AbstractModel> modifiers,
         decimal __result)
     {
-        if (previewMode != CardPreviewMode.None || modifyDamageHookType != ModifyDamageHookType.All)
+        if (previewMode != CardPreviewMode.None)
         {
             return;
         }
@@ -108,6 +108,24 @@ internal static class AttributionPatches
 
         if (CombatManager.Instance is not { IsInProgress: true })
         {
+            return;
+        }
+
+        // Anything but the full pipeline is a spill - Rain Shot and Omnislice, which copy their first hit's damage onto
+        // the other enemies with only the cap stage run. Its size was decided by the first hit, so it is divided the
+        // way the first hit was.
+        if (modifyDamageHookType != ModifyDamageHookType.All)
+        {
+            // With no first hit on record it is still the dealer's damage, so it goes through the engine like any
+            // other hit (which, with no modifiers to remove, gives it all to the dealer) rather than vanishing.
+            if (target?.Player == null && dealer?.Player != null)
+            {
+                IReadOnlyList<AbstractModel> spillModifiers = modifiers as IReadOnlyList<AbstractModel> ?? modifiers.ToList();
+                Calcs.AddOrUpdate(modifiers, SpillAttribution.Primary(cardPlay, cardSource)?.ScaledTo(target, __result)
+                    ?? AttributionEngine.Attribute(
+                        damage, props, target, dealer, cardSource, cardPlay, modifyDamageHookType, spillModifiers, __result));
+            }
+
             return;
         }
 
@@ -149,6 +167,7 @@ internal static class AttributionPatches
         }
 
         Calcs.AddOrUpdate(modifiers, attribution);
+        SpillAttribution.Stage(modifiers, cardPlay, cardSource);
     }
 
     [HarmonyPatch(nameof(Hook.AfterModifyingDamageAmount))]
@@ -172,6 +191,8 @@ internal static class AttributionPatches
         {
             return;
         }
+
+        SpillAttribution.Promote(modifiers, attribution);
 
         lock (PendingLock)
         {
@@ -324,5 +345,60 @@ internal static class CardPlayCapturePatch
     private static void Prefix(CardPlay? cardPlay)
     {
         AttributionPatches.CaptureCardPlay(cardPlay);
+    }
+}
+
+/// <summary>
+/// The first hit of a card play, for the spill that copies it.
+///
+/// Rain Shot (0.113.0) and Omnislice deal a second hit to every other enemy sized off the first one's damage, and run
+/// it through Hook.ModifyDamage with only the cap stage enabled. The modifier list is therefore empty: a teammate's
+/// Vulnerable that made the first hit bigger made the spill bigger by the same proportion, and the counterfactual has
+/// nothing to remove to find that out. So the spill takes the first hit's split instead, scaled to its own size -
+/// the engine's usual rule (a buff is worth the damage it enabled), applied to a hit whose size was already decided.
+///
+/// Before this, the shipped attribution skipped every non-full call outright, so the spill was not merely credited
+/// to the dealer: it was missing from the meter. On builds before 0.113.0 Omnislice ran its spill through the full
+/// pipeline and nothing here fires.
+///
+/// Recorded at promotion, not in ModifyDamage, because ModifyDamage also runs for previews and intents; only a call
+/// the funnel promotes is a real hit. Keyed by the play (or the card, where the build has no CardPlay), weakly, and
+/// overwritten by each real hit of that play, so a spill always copies the latest one - the hit it was sized from.
+/// </summary>
+internal static class SpillAttribution
+{
+    private static readonly ConditionalWeakTable<object, object> StagedKeys = new();
+    private static readonly ConditionalWeakTable<object, HitAttribution> Latest = new();
+
+    public static void Stage(object modifiers, CardPlay? cardPlay, CardModel? cardSource)
+    {
+        if (KeyOf(cardPlay, cardSource) is { } key)
+        {
+            StagedKeys.AddOrUpdate(modifiers, key);
+        }
+    }
+
+    public static void Promote(object modifiers, HitAttribution attribution)
+    {
+        if (StagedKeys.TryGetValue(modifiers, out object? key))
+        {
+            StagedKeys.Remove(modifiers);
+            if (attribution.HasDealer && attribution.Total > 0m)
+            {
+                Latest.AddOrUpdate(key, attribution);
+            }
+        }
+    }
+
+    public static HitAttribution? Primary(CardPlay? cardPlay, CardModel? cardSource)
+    {
+        return KeyOf(cardPlay, cardSource) is { } key && Latest.TryGetValue(key, out HitAttribution? primary)
+            ? primary
+            : null;
+    }
+
+    private static object? KeyOf(CardPlay? cardPlay, CardModel? cardSource)
+    {
+        return (object?)cardPlay ?? cardSource;
     }
 }
