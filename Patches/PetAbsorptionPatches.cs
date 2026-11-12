@@ -1,3 +1,4 @@
+using System.Reflection;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -46,6 +47,48 @@ internal static class PetRedirectPatch
         // reading that off the result rather than trusting the power keeps this true of any future pet that does the
         // same. Enemy pets are not metered, so the owner must be a player.
         if (!ReferenceEquals(__result, originalTarget)
+            && originalTarget.Player != null
+            && ReferenceEquals(__result.PetOwner?.Creature, originalTarget)
+            && CombatManager.Instance is { IsInProgress: true })
+        {
+            PetAbsorption.Expect(__result, originalTarget.Player);
+        }
+    }
+}
+
+/// <summary>
+/// The same redirect one step earlier in the funnel. 0.113.0 added Hook.ModifyPreBlockDamageTarget for Wuppy, the event
+/// relic pet whose WuppysLoyaltyPower takes powered attacks aimed at its owner *before* the owner's block is touched -
+/// Osty stands behind your block, Wuppy in front of it. The funnel then deals the hit to the pet through the same
+/// LoseHpInternal, carries the pet's overkill on into block and HP, and so everything above holds unchanged: only what
+/// the pet really had counts, attacks only, and an enemy sweep hitting the pet as a target of its own is not a redirect.
+///
+/// Wuppy is summoned by its relic rather than OstyCmd.Summon, so PetPool has nothing recorded for it and the absorb
+/// goes wholly to the owner - correct, since nobody else can pay for it.
+///
+/// Prepare-gated: the hook does not exist before 0.113.0. The result is null when nothing redirects, unlike the
+/// unblocked hook, which returns the original target.
+/// </summary>
+[HarmonyPatch]
+internal static class PetPreBlockRedirectPatch
+{
+    private const string HookName = "ModifyPreBlockDamageTarget";
+
+    private static bool Prepare()
+    {
+        return AccessTools.DeclaredMethod(typeof(Hook), HookName) != null;
+    }
+
+    private static MethodBase TargetMethod()
+    {
+        return AccessTools.DeclaredMethod(typeof(Hook), HookName);
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(Creature originalTarget, Creature? __result)
+    {
+        if (__result != null
+            && !ReferenceEquals(__result, originalTarget)
             && originalTarget.Player != null
             && ReferenceEquals(__result.PetOwner?.Creature, originalTarget)
             && CombatManager.Instance is { IsInProgress: true })

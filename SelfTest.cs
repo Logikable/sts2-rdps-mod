@@ -169,6 +169,7 @@ internal static partial class SelfTest
         all &= await ExplosiveArrowsScenario(context, dealer, enemy);
         all &= await ObsidianViceScenario(context, dealer, enemy);
         all &= await CoveringFireScenario(context, dealer, enemy);
+        all &= await WuppyScenario(context, dealer, enemy);
 #endif
 #if !STS2_0_107
         // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
@@ -864,6 +865,71 @@ internal static partial class SelfTest
             Expect("and the real hook leaves it clean", clearAfter ? 1m : 0m, 1m));
     }
 
+    /// <summary>
+    /// Wuppy, the event relic's pet, takes attacks aimed at its owner *before* their block - 0.113.0's new pre-block
+    /// redirect, one step ahead of where Osty stands - and that belongs on the Blocked meter for Osty's reasons.
+    /// Summoned the way the relic does it. Four phases:
+    ///
+    ///  - an unpowered hit is not an attack, so it is not diverted and the meter does not move;
+    ///  - an attack with block up: Wuppy takes it all and the block is left standing - which is the whole difference
+    ///    from Osty, and why this needs a patch of its own;
+    ///  - an attack bigger than Wuppy has left: only the HP it had counts, and the excess goes on into the block;
+    ///  - with Wuppy dead, an attack reaches the player as if it had never been there.
+    /// </summary>
+    private static async Task<bool> WuppyScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CombatLedger l = CombatLedger.Current;
+
+        // An Osty left alive by the scenarios before would catch whatever gets past block, and the HP checks below
+        // assume nothing does. Straight to zero, as OstyReviveScenario does, so nothing is spent or booked.
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        MonsterModel monster = ModelDb.Monster<MegaCrit.Sts2.Core.Models.Monsters.Wuppy>().ToMutable();
+        Creature wuppy = dealer.CombatState!.CreateCreature(monster, dealer.Side, null);
+        await PowerCmd.Apply<WuppysLoyaltyPower>(ctx, wuppy, 1m, null, null);
+        await CreatureCmd.SetMaxHp(wuppy, 10m);
+        await CreatureCmd.SetCurrentHp(wuppy, 10m);
+        await PlayerCmd.AddPet(wuppy, dealer.Player!);
+        string expected = wuppy.Monster!.Title.GetFormattedText();
+        GD.Print($"[RdpsMeter] Self-test: Wuppy row will be named '{expected}'");
+
+        await HarnessDamage(ctx, new[] { dealer }, 3m, DamageProps.nonCardUnpowered, enemy, null, null);
+        decimal creditedForUnpowered = l.BlockedWith(you, expected);
+        int wuppyAfterUnpowered = wuppy.CurrentHp;
+
+        await CreatureCmd.GainBlock(dealer, 5m, DamageProps.nonCardUnpowered, null);
+        int hpBefore = dealer.CurrentHp;
+        await HarnessDamage(ctx, new[] { dealer }, 6m, DamageProps.card, enemy, null, null);
+        decimal creditedForAbsorbed = l.BlockedWith(you, expected);
+        int wuppyAfterAbsorbed = wuppy.CurrentHp;
+        decimal blockAfterAbsorbed = dealer.Block;
+
+        // 4 HP left on Wuppy, 5 block behind it: 4 to Wuppy, 5 into block, 1 to HP.
+        await HarnessDamage(ctx, new[] { dealer }, 10m, DamageProps.card, enemy, null, null);
+        decimal creditedAfterOverrun = l.BlockedWith(you, expected);
+        int hpAfterOverrun = dealer.CurrentHp;
+
+        await HarnessDamage(ctx, new[] { dealer }, 2m, DamageProps.card, enemy, null, null);
+        decimal creditedAfterDeath = l.BlockedWith(you, expected);
+        int hpAfterDeath = dealer.CurrentHp;
+
+        return Report("Wuppy absorbing damage before block (Blocked meter)",
+            Expect("an unpowered hit is not diverted", creditedForUnpowered, 0m),
+            Expect("so Wuppy is untouched by it", wuppyAfterUnpowered, 10m),
+            Expect("an attack is credited to Wuppy", creditedForAbsorbed, 6m),
+            Expect("Wuppy is what lost the HP", wuppyAfterAbsorbed, 4m),
+            Expect("ahead of the block, which still stands", blockAfterAbsorbed, 5m),
+            Expect("only the HP Wuppy had counts", creditedAfterOverrun, 10m),
+            Expect("the rest goes through block to HP", hpAfterOverrun, hpBefore - 1),
+            Expect("a dead Wuppy diverts nothing", creditedAfterDeath, 10m),
+            Expect("so the player takes it", hpAfterDeath, hpAfterOverrun - 2),
+            Expect("and none of it lands as damage dealt", l.DealtWith(you, expected), 0m));
+    }
 #endif
 
     /// <summary>
