@@ -728,6 +728,16 @@ card's own owner, where the damage side does: Tag Team cannot double its
 applier's own card, so it cannot arise, and a strand owned by the wearer is block
 the pool already treats as their own.
 
+## A spill copies its first hit
+
+Rain Shot and Omnislice hit the other enemies for the first hit's damage, through
+`Hook.ModifyDamage` with `ModifyDamageHookType.Cap` alone — no modifiers, so the
+counterfactual engine has nothing to remove and would hand the whole spill to the
+dealer. `SpillAttribution` gives it the play's latest real hit's split instead,
+scaled to its size. A non-`All` call used to be skipped outright, which on
+0.113.0 meant the spill was not on the meter at all; any future partial-pipeline
+caller lands here too, so check what it copies before assuming the rule fits.
+
 ## A card you were given is not your own
 
 Blade Symphony and Largesse are the same blind spot one step further on. Tag
