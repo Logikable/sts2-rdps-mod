@@ -171,6 +171,7 @@ internal static partial class SelfTest
         all &= await CoveringFireScenario(context, dealer, enemy);
         all &= await WuppyScenario(context, dealer, enemy);
         all &= await ViolentChordScenario(context, dealer, enemy);
+        all &= await BottledSongScenario(context, dealer, enemy, applier2);
 #endif
 #if !STS2_0_107
         // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
@@ -907,6 +908,46 @@ internal static partial class SelfTest
             Expect("named after the power", l.DealtWith(you, expected), 9m),
             Expect("not after the card that set it off", l.DealtWith(you, wah.TitleLocString.GetFormattedText()), 0m),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Bottled Song, thrown at a teammate, puts three free melody cards in *their* hand - a card you were given, like
+    /// Largesse's, except the giver is throwing a potion rather than playing a card. The generating hook names the
+    /// thrower as creator, and the gift used to be dropped because the thrower was not mid-play. The potion window is
+    /// opened by hand, as PotionSourcePatches opens it around OnUse. The control is the same generation with no potion
+    /// and no play standing: a creator with nothing to name the gift after is still not credited.
+    /// </summary>
+    private static async Task<bool> BottledSongScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        ICombatState combat = enemy.CombatState!;
+        string potion = ModelDb.Potion<BottledSong>().Title.GetFormattedText();
+
+        CardModel gifted = CardOwnedBy<StrikeFool>(dealer);
+        PotionSource.Begin(2uL, potion);
+        try
+        {
+            await Hook.AfterCardGeneratedForCombat(combat, gifted, applier2.Player!);
+        }
+        finally
+        {
+            PotionSource.End(2uL);
+        }
+
+        CardModel unexplained = CardOwnedBy<StrikeFool>(dealer);
+        await Hook.AfterCardGeneratedForCombat(combat, unexplained, applier2.Player!);
+
+        await HarnessDamage(ctx, new[] { enemy }, 4m, DamageProps.card, dealer, gifted, Play(gifted, dealer.Player!, enemy));
+        await HarnessDamage(
+            ctx, new[] { enemy }, 4m, DamageProps.card, dealer, unexplained, Play(unexplained, dealer.Player!, enemy));
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Bottled Song (cards a thrown potion gave a teammate)",
+            Expect("you aDPS", l.DealtWith(you, gifted.TitleLocString.GetFormattedText()), 8m),
+            Expect("given 2->you", l.GivenTo(2uL, potion, you), 4m),
+            Expect("recv <-2", l.ReceivedFrom(you, potion, 2uL), 4m));
     }
 
     /// <summary>

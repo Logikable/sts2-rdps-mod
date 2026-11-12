@@ -191,13 +191,18 @@ internal static class GiftedCardCredit
         ulong receiverNetId = receiver.NetId;
 
         // The game named a creator, and it is somebody else: take them, and name the row after whatever they are
-        // playing. Without a card to name it after there is no row worth writing, so the credit is dropped rather than
-        // filed under "(none)" - and that needs a generator which is not a card play, which no cross-player one is.
+        // playing - or the potion they are throwing. 0.113.0's Bottled Song, thrown at a teammate, puts three free
+        // melody cards in *their* hand with the thrower as creator, the first cross-player generator that is not a
+        // card play. Without either to name it after there is no row worth writing, so the credit is dropped rather
+        // than filed under "(none)".
         if (creator != null && creator.NetId != receiverNetId)
         {
-            return PlayInFlight.CardOf(creator.NetId) is { } creatorCard
-                ? (creator.NetId, Name(creatorCard))
-                : null;
+            if (PlayInFlight.CardOf(creator.NetId) is { } creatorCard)
+            {
+                return (creator.NetId, Name(creatorCard));
+            }
+
+            return PotionSource.Current(creator.NetId) is { } potion ? (creator.NetId, potion) : null;
         }
 
         // No usable creator - the Blade Symphony shape, where the hook names the receiver, which is also exactly what a
