@@ -170,6 +170,7 @@ internal static partial class SelfTest
         all &= await ObsidianViceScenario(context, dealer, enemy);
         all &= await CoveringFireScenario(context, dealer, enemy);
         all &= await WuppyScenario(context, dealer, enemy);
+        all &= await ViolentChordScenario(context, dealer, enemy);
 #endif
 #if !STS2_0_107
         // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
@@ -863,6 +864,49 @@ internal static partial class SelfTest
             Expect("the hook carries the giver", patched ? 1m : 0m, 1m),
             Expect("the stack starts clean", clearBefore ? 1m : 0m, 1m),
             Expect("and the real hook leaves it clean", clearAfter ? 1m : 0m, 1m));
+    }
+
+    /// <summary>
+    /// Violent Chord names itself. It was reported reading "(none)" on 0.1.34, and the cause was not Violent Chord at all:
+    /// AfterCardPlayed's dispatcher pushes the power faithfully, but 0.113.0 moved the core Damage overload and the patch
+    /// that reads that push stopped binding. So this drives the real Hook.AfterCardPlayed - push and all - rather than
+    /// the power's own method, which is the only way to prove the name comes from where it should. The play is entered
+    /// in the combat history first, because the power fires on the first Wah card of the turn and asks the history.
+    /// </summary>
+    private static async Task<bool> ViolentChordScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        ICombatState combat = enemy.CombatState!;
+
+        await PowerCmd.Apply<ViolentChordPower>(ctx, dealer, 9m, dealer, null);
+        ViolentChordPower? chord = dealer.GetPower<ViolentChordPower>();
+        if (chord == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Violent Chord': FAIL (it did not apply)");
+            return false;
+        }
+
+        string expected = chord.Title.GetFormattedText();
+        CardModel wah = CardOwnedBy<WahHammer>(dealer);
+        CardPlay play = Play(wah, dealer.Player!, enemy);
+        CombatManager.Instance.History.CardPlayStarted(combat, play);
+        GD.Print($"[RdpsMeter] Self-test: \"{expected}\" for {chord.Amount} after a first Wah card");
+
+        try
+        {
+            await Hook.AfterCardPlayed(combat, ctx, play);
+        }
+        finally
+        {
+            await PowerCmd.Remove<ViolentChordPower>(dealer);
+        }
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Violent Chord (damage on a pushed hook)",
+            Expect("named after the power", l.DealtWith(you, expected), 9m),
+            Expect("not after the card that set it off", l.DealtWith(you, wah.TitleLocString.GetFormattedText()), 0m),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 
     /// <summary>
