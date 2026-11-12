@@ -819,6 +819,15 @@ green. When a diff shows a method gaining an overload, ask which one the
 (`LifecycleTarget.Resolve`). A rebuild cannot see this and neither can the
 binding verifier; only reading the call sites can.
 
+0.113.0 did it again, to the damage funnel itself: the core `CreatureCmd.Damage`
+moved onto a new overload taking `IEnumerable<DamageTargetData>` (per-target hit
+VFX), the `IEnumerable<Creature>` one became a non-async wrapper, and
+`AttackCommand` calls the new one directly — so every card attack would have
+skipped a patch still bound to the wrapper. That one at least failed loudly
+(`EffectSourcePatches` matched no overload); the next may not. Run the verifier
+binary with `VERIFY_TARGETS=1` to print the exact signature each patch bound,
+which is the quickest way to read "is this still the overload the callers use".
+
 The verifier resolves the game assembly's own dependencies out of `lib/` by
 name, so when the game picks up a new one (0.110.0 added Sentry) the fix is to
 drop that dll in beside `sts2.dll` — it is gitignored like the rest. Without it

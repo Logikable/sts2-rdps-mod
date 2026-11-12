@@ -26,35 +26,94 @@ namespace RdpsMeter.Patches;
 [HarmonyPatch]
 internal static class EffectSourcePatches
 {
-    // The core multi-target Damage overload every other overload funnels into. Newer game builds append a trailing
-    // CardPlay? parameter, so the overload is matched on its stable leading parameters rather than an exact type list
-    // - resolving whichever shape (six or seven parameters) the running game declares.
+    // The core Damage overload every other overload funnels into. Its shape has moved twice: newer builds appended a
+    // trailing CardPlay? (and later a ModifyDamageHookType), and 0.113.0 moved the core onto a new overload taking
+    // IEnumerable<DamageTargetData> - per-target hit-VFX data - leaving the IEnumerable<Creature> one as a plain
+    // wrapper. AttackCommand calls the DamageTargetData overload directly, so on 0.113.0 every attack skips the
+    // wrapper: binding it would still resolve and still pass the verifier, and would quietly stop naming every
+    // attack-routed effect. So the overload is matched on its stable leading parameters, and the DamageTargetData one
+    // wins wherever it exists. DamageTargetData is reached by name only - it does not exist on older builds.
     private static readonly Type[] LeadingParams =
     {
         typeof(PlayerChoiceContext), typeof(IEnumerable<Creature>), typeof(decimal), typeof(ValueProp),
         typeof(Creature), typeof(CardModel),
     };
 
+    private const string TargetDataTypeName = "DamageTargetData";
+
+    private static FieldInfo? _targetField;
+
     private static MethodBase TargetMethod()
     {
-        return AccessTools.GetDeclaredMethods(typeof(CreatureCmd))
-            .First(m => m.Name == nameof(CreatureCmd.Damage) && MatchesCoreOverload(m));
+        List<MethodInfo> candidates = AccessTools.GetDeclaredMethods(typeof(CreatureCmd))
+            .Where(m => m.Name == nameof(CreatureCmd.Damage) && MatchesCoreOverload(m))
+            .ToList();
+        return candidates.FirstOrDefault(m => TargetDataElement(m.GetParameters()[1].ParameterType) != null)
+            ?? candidates.First();
     }
 
     private static bool MatchesCoreOverload(MethodInfo method)
     {
         ParameterInfo[] ps = method.GetParameters();
-        if (ps.Length != LeadingParams.Length && ps.Length != LeadingParams.Length + 1)
+        if (ps.Length < LeadingParams.Length || ps.Length > LeadingParams.Length + 2)
         {
             return false;
         }
 
-        return !LeadingParams.Where((t, i) => ps[i].ParameterType != t).Any();
+        return !LeadingParams.Where((t, i) => ps[i].ParameterType != t
+            && !(i == 1 && TargetDataElement(ps[i].ParameterType) != null)).Any();
+    }
+
+    /// <summary>The DamageTargetData element type if <paramref name="type"/> is IEnumerable of it, else null.</summary>
+    private static Type? TargetDataElement(Type type)
+    {
+        if (!type.IsGenericType || type.GetGenericTypeDefinition() != typeof(IEnumerable<>))
+        {
+            return null;
+        }
+
+        Type element = type.GetGenericArguments()[0];
+        return element.Name == TargetDataTypeName ? element : null;
+    }
+
+    /// <summary>
+    /// The hit's targets, whichever shape the bound overload takes them in. Read from the argument array rather than a
+    /// named parameter because the name differs between the shapes (targets / targetData) and Harmony refuses to bind
+    /// a prefix declaring one it can't find. Nothing is written back, so the array is safe to read.
+    /// </summary>
+    private static IEnumerable<Creature>? TargetsOf(object? arg)
+    {
+        switch (arg)
+        {
+            case null:
+                return null;
+            case IEnumerable<Creature> creatures:
+                return creatures;
+            case System.Collections.IEnumerable data:
+                var targets = new List<Creature>();
+                foreach (object? entry in data)
+                {
+                    if (entry == null)
+                    {
+                        continue;
+                    }
+
+                    _targetField ??= AccessTools.Field(entry.GetType(), "target");
+                    if (_targetField?.GetValue(entry) is Creature creature)
+                    {
+                        targets.Add(creature);
+                    }
+                }
+
+                return targets;
+            default:
+                return null;
+        }
     }
 
     [HarmonyPrefix]
     private static void Prefix(
-        PlayerChoiceContext choiceContext, IEnumerable<Creature>? targets, Creature? dealer, CardModel? cardSource)
+        PlayerChoiceContext choiceContext, object[] __args, Creature? dealer, CardModel? cardSource)
     {
         AbstractModel? running = choiceContext.LastInvolvedModel;
 
@@ -68,7 +127,7 @@ internal static class EffectSourcePatches
             {
                 PowerModel power when ModdedModels.IsModded(power.GetType()) => power,
                 PowerModel => null,
-                _ => RunningModdedPower.WornBy(targets),
+                _ => RunningModdedPower.WornBy(TargetsOf(__args[1])),
             });
             return;
         }
