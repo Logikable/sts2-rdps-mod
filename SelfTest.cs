@@ -3735,5 +3735,10 @@ internal sealed class NoOpChoiceContext : PlayerChoiceContext
     {
         return Task.CompletedTask;
     }
+
+#if STS2_0_113
+    // 0.113.0 made every context say which kind of action it belongs to; the game's own Blocking context says none.
+    public override MegaCrit.Sts2.Core.Entities.Multiplayer.GameActionType? GameActionType => null;
+#endif
 }
 #endif

@@ -85,6 +85,9 @@ internal static class AutoHarness
             ActModel.GetDefaultList().Select(act => act.ToMutable()).ToList(),
             new List<ModifierModel>(),
             GameMode.Standard,
+#if STS2_0_113
+            false, // isCustom, added in 0.113.0
+#endif
             0,
             SeedHelper.GetRandomSeed());
 

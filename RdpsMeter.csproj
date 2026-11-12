@@ -22,6 +22,11 @@
   <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.107.1'))">
     <DefineConstants>$(DefineConstants);STS2_0_107</DefineConstants>
   </PropertyGroup>
+  <!-- The harness against 0.113.0, whose PlayerChoiceContext gained an abstract GameActionType the no-op context must
+       override - a member that does not exist on earlier builds. Same file-name key as above. -->
+  <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.113'))">
+    <DefineConstants>$(DefineConstants);STS2_0_113</DefineConstants>
+  </PropertyGroup>
 
   <!-- Which game assembly the mod compiles against. A release is built against lib/sts2.dll and carries one DLL for
        every supported version, reaching the differences between them through Prepare-gates and reflection rather than
