@@ -91,8 +91,9 @@ internal static class PowerOwnershipPatches
     // The Fool's Aim and Stretch (0.113.0) are the same shape as Strength and Dexterity - one stacking instance every
     // source pours into, Aim for arrow damage and Stretch for card block - and a teammate's Yoga or a thrown Precision
     // Potion should read as itself beside the wearer's own Nock or Bounce, not merge into one "Aim" / "Stretch" row.
-    // Matched by name because neither type exists before 0.113.0.
-    private static readonly HashSet<string> PooledStatsByName = new() { "AimPower", "StretchPower" };
+    // Vigor, the one-shot damage version, joins them because Enrapture gives a teammate Vigor and Stretch together and
+    // its two halves should read as one card. Matched by name because Aim and Stretch do not exist before 0.113.0.
+    private static readonly HashSet<string> PooledStatsByName = new() { "AimPower", "StretchPower", "VigorPower" };
 
     private static bool IsPooledStatByName(PowerModel power)
     {
