@@ -168,6 +168,7 @@ internal static partial class SelfTest
         // left standing in front of the dealer for the ones that follow.
         all &= await ExplosiveArrowsScenario(context, dealer, enemy);
         all &= await ObsidianViceScenario(context, dealer, enemy);
+        all &= await CoveringFireScenario(context, dealer, enemy);
 #endif
 #if !STS2_0_107
         // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
@@ -822,6 +823,45 @@ internal static partial class SelfTest
             Expect("there was a hand to count", held > 0 ? 1m : 0m, 1m),
             Expect("named after the relic", l.DealtWith(you, expected), hit),
             Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
+    }
+
+    /// <summary>
+    /// Covering Fire hands every teammate block each time its owner shoots, which is Beacon of Hope's shape exactly:
+    /// card-less block given away, so the giver has to be carried by ForeignBlockGrant. That mechanism, followed through
+    /// to a spend, is BeaconOfHopeScenario's; what this pins is that the real hook is patched and leaves the stack
+    /// balanced. The harness combat has no teammate, so nothing is actually granted.
+    /// </summary>
+    private static async Task<bool> CoveringFireScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+
+        await PowerCmd.Apply<CoveringFirePower>(ctx, dealer, 3m, dealer, null);
+        CoveringFirePower? cover = dealer.GetPower<CoveringFirePower>();
+        if (cover == null)
+        {
+            GD.Print("[RdpsMeter] Scenario 'Covering Fire': FAIL (it did not apply)");
+            return false;
+        }
+
+        MethodInfo hook = AccessTools.DeclaredMethod(typeof(CoveringFirePower), nameof(CoveringFirePower.AfterArrowShot));
+        bool patched = Harmony.GetPatchInfo(hook)?.Prefixes.Any(p => p.owner == Mod.HarmonyId) == true;
+
+        bool clearBefore = ForeignBlockGrant.Current == null;
+        try
+        {
+            await cover.AfterArrowShot(dealer.Player!, null, ctx, CardOwnedBy<StrikeIronclad>(dealer));
+        }
+        finally
+        {
+            await PowerCmd.Remove<CoveringFirePower>(dealer);
+        }
+
+        bool clearAfter = ForeignBlockGrant.Current == null;
+
+        return Report("Covering Fire (block given to teammates on a shot)",
+            Expect("the hook carries the giver", patched ? 1m : 0m, 1m),
+            Expect("the stack starts clean", clearBefore ? 1m : 0m, 1m),
+            Expect("and the real hook leaves it clean", clearAfter ? 1m : 0m, 1m));
     }
 
 #endif

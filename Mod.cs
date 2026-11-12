@@ -8,7 +8,7 @@ namespace RdpsMeter;
 [ModInitializer("Initialize")]
 public static class Mod
 {
-    private const string HarmonyId = "com.rdpsmeter.sts2";
+    internal const string HarmonyId = "com.rdpsmeter.sts2";
 
     public static void Initialize()
     {

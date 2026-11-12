@@ -24,7 +24,7 @@ namespace RdpsMeter.Patches;
 /// Task rather than sitting in a plain postfix, because the hook awaits a GainBlock per teammate and an async method
 /// returns its Task long before any of that has happened.
 ///
-/// Beacon of Hope and Frost (below) need this on the current build - `tools/find-attribution-gaps.py` lists every source
+/// Beacon of Hope, Covering Fire and Frost (below) need this on the current build - `tools/find-attribution-gaps.py` lists every source
 /// that grants block to something other than its owner, and the rest are either aimed at enemies (Rampart, at Turret
 /// Operators) or potions (Fortifier, Ship in a Bottle, Block Potion), which name their thrower through PotionSource
 /// instead.
@@ -35,6 +35,14 @@ internal static class ForeignBlockPatches
     private static IEnumerable<MethodBase> TargetMethods()
     {
         yield return AccessTools.Method(typeof(BeaconOfHopePower), nameof(BeaconOfHopePower.AfterBlockGained));
+
+        // The Fool's Covering Fire (0.113.0) gives every teammate block each time its owner shoots an arrow - the same
+        // gift, from AfterArrowShot. By name: neither the power nor the hook exists before 0.113.0.
+        foreach (MethodBase method in UnpushedSourcePatches.ModelByName(
+                     "MegaCrit.Sts2.Core.Models.Powers.CoveringFirePower", "AfterArrowShot"))
+        {
+            yield return method;
+        }
     }
 
     [HarmonyPrefix]
