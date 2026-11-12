@@ -88,9 +88,20 @@ internal static class PowerOwnershipPatches
     /// to the plain Dexterity they grant). A potion carries no cardSource, so it comes from the potion being resolved,
     /// and a relic from the effect stack - the same two the damage rows are named from.
     /// </summary>
+    // The Fool's Aim and Stretch (0.113.0) are the same shape as Strength and Dexterity - one stacking instance every
+    // source pours into, Aim for arrow damage and Stretch for card block - and a teammate's Yoga or a thrown Precision
+    // Potion should read as itself beside the wearer's own Nock or Bounce, not merge into one "Aim" / "Stretch" row.
+    // Matched by name because neither type exists before 0.113.0.
+    private static readonly HashSet<string> PooledStatsByName = new() { "AimPower", "StretchPower" };
+
+    private static bool IsPooledStatByName(PowerModel power)
+    {
+        return PooledStatsByName.Contains(power.GetType().Name);
+    }
+
     private static string? GrantedBy(PowerModel power, ulong applierNetId, CardModel? cardSource)
     {
-        if (power is not (StrengthPower or DexterityPower or WeakPower))
+        if (power is not (StrengthPower or DexterityPower or WeakPower) && !IsPooledStatByName(power))
         {
             return null;
         }
