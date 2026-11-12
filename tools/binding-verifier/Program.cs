@@ -82,6 +82,10 @@ Harmony harmony = new("rdpsmeter.binding-verifier");
 int bound = 0;
 int skipped = 0;
 int failed = 0;
+// VERIFY_TARGETS=1 also prints the method each patch bound to. "ok" says a target resolved, not that it is the one the
+// game's callers run - an overload that became a wrapper still resolves. Reading the bound signatures is how to tell.
+bool listTargets = Environment.GetEnvironmentVariable("VERIFY_TARGETS") == "1";
+HashSet<MethodBase> seen = new();
 
 foreach (Type type in types)
 {
@@ -109,6 +113,14 @@ foreach (Type type in types)
         {
             Console.WriteLine($"  ok    {type.Name} - {patched.Count} method(s)");
             bound++;
+            foreach (MethodBase original in harmony.GetPatchedMethods().Where(m => seen.Add(m)).ToList())
+            {
+                if (listTargets)
+                {
+                    string ps = string.Join(", ", original.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
+                    Console.WriteLine($"          {original.DeclaringType?.Name}.{original.Name}({ps})");
+                }
+            }
         }
     }
     catch (Exception ex)
