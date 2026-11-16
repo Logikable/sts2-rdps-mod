@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.35 - Supports the v0.113.0 beta and The Fool. Damage from relics, powers and orbs (Violent Chord, Thorns, and the like) read as (none) on v0.113.0; it is named again. Rain Shot and Omnislice's splash damage now counts, and a teammate's buffs keep their share of it. New credit: Covering Fire's block goes to the Fool who shot, cards from a Bottled Song thrown at a teammate count for the thrower, and Wuppy taking a hit for you counts as Blocked. Explosive Arrows and Obsidian Vice are named, and Aim, Stretch and Vigor read as the card or potion that gave them. Builds and binds against every version from v0.107.1 to v0.113.0.",
+  "changeNote": "0.1.36 - Your own percentage buffs get their own rows in your breakdown: a Lethality Strike reads \"Strike 10, Lethality 5\" instead of \"Strike 15\". The same goes for Double Damage, Pen Nib and modded relics such as Hades Ancients' Pressure Points. Totals and teammates' credit are unchanged, and flat buffs like Strength stay on the card. Fixed: Dexterity, Weak or Strength from a relic or power could be labelled with an unrelated name, such as Hades Ancients' Meat Grinder showing up on the Blocked meter. Builds and binds against every version from v0.107.1 to v0.113.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
