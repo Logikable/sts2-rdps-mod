@@ -128,6 +128,7 @@ internal static partial class SelfTest
         all &= await BlockFromRelicScenario(context, dealer, enemy);
         all &= await BlockFromCardScenario(context, dealer, enemy, applier2);
         all &= await BlockOwnDexterityScenario(context, dealer, enemy, applier2);
+        all &= await StaleEffectNameScenario(context, dealer, enemy);
         all &= await BlockDexterityScenario(context, dealer, enemy, applier2);
         all &= await BlockProRataScenario(context, dealer, enemy, applier2, applier3);
         all &= await BlockFourPlayerScenario(context, dealer, enemy, applier2, applier3, applier4);
@@ -1278,6 +1279,57 @@ internal static partial class SelfTest
             Expect("and none of it is theirs", l.RBlockOf(2uL), 0m));
 
         return split && negative;
+    }
+
+    /// <summary>
+    /// A card-less grant is named from what is running when it is granted, never from the last card-less hit. The
+    /// damage side keeps that hit's name until the player's next card-less hit replaces it, and Hades Ancients' Meat
+    /// Grinder swings after every 2-energy card - so it was nearly always the name left standing, and the next
+    /// Dexterity a relic or power gave read "Meat Grinder" on the Blocked meter.
+    ///
+    /// The leftover is planted directly, since the mod is not something the harness can count on. Then the same grant
+    /// with a relic on the context's stack, to show the live name is still found when there is one.
+    /// </summary>
+    private static async Task<bool> StaleEffectNameScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CardModel card = Owned(dealer.Player!);
+        string cardName = card.TitleLocString.GetFormattedText();
+        const string leftover = "Meat Grinder";
+
+        EffectSource.Set(you, leftover);
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 3m, dealer, null);
+        EffectSource.Set(you, null);
+
+        await CreatureCmd.GainBlock(dealer, 5m, BlockProps.card, Play(card, dealer.Player!, dealer));
+        await HarnessDamage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool stale = Report("Card-less Dexterity ignores the last hit's name",
+            Expect("the card's own 5", l.BlockedWith(you, cardName), 5m),
+            Expect("nothing under the leftover", l.BlockedWith(you, leftover), 0m),
+            Expect("the power's own name instead", l.BlockedWith(you, "Dexterity"), 3m));
+
+        await Prep(dealer, enemy);
+        var relic = (ParryingShield)ModelDb.Relic<ParryingShield>().MutableClone();
+        relic.Owner = dealer.Player!;
+        string relicName = relic.Title.GetFormattedText();
+
+        EffectSource.Set(you, leftover);
+        ctx.PushModel(relic);
+        await PowerCmd.Apply<DexterityPower>(ctx, dealer, 3m, dealer, null);
+        ctx.PopModel(relic);
+        EffectSource.Set(you, null);
+
+        await CreatureCmd.GainBlock(dealer, 5m, BlockProps.card, Play(card, dealer.Player!, dealer));
+        await HarnessDamage(ctx, new[] { dealer }, 8m, DamageProps.card, enemy, null, null);
+
+        bool live = Report("Card-less Dexterity named by what is running",
+            Expect("named after the relic on the stack", l.BlockedWith(you, relicName), 3m),
+            Expect("nothing under the leftover", l.BlockedWith(you, leftover), 0m));
+
+        return stale && live;
     }
 
     /// <summary>

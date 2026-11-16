@@ -2,6 +2,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Powers;
+using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
@@ -21,7 +22,7 @@ internal static class PowerOwnershipPatches
     [HarmonyPatch(nameof(Hook.AfterPowerAmountChanged))]
     [HarmonyPrefix]
     private static void AfterPowerAmountChangedPrefix(
-        PowerModel power, decimal amount, Creature? applier, CardModel? cardSource)
+        PlayerChoiceContext choiceContext, PowerModel power, decimal amount, Creature? applier, CardModel? cardSource)
     {
         // Poison applied by a Concoct buff is booked to the ally who swung; redirect those stacks to the player who
         // played Concoct instead, split across its owners.
@@ -49,7 +50,7 @@ internal static class PowerOwnershipPatches
             return;
         }
 
-        string? grantedBy = GrantedBy(power, applierNetId, cardSource);
+        string? grantedBy = GrantedBy(power, applierNetId, cardSource, choiceContext);
         PowerOwnership.Instance.Record(power, applierNetId, amount, grantedBy);
 
         // Strength a player takes off an enemy or gives it, for the Blocked meter. The ledger pairs a temporary
@@ -100,7 +101,8 @@ internal static class PowerOwnershipPatches
         return PooledStatsByName.Contains(power.GetType().Name);
     }
 
-    private static string? GrantedBy(PowerModel power, ulong applierNetId, CardModel? cardSource)
+    private static string? GrantedBy(
+        PowerModel power, ulong applierNetId, CardModel? cardSource, PlayerChoiceContext? choiceContext)
     {
         if (power is not (StrengthPower or DexterityPower or WeakPower) && !IsPooledStatByName(power))
         {
@@ -111,7 +113,7 @@ internal static class PowerOwnershipPatches
         {
             return cardSource?.TitleLocString.GetFormattedText()
                 ?? PotionSource.Current(applierNetId)
-                ?? EffectSource.Current(applierNetId);
+                ?? EffectSource.Resolve(choiceContext?.LastInvolvedModel, applierNetId);
         }
         catch (Exception)
         {
