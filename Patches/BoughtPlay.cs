@@ -73,6 +73,10 @@ internal static class BoughtPlay
             DealerCard = attribution.DealerCard,
             DealerPreBlock = attribution.DealerPreBlock - moved,
             Externals = externals,
+            // The dealer's own percentage buffs are a breakdown of their share, so they shrink with it.
+            OwnEffects = attribution.OwnEffects
+                .Select(e => e with { PreBlock = e.PreBlock * (attribution.DealerPreBlock - moved) / attribution.DealerPreBlock })
+                .ToList(),
         };
     }
 }

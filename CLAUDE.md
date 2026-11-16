@@ -544,6 +544,13 @@ there is no gap.
 Block is immune to all of this: `BlockSource` reads the real call stack instead,
 which does not care what anybody pushed.
 
+`EffectSource.Current` is a **hit's** name, and it stays behind after that hit
+until the player's next card-less hit replaces it. Never use it to name anything
+else. `GrantedBy` once did, so Hades Ancients' Meat Grinder (it swings after every
+2-energy card) labelled the next relic-granted Dexterity or Weak on the Blocked
+meter. Name a non-damage effect with `EffectSource.Resolve` on the context its
+own hook was handed.
+
 The mirror-image bug is a row named after the **wrong** thing rather than
 nothing, and it happens where two naming windows are open at once. A potion that
 draws a card runs the drawn card's triggers *inside* `OnUse`, so a Speedster hit
@@ -671,6 +678,27 @@ wearing Krane, and a teammate's Debilitate goes to the Weak applier too. Moving
 them out is the `VulnerableBoosts` pattern, unbuilt so far. `CoveredPower` reads other models elsewhere in its file but its
 damage hook is self-contained. Those three are the whole class as of 0.110.1;
 `grep -rn "public decimal Modify.*Multiplier"` over a decompile re-derives it.
+
+## The dealer's own percentage buffs get their own rows
+
+Credit for a buff the dealer gave themselves never moves (FFXIV convention), but
+a **multiplicative** one is split out of the card's row in their breakdown:
+Strike with Lethality reads "Strike 10, Lethality 5", not "Strike 15". Flat buffs
+(Strength, Vigor) stay on the card. It's the user's call: "all own % buffs", no
+list kept by name, so Double Damage, Pen Nib and modded relics come along.
+Totals don't move; only `DealtByCard` gains keys, so no save format changes.
+
+Two choices worth knowing. **The split is measured after teammates' credit and
+inside the dealer's share**, in the world without teammates' buffs
+(`OwnPercentages`). Folding the dealer's buffs into the teammates' normalization
+pass would make a teammate's Vulnerable pay for half its overlap with Lethality,
+which breaks the rule that a teammate's buff is worth what it actually enabled.
+**A buff qualifies by its multiplier on this hit being above 1**, not by its class
+overriding `ModifyDamageMultiplicative`: Hades Ancients' Pressure Points and its
+siblings implement the mod's own `IModifyDamageMultiplicativeCompatibility`,
+which a postfix on the *base* method applies. That same postfix is why the replay
+reproduces them, since `Invoke` calls the listener virtually through the patched
+base. Rows are named by the model's `Title` (localized), not by class name.
 
 ## An extra play is not a modifier
 

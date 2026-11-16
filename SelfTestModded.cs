@@ -33,7 +33,53 @@ internal static partial class SelfTest
         all &= await ModdedRuneScenario(ctx, dealer, enemy);
         all &= await ModdedOilScenario(ctx, dealer, enemy, applier2);
         all &= await ModdedBurnScenario(dealer, enemy, applier2);
+        all &= await ModdedPressurePointsScenario(ctx, dealer, enemy);
         return all;
+    }
+
+    /// <summary>
+    /// Hades Ancients' Pressure Points, a relic that makes every fifth attack deal 150% more. It is the dealer's own
+    /// percentage buff, so it gets a row of its own beside the card, as Lethality does.
+    ///
+    /// It is the case worth having for real because of *how* it multiplies: the relic never overrides
+    /// ModifyDamageMultiplicative. It implements the mod's own interface, which a postfix on the base method applies. A
+    /// rule keyed on "the class overrides the method" would miss it, and the replay only reproduces it because the
+    /// listener is invoked virtually through that patched base. Its counter is set by hand to the charged state.
+    /// </summary>
+    private static async Task<bool> ModdedPressurePointsScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        const string scenario = "Modded own percentage relic (Pressure Points)";
+        Type? type = AccessTools.TypeByName("HadesAncients.HadesAncientsCode.Artemis.Relics.PressurePoints");
+        PropertyInfo? counter = type == null ? null : AccessTools.Property(type, "AttacksPlayed");
+        if (type == null || counter == null)
+        {
+            return Skipped(scenario, "Hades Ancients is not loaded");
+        }
+
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CardModel card = Owned(dealer.Player!);
+        string cardName = card.TitleLocString.GetFormattedText();
+
+        var relic = (RelicModel)ModelDb.GetById<RelicModel>(ModelDb.GetId(type)).MutableClone();
+        dealer.Player!.AddRelicInternal(relic, -1, silent: true);
+        try
+        {
+            counter.SetValue(relic, 4);
+            string expected = relic.Title.GetFormattedText();
+            await HarnessDamage(ctx, new[] { enemy }, 10m, DamageProps.card, dealer, card, null);
+
+            GD.Print($"[RdpsMeter] Self-test: Pressure Points title = \"{expected}\"");
+            CombatLedger l = CombatLedger.Current;
+            return Report(scenario,
+                Expect("the card's own 10", l.DealtWith(you, cardName), 10m),
+                Expect("the relic's 15 under its own name", l.DealtWith(you, expected), 15m));
+        }
+        finally
+        {
+            counter.SetValue(relic, 0);
+            dealer.Player!.RemoveRelicInternal(relic, silent: true);
+        }
     }
 
     /// <summary>

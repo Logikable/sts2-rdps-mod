@@ -198,8 +198,19 @@ internal sealed class CombatLedger
         {
             ulong dealerNetId = attribution.DealerNetId!.Value;
             PlayerLedger dealer = Ledger(dealerNetId);
+
+            // The dealer's own percentage buffs take their slice of the hit under their own names; the card keeps the
+            // rest, teammates' buffs included, so its own-vs-buff bar still splits the way it did.
+            decimal ownTotal = 0m;
+            foreach (OwnContribution own in attribution.OwnEffects)
+            {
+                decimal amount = dealt * own.PreBlock / attribution.Total;
+                dealer.DealtByCard[own.Effect] = dealer.DealtByCard.GetValueOrDefault(own.Effect) + amount;
+                ownTotal += amount;
+            }
+
             dealer.DealtByCard[attribution.DealerCard] =
-                dealer.DealtByCard.GetValueOrDefault(attribution.DealerCard) + dealt;
+                dealer.DealtByCard.GetValueOrDefault(attribution.DealerCard) + dealt - ownTotal;
 
             decimal buffTotal = 0m;
             foreach (ExternalContribution contribution in attribution.Externals)

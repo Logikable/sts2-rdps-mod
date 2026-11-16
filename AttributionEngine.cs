@@ -2,6 +2,7 @@ using System.Reflection;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Powers;
 using MegaCrit.Sts2.Core.Hooks;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.ValueProps;
@@ -14,6 +15,13 @@ namespace RdpsMeter;
 /// the way an rDPS tooltip does.
 /// </summary>
 internal readonly record struct ExternalContribution(ulong ApplierNetId, string Effect, decimal PreBlock);
+
+/// <summary>
+/// Part of the dealer's own share that one of their own percentage buffs bought - Lethality, Pen Nib, a modded relic
+/// like Pressure Points - in pre-block space. Still the dealer's damage; it is only filed under the buff's name instead
+/// of the card's, so "Strike 10, Lethality 5" rather than "Strike 15".
+/// </summary>
+internal readonly record struct OwnContribution(string Effect, decimal PreBlock);
 
 /// <summary>
 /// The attributed decomposition of a single hit's pre-block damage: the dealer's own share plus each teammate's
@@ -29,6 +37,12 @@ internal sealed class HitAttribution
     public required string DealerCard { get; init; }
     public required decimal DealerPreBlock { get; init; }
     public required IReadOnlyList<ExternalContribution> Externals { get; init; }
+
+    /// <summary>
+    /// The slices of <see cref="DealerPreBlock"/> the dealer's own percentage buffs account for. A breakdown of the
+    /// dealer's share, not an addition to it: the card's row is <see cref="DealerPreBlock"/> less these.
+    /// </summary>
+    public IReadOnlyList<OwnContribution> OwnEffects { get; init; } = Array.Empty<OwnContribution>();
 
     public bool HasDealer => DealerNetId.HasValue;
 
@@ -48,6 +62,7 @@ internal sealed class HitAttribution
             DealerCard = DealerCard,
             DealerPreBlock = DealerPreBlock * ratio,
             Externals = Externals.Select(e => e with { PreBlock = e.PreBlock * ratio }).ToList(),
+            OwnEffects = OwnEffects.Select(e => e with { PreBlock = e.PreBlock * ratio }).ToList(),
         };
     }
 }
@@ -152,21 +167,24 @@ internal static class AttributionEngine
             }
         }
 
+        decimal total = finalResult;
+        var externalSet = new HashSet<AbstractModel>(externalPowers.Select(e => e.Mod));
         if (externalPowers.Count == 0)
         {
             return new HitAttribution
             {
                 Target = target,
-                Total = finalResult,
+                Total = total,
                 DealerNetId = dealerNetId,
                 DealerCard = dealerCard,
-                DealerPreBlock = finalResult,
+                DealerPreBlock = total,
                 Externals = Array.Empty<ExternalContribution>(),
+                OwnEffects = OwnPercentages(
+                    baseAmount, props, target, dealer, dealerNetId, cardSource, cardPlay, flags, modifiers,
+                    externalSet, withoutExternals: total, dealerShare: total),
             };
         }
 
-        decimal total = finalResult;
-        var externalSet = new HashSet<AbstractModel>(externalPowers.Select(e => e.Mod));
         decimal withoutAllExternals =
             Recompute(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, externalSet);
         decimal combinedExternalGain = total - withoutAllExternals;
@@ -216,7 +234,129 @@ internal static class AttributionEngine
             DealerCard = dealerCard,
             DealerPreBlock = total - attributedSum,
             Externals = contributions,
+            OwnEffects = OwnPercentages(
+                baseAmount, props, target, dealer, dealerNetId, cardSource, cardPlay, flags, modifiers,
+                externalSet, withoutExternals: withoutAllExternals, dealerShare: total - attributedSum),
         };
+    }
+
+    /// <summary>
+    /// Splits the dealer's own share between the card and the dealer's own percentage buffs. Credit does not move:
+    /// every slice stays the dealer's, so aDPS and rDPS are unchanged and only the breakdown gains rows.
+    ///
+    /// The split is measured in the world without teammates' buffs, which is what the dealer's share is. Teammates'
+    /// credit is computed first and left alone, so it stays what it always was. Measuring the dealer's buffs in the same
+    /// pass as theirs would shrink it: Lethality and a teammate's Vulnerable on one hit overlap, and a shared
+    /// normalization would make the teammate pay for half of the overlap. The engine's rule everywhere is that a
+    /// teammate's buff is worth the damage it actually enabled, and that is larger when the dealer is amplifying it.
+    ///
+    /// Only *multiplicative* buffs are split out. Flat ones (Strength, Vigor) stay on the card. A buff qualifies by
+    /// what its multiplier does on this hit, not by whether its class overrides ModifyDamageMultiplicative: Hades
+    /// Ancients' Pressure Points never overrides it, and gets in through the mod's own postfix on the base method. That
+    /// postfix is also why the replay reproduces it, since the listener is invoked virtually through the patched base.
+    /// </summary>
+    private static IReadOnlyList<OwnContribution> OwnPercentages(
+        decimal baseAmount,
+        ValueProp props,
+        Creature? target,
+        Creature? dealer,
+        ulong? dealerNetId,
+        CardModel? cardSource,
+        CardPlay? cardPlay,
+        ModifyDamageHookType flags,
+        IReadOnlyList<AbstractModel> modifiers,
+        ISet<AbstractModel> externalSet,
+        decimal withoutExternals,
+        decimal dealerShare)
+    {
+        if (dealerNetId == null || dealerShare <= 0m || withoutExternals <= 0m
+            || !flags.HasFlag(ModifyDamageHookType.Multiplicative))
+        {
+            return Array.Empty<OwnContribution>();
+        }
+
+        var candidates = new List<(AbstractModel Mod, string Effect)>();
+        foreach (AbstractModel modifier in modifiers)
+        {
+            if (externalSet.Contains(modifier) || OwnBuffName(modifier, dealer, dealerNetId.Value) is not { } effect)
+            {
+                continue;
+            }
+
+            decimal factor = Invoke(
+                MultiplicativeListener, modifier, cardPlay, target, baseAmount, props, dealer, cardSource);
+            if (factor > 1m)
+            {
+                candidates.Add((modifier, effect));
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            return Array.Empty<OwnContribution>();
+        }
+
+        var gains = new List<(string Effect, decimal Gain)>();
+        decimal sumRawGains = 0m;
+        foreach ((AbstractModel mod, string effect) in candidates)
+        {
+            var exclude = new HashSet<AbstractModel>(externalSet) { mod };
+            decimal gain = withoutExternals
+                - Recompute(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, exclude);
+            if (gain > 0m)
+            {
+                gains.Add((effect, gain));
+                sumRawGains += gain;
+            }
+        }
+
+        if (sumRawGains <= 0m)
+        {
+            return Array.Empty<OwnContribution>();
+        }
+
+        var allOwn = new HashSet<AbstractModel>(externalSet);
+        allOwn.UnionWith(candidates.Select(c => c.Mod));
+        decimal combined = withoutExternals
+            - Recompute(baseAmount, props, target, dealer, cardSource, cardPlay, flags, modifiers, allOwn);
+        if (combined <= 0m)
+        {
+            return Array.Empty<OwnContribution>();
+        }
+
+        // Normalized to the combined gain the way teammates' buffs are, then carried from the no-teammates world onto the
+        // dealer's actual share - which differs from it only when the dealer co-owns a teammate's power.
+        decimal scale = combined / sumRawGains * (dealerShare / withoutExternals);
+        return gains
+            .GroupBy(g => g.Effect)
+            .Select(g => new OwnContribution(g.Key, Math.Min(g.Sum(x => x.Gain) * scale, dealerShare)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// The row name for a modifier that is the dealer's own buff, or null if it is not one: a buff power worn by the
+    /// dealer (or by their character, when a pet is dealing), or a relic the dealer holds. Debuffs on the dealer and
+    /// anything worn by the target are left alone - a Vulnerable the dealer applied themselves stays on the card,
+    /// exactly as it always has.
+    /// </summary>
+    private static string? OwnBuffName(AbstractModel modifier, Creature? dealer, ulong dealerNetId)
+    {
+        try
+        {
+            return modifier switch
+            {
+                PowerModel { Type: PowerType.Buff } power
+                    when power.Owner == dealer || power.Owner?.Player?.NetId == dealerNetId
+                    => power.Title.GetFormattedText(),
+                RelicModel relic when relic.Owner?.NetId == dealerNetId => relic.Title.GetFormattedText(),
+                _ => null,
+            };
+        }
+        catch (Exception)
+        {
+            // A name is never worth breaking a hit over; the slice just stays on the card.
+            return null;
+        }
     }
 
     /// <summary>
@@ -334,8 +474,8 @@ internal static class AttributionEngine
 
     // The game's per-modifier ModifyDamage listeners gained a trailing CardPlay? parameter in a later build. Each is
     // resolved once and invoked reflectively, appending cardPlay only when this build's method declares it, so the
-    // recompute pipeline reproduces the game's damage on either version. Recompute runs only for hits an external buff
-    // actually changed, so this reflection stays off the common damage path.
+    // recompute pipeline reproduces the game's damage on either version. Recompute runs only for hits a teammate's buff
+    // or one of the dealer's own percentage buffs actually changed, so this reflection stays off the common damage path.
     private readonly record struct Listener(MethodInfo Method, bool TakesCardPlay);
 
     private static readonly Listener AdditiveListener = Resolve("ModifyDamageAdditive", baseArity: 5);

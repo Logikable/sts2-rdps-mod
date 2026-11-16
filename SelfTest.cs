@@ -114,6 +114,7 @@ internal static partial class SelfTest
         all &= await InfectionScenario(context, dealer, enemy);
         all &= await FlankingScenario(context, dealer, enemy, applier2);
         all &= await StrengthScenario(context, dealer, enemy, applier2);
+        all &= await OwnPercentScenario(context, dealer, enemy, applier2);
         all &= await BlockScenario(context, dealer, enemy, applier2);
         all &= await OrbPassiveScenario(context, dealer, enemy);
         all &= await SpeedsterPotionScenario(context, dealer, enemy);
@@ -389,6 +390,67 @@ internal static partial class SelfTest
             Expect("aDPS", l.DealtWith(you, NoCard), 9m),
             Expect("recv <-2", l.ReceivedFrom(you, "Strength", 2uL), 3m),
             Expect("given 2->you", l.GivenTo(2uL, "Strength", you), 3m));
+    }
+
+    /// <summary>
+    /// The dealer's own percentage buffs get rows of their own in the dealer's breakdown: Double Damage on a 6 reads
+    /// "card 6, Double Damage 6" rather than "card 12". Nothing changes hands - all of it is still the dealer's.
+    ///
+    /// Then the same with a teammate's Vulnerable on the target, which must be credited exactly what it was before the
+    /// split existed: the 6 it added on top of the doubled 12. Measuring the dealer's buff in the same pass would have
+    /// made the teammate pay for part of the overlap. Then a flat buff of the dealer's own, which stays on the card.
+    /// Last, Lethality itself, the buff the request named.
+    /// </summary>
+    private static async Task<bool> OwnPercentScenario(
+        NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CardModel card = Owned(dealer.Player!);
+        string cardName = card.TitleLocString.GetFormattedText();
+
+        await PowerCmd.Apply<DoubleDamagePower>(ctx, dealer, 1m, dealer, null);
+        string doubled = dealer.GetPower<DoubleDamagePower>()!.Title.GetFormattedText();
+        await HarnessDamage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, card, null);
+
+        CombatLedger l = CombatLedger.Current;
+        bool alone = Report("Own percentage buff (Double Damage)",
+            Expect("the card's own 6", l.DealtWith(you, cardName), 6m),
+            Expect("the buff's 6 under its own name", l.DealtWith(you, doubled), 6m),
+            Expect("all 12 still yours", l.Snapshot().First(r => r.NetId == you).ADps, 12m));
+
+        await Prep(dealer, enemy);
+        await PowerCmd.Apply<DoubleDamagePower>(ctx, dealer, 1m, dealer, null);
+        await PowerCmd.Apply<VulnerablePower>(ctx, enemy, 1m, applier2, null);
+        await HarnessDamage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, card, null);
+
+        bool withTeammate = Report("Own percentage buff beside a teammate's Vulnerable",
+            Expect("the teammate's credit is unchanged", l.ReceivedFrom(you, "Vulnerable", 2uL), 6m),
+            Expect("given 2->you", l.GivenTo(2uL, "Vulnerable", you), 6m),
+            Expect("Double Damage takes half of your 12", l.DealtWith(you, doubled), 6m),
+            Expect("the card keeps its 6 and the teammate's 6", l.DealtWith(you, cardName), 12m));
+
+        await Prep(dealer, enemy);
+        await PowerCmd.Apply<DoubleDamagePower>(ctx, dealer, 1m, dealer, null);
+        await PowerCmd.Apply<StrengthPower>(ctx, dealer, 3m, dealer, null);
+        await HarnessDamage(ctx, new[] { enemy }, 6m, DamageProps.card, dealer, card, null);
+
+        bool flat = Report("Own flat buff stays on the card",
+            Expect("the card has 6 + 3 Strength", l.DealtWith(you, cardName), 9m),
+            Expect("Double Damage doubles all of it", l.DealtWith(you, doubled), 9m),
+            Expect("no Strength row", l.DealtWith(you, "Strength"), 0m));
+
+        await Prep(dealer, enemy);
+        await PowerCmd.Apply<LethalityPower>(ctx, dealer, 50m, dealer, null);
+        string lethality = dealer.GetPower<LethalityPower>()!.Title.GetFormattedText();
+        await HarnessDamage(ctx, new[] { enemy }, 10m, DamageProps.card, dealer, card, null);
+        GD.Print($"[RdpsMeter] Self-test: Lethality resolved to \"{lethality}\"");
+
+        bool lethal = Report("Own percentage buff (Lethality)",
+            Expect("the card's own 10", l.DealtWith(you, cardName), 10m),
+            Expect("Lethality's 5", l.DealtWith(you, lethality), 5m));
+
+        return alone && withTeammate && flat && lethal;
     }
 
     /// <summary>
@@ -3991,6 +4053,18 @@ internal static partial class SelfTest
         if (enemy.GetPower<StrengthPower>() != null)
         {
             await PowerCmd.Remove<StrengthPower>(enemy);
+        }
+
+        // The dealer's own percentage buffs: either left standing would double or raise every later swing and split
+        // it into a row the scenario never asked about.
+        if (dealer.GetPower<DoubleDamagePower>() != null)
+        {
+            await PowerCmd.Remove<DoubleDamagePower>(dealer);
+        }
+
+        if (dealer.GetPower<LethalityPower>() != null)
+        {
+            await PowerCmd.Remove<LethalityPower>(dealer);
         }
 
         // Plating grants block off its own hooks, so one left standing would quietly shield a later scenario.
