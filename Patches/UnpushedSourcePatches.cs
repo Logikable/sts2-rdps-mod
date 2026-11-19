@@ -69,15 +69,6 @@ internal static class UnpushedSourcePatches
         yield return AccessTools.Method(typeof(HailstormPower), nameof(HailstormPower.BeforeSideTurnEnd));
         yield return AccessTools.Method(typeof(TheBombPower), nameof(TheBombPower.BeforeSideTurnEnd));
 
-        // Named rather than typed, because 0.110.0 deleted OutbreakPower outright - Outbreak was reworked from a power
-        // that pinged every enemy into a skill that applies Poison and triggers it, which the poison path attributes
-        // instead. A typeof() here would not compile against 0.110.0, and hard-removing it would drop the entry for
-        // 0.107.1, where the power still exists and still needs naming. Missing types resolve to null and are skipped.
-        foreach (MethodBase method in ByName("OutbreakPower", "AfterPowerAmountChanged"))
-        {
-            yield return method;
-        }
-
         yield return AccessTools.Method(typeof(SleightOfFleshPower), nameof(SleightOfFleshPower.AfterPowerAmountChanged));
         yield return AccessTools.Method(typeof(JuggernautPower), nameof(JuggernautPower.AfterBlockGained));
         yield return AccessTools.Method(typeof(NecroMasteryPower), nameof(NecroMasteryPower.AfterCurrentHpChanged));

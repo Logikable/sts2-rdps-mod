@@ -106,7 +106,7 @@ internal static class ForeignBlockPatches
 /// <summary>
 /// Frost with Hibernate up: the orb's passive and evoke put its block on every teammate too, from the orb owner's own
 /// hook, so the teammates' share is the owner's gift exactly as Beacon of Hope's is. Pushed whether or not Hibernate is
-/// up - the owner's own block names the owner either way - so nothing here names a power 0.107.1 does not have.
+/// up - the owner's own block names the owner either way - so nothing here needs to look for Hibernate itself.
 /// </summary>
 [HarmonyPatch(typeof(FrostOrb), nameof(FrostOrb.Passive))]
 internal static class FrostPassivePatch

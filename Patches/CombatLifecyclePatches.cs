@@ -29,19 +29,14 @@ internal static class LifecycleTarget
     /// no-argument version would stop seeing combats end while still binding perfectly.
     ///
     /// That is the failure worth naming: the binding verifier cannot catch it. `nameof(EndCombatInternal)` still
-    /// resolves on 0.110.0, so the bind reports ok and the meter simply stops closing out fights. Prefer the
-    /// one-argument overload wherever it exists, and fall back to the no-argument one for the older versions the mod
-    /// still supports. Resolution is by parameter count rather than by naming CombatTurnState, which does not exist as
-    /// a type before 0.110.0.
+    /// resolves on 0.110.0, so the bind reports ok and the meter simply stops closing out fights. So bind the
+    /// one-argument overload, and only that one: every supported build has it, and a build that dropped it should
+    /// fail the bind loudly rather than quietly fall back to a wrapper nobody calls.
     /// </summary>
     internal static MethodBase Resolve(string name)
     {
-        MethodInfo[] candidates = AccessTools.GetDeclaredMethods(typeof(CombatManager))
-            .Where(m => m.Name == name)
-            .ToArray();
-
-        return candidates.FirstOrDefault(m => m.GetParameters().Length == 1)
-            ?? candidates.First(m => m.GetParameters().Length == 0);
+        return AccessTools.GetDeclaredMethods(typeof(CombatManager))
+            .Single(m => m.Name == name && m.GetParameters().Length == 1);
     }
 }
 

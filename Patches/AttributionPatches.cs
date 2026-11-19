@@ -326,21 +326,13 @@ internal static class AttributionPatches
 }
 
 /// <summary>
-/// Captures Hook.ModifyDamage's cardPlay argument for <see cref="AttributionPatches"/>'s postfix, on the game builds
-/// that have one. It is a separate, Prepare-gated class so the main attribution postfix never has to declare cardPlay:
-/// a declared parameter Harmony can't find would refuse to bind that postfix and disable attribution wholesale, and
-/// pulling cardPlay out of the raw argument array instead corrupts ModifyDamage's out modifiers parameter on write-back.
-/// A plain prefix that only runs where the parameter exists sidesteps both.
+/// Captures Hook.ModifyDamage's cardPlay argument for <see cref="AttributionPatches"/>'s postfix. A prefix of its own,
+/// so the main postfix's signature stays as it is: pulling cardPlay out of the raw argument array instead corrupts
+/// ModifyDamage's out modifiers parameter on write-back.
 /// </summary>
 [HarmonyPatch(typeof(Hook), nameof(Hook.ModifyDamage))]
 internal static class CardPlayCapturePatch
 {
-    private static bool Prepare()
-    {
-        MethodInfo? modifyDamage = AccessTools.Method(typeof(Hook), nameof(Hook.ModifyDamage));
-        return modifyDamage != null && modifyDamage.GetParameters().Any(p => p.Name == "cardPlay");
-    }
-
     [HarmonyPrefix]
     private static void Prefix(CardPlay? cardPlay)
     {

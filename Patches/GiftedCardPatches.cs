@@ -100,12 +100,10 @@ internal static class PlayInFlight
     }
 
     /// <summary>
-    /// Who is playing this card. Read off the card rather than from <c>CardPlay.Player</c>, which does not exist on
-    /// 0.107.1, the oldest version the manifest supports: a release compiles against a newer assembly than that and
-    /// still has to run there, so a member added since is a MissingMethodException on every card played. The two are
-    /// the same value by construction - the one place the game builds a CardPlay sets <c>Player = Owner</c> - so
-    /// nothing is given up by taking the route that exists everywhere, which is the route the mod's other card patches
-    /// already take.
+    /// Who is playing this card. Read off the card rather than from <c>CardPlay.Player</c>: the two are the same value
+    /// by construction - the one place the game builds a CardPlay sets <c>Player = Owner</c> - and the card is the
+    /// route the mod's other card patches already take. (Reading <c>CardPlay.Player</c> here is what broke every card
+    /// play on 0.107.1 in 0.1.28, back when the manifest still supported that build.)
     /// </summary>
     private static Player? PlayerOf(CardPlay cardPlay)
     {
