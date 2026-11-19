@@ -176,15 +176,10 @@ internal static partial class SelfTest
         all &= await BottledSongScenario(context, dealer, enemy, applier2);
         all &= await SpillScenario(context, dealer, enemy, applier2);
 #endif
-#if !STS2_0_107
-        // Not on 0.107.1: Outbreak was still a power there, and Blade Symphony and Underworld did not exist yet.
         all &= await OutbreakScenario(context, dealer, enemy, applier2);
-#endif
         all &= await TagTeamScenario(context, dealer, enemy, applier2);
-#if !STS2_0_107
         all &= await GiftedCardScenario(context, dealer, enemy, applier2);
         all &= await DoomScenario(context, dealer, enemy, applier2, applier3);
-#endif
         all &= FightLabelScenario();
         all &= PersistenceRoundTrip();
 
@@ -2485,9 +2480,7 @@ internal static partial class SelfTest
         return new CardPlay
         {
             Card = card,
-#if !STS2_0_107
             Player = player,
-#endif
             Target = target,
             ResultPile = PileType.Discard,
             Resources = default,
@@ -2807,9 +2800,7 @@ internal static partial class SelfTest
             var cardPlay = new CardPlay
             {
                 Card = card,
-#if !STS2_0_107
                 Player = applier2.Player!,
-#endif
                 Target = enemy,
                 ResultPile = PileType.Discard,
                 Resources = default,
@@ -2845,9 +2836,7 @@ internal static partial class SelfTest
             var cardPlay = new CardPlay
             {
                 Card = soul,
-#if !STS2_0_107
                 Player = dealer.Player!,
-#endif
                 Target = enemy,
                 ResultPile = PileType.Discard,
                 Resources = default,
@@ -2918,18 +2907,11 @@ internal static partial class SelfTest
         GD.Print($"[RdpsMeter] Tag Team: {playCount} play(s) of '{attackName}', credited as '{tagTeam}'");
 
         CombatLedger l = CombatLedger.Current;
-#if STS2_0_107
-        // 0.107.1's Hook.ModifyDamage carries no CardPlay, so nothing can tell a bought play's damage from the owner's
-        // own there; the capture patch is gated off on that build. The damage half is a known gap on 0.107.1, not a
-        // check this build can pass. Block arrives with its play on every build, so that half still runs below.
-        bool dealt = true;
-#else
         bool dealt = Report("Tag Team (damage)",
             Expect("play count", playCount, 2m),
             Expect("you aDPS", l.DealtWith(you, attackName), 12m),
             Expect("given 2->you", l.GivenTo(2uL, tagTeam, you), 6m),
             Expect("recv <-2", l.ReceivedFrom(you, tagTeam, 2uL), 6m));
-#endif
 
         // The same mark against an attack that also grants block. Both plays grant 5, and a 10-damage hit spends all
         // of it - block only reaches the meter when something hits it. Your own 5 goes first, so the 5 that stops the
@@ -2958,7 +2940,6 @@ internal static partial class SelfTest
         return dealt && blocked;
     }
 
-#if !STS2_0_107
     /// <summary>
     /// A card you make for a teammate is yours: what it deals, and the block it grants, are credited to you rather
     /// than to the player holding it.
@@ -3064,9 +3045,7 @@ internal static partial class SelfTest
 
         return dealt && blocked;
     }
-#endif
 
-#if !STS2_0_107
     /// <summary>
     /// Doom is not damage - it instakills - so the HP it removes is credited to whoever owns the stacks, split by
     /// stack count. Two appliers stack it directly, 20 and 10, and the dealer's own Underworld converts a teammate's
@@ -3116,9 +3095,7 @@ internal static partial class SelfTest
             Expect("3 aDPS Doom", l.DealtWith(3uL, "Doom"), 5m),
             Expect("you aDPS Doom (via Underworld)", l.DealtWith(you, "Doom"), 5m));
     }
-#endif
 
-#if !STS2_0_107
     /// <summary>
     /// The reworked Outbreak, which 0.110.0 turned from a power into a skill. It applies Poison to every enemy and
     /// then calls PoisonPower.Trigger() on each of them immediately, rather than waiting for a turn to start.
@@ -3154,7 +3131,6 @@ internal static partial class SelfTest
             Expect("credited to whoever applied the poison", l.DealtWith(2uL, "Poison"), 9m),
             Expect("nothing left unnamed", l.DealtWith(dealer.Player!.NetId, NoCard), 0m));
     }
-#endif
 
     /// <summary>
     /// The fight-picker labels: a single enemy keeps its full name (pluralized when there are several), while a mix is
@@ -3914,27 +3890,17 @@ internal static partial class SelfTest
     /// first debuff) and any effect a prior scenario left behind, then heals to full so the hit lands unblocked and
     /// pre-block shares scale onto settled damage 1:1.
     /// </summary>
-    // The two game commands the scenarios lean on whose shape changed after 0.107.1: Damage gained a trailing CardPlay,
-    // and LoseBlock a choice context and a remover. 0.107.1 has no CardPlay to hand on, so a play-dependent scenario
-    // there is excluded rather than quietly run without one.
+    // The two game commands the scenarios lean on, kept as one call site each so a future signature change is one edit.
     private static Task<IEnumerable<DamageResult>> HarnessDamage(
         PlayerChoiceContext ctx, IEnumerable<Creature> targets, decimal amount, ValueProp props, Creature? dealer,
         CardModel? cardSource, CardPlay? cardPlay)
     {
-#if STS2_0_107
-        return CreatureCmd.Damage(ctx, targets, amount, props, dealer, cardSource);
-#else
         return CreatureCmd.Damage(ctx, targets, amount, props, dealer, cardSource, cardPlay);
-#endif
     }
 
     private static Task HarnessLoseBlock(PlayerChoiceContext ctx, Creature creature, decimal amount, Creature? remover)
     {
-#if STS2_0_107
-        return CreatureCmd.LoseBlock(creature, amount);
-#else
         return CreatureCmd.LoseBlock(ctx, creature, amount, remover);
-#endif
     }
 
     private static async Task Prep(Creature dealer, Creature enemy)
@@ -4008,13 +3974,11 @@ internal static partial class SelfTest
             await PowerCmd.Remove<DoomPower>(enemy);
         }
 
-#if !STS2_0_107
         // Underworld would otherwise sit on the dealer converting every later scenario's teammate damage into Doom.
         if (dealer.GetPower<UnderworldPower>() != null)
         {
             await PowerCmd.Remove<UnderworldPower>(dealer);
         }
-#endif
 
         if (enemy.GetPower<DemisePower>() != null)
         {
@@ -4153,13 +4117,6 @@ internal sealed partial class SelfTestNode : Node
 /// </summary>
 internal sealed class NoOpChoiceContext : PlayerChoiceContext
 {
-#if STS2_0_107
-    // 0.107.1's context has no owner and signals a choice without naming who makes it.
-    public override Task SignalPlayerChoiceBegun(PlayerChoiceOptions options)
-    {
-        return Task.CompletedTask;
-    }
-#else
     // No player owns these synthetic harness actions, and none of them read the owner back.
     public override ulong? OwnerId => null;
 
@@ -4167,7 +4124,6 @@ internal sealed class NoOpChoiceContext : PlayerChoiceContext
     {
         return Task.CompletedTask;
     }
-#endif
 
     public override Task SignalPlayerChoiceEnded()
     {

@@ -17,13 +17,9 @@
   <PropertyGroup Condition="'$(Harness)' == 'true'">
     <DefineConstants>$(DefineConstants);RDPS_HARNESS</DefineConstants>
   </PropertyGroup>
-  <!-- The harness against 0.107.1, whose PlayerChoiceContext predates the owner-aware members the harness's no-op
-       context overrides on every later build. Keyed off the reference's file name, so only the harness ever sees it. -->
-  <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.107.1'))">
-    <DefineConstants>$(DefineConstants);STS2_0_107</DefineConstants>
-  </PropertyGroup>
-  <!-- The harness against 0.113.0, whose PlayerChoiceContext gained an abstract GameActionType the no-op context must
-       override - a member that does not exist on earlier builds. Same file-name key as above. -->
+  <!-- The harness against 0.113.x, whose PlayerChoiceContext gained an abstract GameActionType the no-op context must
+       override - a member that does not exist on earlier builds. Keyed off the reference's file name, so only the
+       harness ever sees it. -->
   <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.113'))">
     <DefineConstants>$(DefineConstants);STS2_0_113</DefineConstants>
   </PropertyGroup>

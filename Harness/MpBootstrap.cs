@@ -183,7 +183,6 @@ internal static class MpScenarios
                 yield return ModelDb.Card<TagTeam>().ToMutable();
                 break;
 
-#if !STS2_0_107
             case "underworld":
                 // Underworld converts a *teammate's* damage into Doom on the enemy - stacks owned by the player who
                 // played the card, applied from inside the damage funnel's own AfterDamageGiven. When the Doom
@@ -202,7 +201,6 @@ internal static class MpScenarios
                 yield return ModelDb.Card<Hibernate>().ToMutable();
                 yield return ModelDb.Card<Hibernate>().ToMutable();
                 break;
-#endif
 
             default:
                 yield break;

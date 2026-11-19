@@ -66,8 +66,9 @@ shipping — it compiles against and binds every captured `sts2.dll`.
 
 A release is compiled against `lib/sts2.dll` and runs on everything back to the
 manifest's `min_game_version`, so **anything the source touches directly has to
-exist on the oldest supported build**. A member the reference has and 0.107.1
-does not compiles clean, ships, and throws `MissingMethodException` on the
+exist on the oldest supported build** (0.111.0 since 0.1.37; `lib/sts2.dll` is
+a copy of 0.111.1). A member the reference has and the oldest build does not
+compiles clean, ships, and throws `MissingMethodException` on the
 player's machine. Differences between versions go through reflection or a
 `Prepare` gate — that is what the convention is for, not a style preference.
 
@@ -252,14 +253,10 @@ quits.
 
 **Build it against the installed game, not the default reference.** The
 scenarios call game methods directly, so the harness needs
-`-p:Sts2Ref=lib/sts2-<installed ver>.dll` — `lib/sts2.dll` is an older capture
-and the harness does not compile against it (`PoisonPower.Trigger` is the one
-that bites). Against `lib/sts2-0.107.1.dll` the csproj also defines `STS2_0_107`,
-which swaps in that build's `PlayerChoiceContext` shape and its `Damage` /
-`LoseBlock` overloads (`HarnessDamage`, `HarnessLoseBlock`), and leaves out the
-scenarios for things 0.107.1 lacks — Outbreak's rework, Blade Symphony,
-Underworld, and Tag Team's *damage* half: that build's `Hook.ModifyDamage` has
-no `cardPlay`, so a bought play's damage cannot be told apart there at all. Ship builds are unaffected: they reach version differences through
+`-p:Sts2Ref=lib/sts2-<installed ver>.dll`. Against a `0.113` capture the csproj
+also defines `STS2_0_113`, which adds the no-op context's `GameActionType`
+override and the scenarios for content that build added (The Fool, Wuppy,
+spills). Ship builds are unaffected: they reach version differences through
 Prepare-gates, not the compiler. Check which version is installed by comparing
 `md5sum` of the game's `sts2.dll` against the captures in `lib/`. Launch the game **directly** — `cd "<game dir>" && ./SlayTheSpire2.exe`
 from WSL — and read stdout for `HARNESS COMPLETE` / `HARNESS FAILED`.
