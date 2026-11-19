@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.36 - Your own percentage buffs get their own rows in your breakdown: a Lethality Strike reads \"Strike 10, Lethality 5\" instead of \"Strike 15\". The same goes for Double Damage, Pen Nib and modded relics such as Hades Ancients' Pressure Points. Totals and teammates' credit are unchanged, and flat buffs like Strength stay on the card. Fixed: Dexterity, Weak or Strength from a relic or power could be labelled with an unrelated name, such as Hades Ancients' Meat Grinder showing up on the Blocked meter. Builds and binds against every version from v0.107.1 to v0.113.1.",
+  "changeNote": "0.1.37 - The oldest supported game version is now v0.111.0, since the game's main branch has moved to v0.111.1; v0.107.1 is no longer supported. No change to what the meter shows. Builds and binds against v0.111.0, v0.111.1, v0.113.0 and v0.113.1.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
