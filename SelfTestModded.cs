@@ -34,6 +34,7 @@ internal static partial class SelfTest
         all &= await ModdedOilScenario(ctx, dealer, enemy, applier2);
         all &= await ModdedBurnScenario(dealer, enemy, applier2);
         all &= await ModdedPressurePointsScenario(ctx, dealer, enemy);
+        all &= await ModdedHotPotScenario(ctx, dealer, enemy);
         return all;
     }
 
@@ -78,6 +79,55 @@ internal static partial class SelfTest
         finally
         {
             counter.SetValue(relic, 0);
+            dealer.Player!.RemoveRelicInternal(relic, silent: true);
+        }
+    }
+
+    /// <summary>
+    /// Hades Ancients' Hot Pot, Tungsten Rod's shape with 3 instead of 1. Nothing in the meter names it: the HP-loss
+    /// relief scan finds it by its override, which is the point of having the scan rather than a list.
+    /// </summary>
+    private static async Task<bool> ModdedHotPotScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        const string scenario = "Modded HP-loss relic (Hot Pot)";
+        Type? type = AccessTools.TypeByName("HadesAncients.HadesAncientsCode.Hestia.Relics.HotPot");
+        if (type == null)
+        {
+            return Skipped(scenario, "Hades Ancients is not loaded");
+        }
+
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        var relic = (RelicModel)ModelDb.GetById<RelicModel>(ModelDb.GetId(type)).MutableClone();
+        dealer.Player!.AddRelicInternal(relic, -1, silent: true);
+        try
+        {
+            string name = relic.Title.GetFormattedText();
+            GD.Print($"[RdpsMeter] Self-test: Hot Pot row will be named '{name}'");
+            CombatLedger l = CombatLedger.Current;
+
+            int hp0 = dealer.CurrentHp;
+            await HarnessDamage(ctx, new[] { dealer }, 5m, DamageProps.monsterMove, enemy, null, null);
+            int hp1 = dealer.CurrentHp;
+            decimal afterBig = l.BlockedWith(you, name);
+
+            await HarnessDamage(ctx, new[] { dealer }, 2m, DamageProps.monsterMove, enemy, null, null);
+            int hp2 = dealer.CurrentHp;
+            decimal afterSmall = l.BlockedWith(you, name);
+
+            return Report(scenario,
+                Expect("the pot took 3 off a 5", hp0 - hp1, 2),
+                Expect("and the 3 is booked", afterBig, 3m),
+                Expect("a 2 is swallowed whole", hp1 - hp2, 0),
+                Expect("and only the 2 it saved counts", afterSmall, 5m));
+        }
+        finally
+        {
             dealer.Player!.RemoveRelicInternal(relic, silent: true);
         }
     }

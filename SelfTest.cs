@@ -164,6 +164,7 @@ internal static partial class SelfTest
         all &= await MagicBombScenario(context, dealer, enemy, applier2);
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
+        all &= await TungstenRodScenario(context, dealer, enemy);
 #if STS2_0_113
         all &= await DingyDaggerScenario(context, dealer, enemy);
         // 0.113.0's Fool and its event content. Before Doom, whose kill ends the harness's one-enemy combat - after that
@@ -1112,6 +1113,55 @@ internal static partial class SelfTest
             Expect("and none of it lands as damage dealt", l.DealtWith(you, expected), 0m));
     }
 #endif
+
+    /// <summary>
+    /// Tungsten Rod takes 1 off every HP loss of its owner's, after block, and that point is mitigation the way block is.
+    /// Booked under the relic's own name, only for HP the rod really saved: a fully blocked hit leaves it nothing to
+    /// take, and a player's own self-harm is not damage that was coming for them.
+    /// </summary>
+    private static async Task<bool> TungstenRodScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        CombatLedger l = CombatLedger.Current;
+
+        // A living Osty would take what gets past block, and the rod does not act on the pet.
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        var rod = (TungstenRod)ModelDb.Relic<TungstenRod>().MutableClone();
+        dealer.Player!.AddRelicInternal(rod, -1, silent: true);
+        try
+        {
+            string name = rod.Title.GetFormattedText();
+            GD.Print($"[RdpsMeter] Self-test: Tungsten Rod row will be named '{name}'");
+
+            int hp0 = dealer.CurrentHp;
+            await HarnessDamage(ctx, new[] { dealer }, 5m, DamageProps.monsterMove, enemy, null, null);
+            int hp1 = dealer.CurrentHp;
+            decimal afterHit = l.BlockedWith(you, name);
+
+            await CreatureCmd.GainBlock(dealer, 5m, DamageProps.nonCardUnpowered, null);
+            await HarnessDamage(ctx, new[] { dealer }, 5m, DamageProps.monsterMove, enemy, null, null);
+            decimal afterBlocked = l.BlockedWith(you, name);
+
+            await HarnessDamage(ctx, new[] { dealer }, 3m, DamageProps.nonCardUnpowered, dealer, null, null);
+            decimal afterSelf = l.BlockedWith(you, name);
+
+            return Report("Tungsten Rod (Blocked meter)",
+                Expect("the rod took 1 off the hit", hp0 - hp1, 4),
+                Expect("and that 1 is booked", afterHit, 1m),
+                Expect("a fully blocked hit saves nothing more", afterBlocked, 1m),
+                Expect("self-harm is not counted", afterSelf, 1m),
+                Expect("none of it is damage dealt", l.DealtWith(you, name), 0m));
+        }
+        finally
+        {
+            dealer.Player!.RemoveRelicInternal(rod, silent: true);
+        }
+    }
 
 #if STS2_0_113
     /// <summary>

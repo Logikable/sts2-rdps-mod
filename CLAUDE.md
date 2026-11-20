@@ -412,6 +412,19 @@ there the potion is out of scope by the time block lands, here the game hands us
 the model. Don't copy the `PotionSource` dance into a path that was given the
 source.
 
+## Relics that shave HP loss
+
+Tungsten Rod (1 a hit), Hades Ancients' Hot Pot (3), Beating Remnant (a
+per-turn cap) act in `Hook.ModifyHpLost`, after block, so nothing else on the
+Blocked meter sees them. `HpLossReliefPatches` postfixes **every relic override**
+of the four `ModifyHpLost*` hooks, the game's and other mods', and books
+`trunc(in) - trunc(out)` under the relic's name when the HP is its own owner's.
+A shape, not a list — it reads the game's arithmetic back rather than copying
+it. Self-harm and a teammate's hit are left out. Applied with the late modded
+scan, since a mod's relics aren't loaded at init. Not covered: powers (Buffer,
+Intangible — the credit would belong to the applier), and Hades Ancients' own
+`IModifyHpLost…Final` interfaces (Defensive Posture, Forge Armor).
+
 ## Debuffs on the attacker
 
 Weak and Strength loss on an enemy are mitigation, so they go on the Blocked

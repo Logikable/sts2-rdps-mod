@@ -72,6 +72,8 @@ internal static class ModdedSourcePatches
         }
 
         _applied = true;
+        // Relics that take HP off their owner's losses, the game's and other mods', ride the same wait.
+        HpLossReliefPatches.Apply(harmony);
         var timer = Stopwatch.StartNew();
         var prefix = new HarmonyMethod(AccessTools.Method(typeof(ModdedSourcePatches), nameof(Prefix)));
         var postfix = new HarmonyMethod(AccessTools.Method(typeof(ModdedSourcePatches), nameof(Postfix)));
