@@ -60,7 +60,7 @@ internal static class EffectSource
         name ??= ExecutingEffect.Current(playerNetId);
         if (name == null && running is not (null or PotionModel))
         {
-            name = running is CardModel card ? card.TitleLocString.GetFormattedText() : ModdedModels.NameOf(running);
+            name = running is CardModel card ? CardNames.Of(card) : ModdedModels.NameOf(running);
         }
 
         return name;

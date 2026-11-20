@@ -54,7 +54,7 @@ internal static class BlockAttributionEngine
             ?? granter.OwnerNetId
             ?? target.Player?.NetId
             ?? 0uL;
-        string baseName = cardSource?.TitleLocString.GetFormattedText()
+        string baseName = CardNames.OrNull(cardSource)
             ?? granter.Name
             ?? AttributionEngine.UnknownSource;
 

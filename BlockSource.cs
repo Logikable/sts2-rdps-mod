@@ -193,7 +193,7 @@ internal static class BlockSource
                     RelicModel relic => relic.Title.GetFormattedText(),
                     PotionModel potion => potion.Title.GetFormattedText(),
                     OrbModel orb => orb.Title.GetFormattedText(),
-                    CardModel card => card.TitleLocString.GetFormattedText(),
+                    CardModel card => CardNames.Of(card),
                     _ => null,
                 };
             }

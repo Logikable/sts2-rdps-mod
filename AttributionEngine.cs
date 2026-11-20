@@ -137,7 +137,7 @@ internal static class AttributionEngine
         // appends a "+"/"+N"; TitleLocString is the bare name). A hit with no card is a potion or a damaging
         // power/relic (Thorns, a retaliation relic, ...); name it by whichever the player is resolving so its damage
         // reads "Fire Potion" or "Thorns" rather than the "(none)" a null card source would leave behind.
-        string? cardName = cardSource?.TitleLocString.GetFormattedText();
+        string? cardName = CardNames.OrNull(cardSource);
         // The effect outranks the potion, because it is the inner one. A potion that draws a card (Cure All, Clarity,
         // Swift Potion, ...) runs Speedster's own hook inside its OnUse, so both windows are open at once and only the
         // innermost names the hit that Speedster actually dealt - the potion merely caused the draw.

@@ -170,7 +170,7 @@ internal static class TagTeamCredit
     {
         try
         {
-            string title = ModelDb.Card<TagTeam>().TitleLocString.GetFormattedText();
+            string title = CardNames.Of(ModelDb.Card<TagTeam>());
             return string.IsNullOrWhiteSpace(title) ? nameof(TagTeam) : title;
         }
         catch (Exception)

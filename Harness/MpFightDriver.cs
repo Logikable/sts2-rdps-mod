@@ -107,7 +107,7 @@ internal sealed class MpFightDriver
             {
                 _cardsPlayed++;
                 _playedPreferred |= IsPreferred(card);
-                MpHarness.Log($"played {card.TitleLocString.GetFormattedText()} ({_cardsPlayed})");
+                MpHarness.Log($"played {CardNames.Of(card)} ({_cardsPlayed})");
                 return true;
             }
         }

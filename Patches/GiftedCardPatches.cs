@@ -257,7 +257,7 @@ internal static class GiftedCardCredit
     /// </summary>
     private static string Name(CardModel card)
     {
-        string title = card.TitleLocString.GetFormattedText();
+        string title = CardNames.Of(card);
         return string.IsNullOrWhiteSpace(title) ? card.GetType().Name : title;
     }
 }

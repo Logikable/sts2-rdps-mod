@@ -165,6 +165,7 @@ internal static partial class SelfTest
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
 #if STS2_0_113
+        all &= await DingyDaggerScenario(context, dealer, enemy);
         // 0.113.0's Fool and its event content. Before Doom, whose kill ends the harness's one-enemy combat - after that
         // no hook runs and every scenario silently records nothing. Wuppy is killed by its own scenario, so it is not
         // left standing in front of the dealer for the ones that follow.
@@ -1109,6 +1110,52 @@ internal static partial class SelfTest
             Expect("a dead Wuppy diverts nothing", creditedAfterDeath, 10m),
             Expect("so the player takes it", hpAfterDeath, hpAfterOverrun - 2),
             Expect("and none of it lands as damage dealt", l.DealtWith(you, expected), 0m));
+    }
+#endif
+
+#if STS2_0_113
+    /// <summary>
+    /// Dingy Dagger has no plain DINGY_DAGGER.title key in any language - its Title picks .title.dingy/.fine/.pristine
+    /// by upgrade tier - and reading the missing key threw from the damage prefix, so the card's play hung (and in co-op
+    /// desynced). Played through its real OnPlay, upgraded into the "fine" tier, it must deal its damage and book it
+    /// under the tier's name as the game's own table spells it.
+    /// </summary>
+    private static async Task<bool> DingyDaggerScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+
+        var card = (DingyDagger)ModelDb.Card<DingyDagger>().ToMutable();
+        card.Owner = dealer.Player!;
+        for (int i = 0; i < DingyDagger.fineUpgradeLevel + 1; i++)
+        {
+            card.UpgradeInternal();
+            card.FinalizeUpgradeInternal();
+        }
+
+        string expected = new MegaCrit.Sts2.Core.Localization.LocString("cards", "DINGY_DAGGER.title.fine").GetFormattedText();
+        decimal damage = Math.Truncate(card.DynamicVars.Damage.BaseValue);
+        GD.Print($"[RdpsMeter] Self-test: Dingy Dagger at +{card.CurrentUpgradeLevel} titled '{card.Title}', row '{CardNames.Of(card)}', {damage} damage");
+
+        var cardPlay = new CardPlay
+        {
+            Card = card,
+            Player = dealer.Player!,
+            Target = enemy,
+            ResultPile = PileType.Discard,
+            Resources = default,
+            IsAutoPlay = false,
+            PlayIndex = 0,
+            PlayCount = 1,
+        };
+        int hpBefore = enemy.CurrentHp;
+        await (Task)AccessTools.Method(typeof(DingyDagger), "OnPlay").Invoke(card, new object[] { ctx, cardPlay })!;
+
+        CombatLedger l = CombatLedger.Current;
+        return Report("Dingy Dagger (title without a plain .title key)",
+            Expect("the dagger hit", hpBefore - enemy.CurrentHp, (int)damage),
+            Expect("booked under the tier's name", l.DealtWith(you, expected), damage),
+            Expect("nothing left unnamed", l.DealtWith(you, NoCard), 0m));
     }
 #endif
 

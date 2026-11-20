@@ -32,7 +32,7 @@ internal static class MpEchoProbe
     {
         if (__result != playCount)
         {
-            MpHarness.Log($"play count for {card.TitleLocString.GetFormattedText()} raised {playCount} -> {__result}");
+            MpHarness.Log($"play count for {CardNames.Of(card)} raised {playCount} -> {__result}");
         }
     }
 
@@ -45,7 +45,7 @@ internal static class MpEchoProbe
         if (cardPlay.PlayCount > 1)
         {
             MpHarness.Log(
-                $"echoed play of {cardPlay.Card.TitleLocString.GetFormattedText()}: index {cardPlay.PlayIndex} of {cardPlay.PlayCount}");
+                $"echoed play of {CardNames.Of(cardPlay.Card)}: index {cardPlay.PlayIndex} of {cardPlay.PlayCount}");
         }
     }
 }

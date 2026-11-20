@@ -111,7 +111,7 @@ internal static class PowerOwnershipPatches
 
         try
         {
-            return cardSource?.TitleLocString.GetFormattedText()
+            return CardNames.OrNull(cardSource)
                 ?? PotionSource.Current(applierNetId)
                 ?? EffectSource.Resolve(choiceContext?.LastInvolvedModel, applierNetId);
         }

@@ -804,6 +804,23 @@ everywhere (a play is worth the damage it actually did), and it is the part most
 likely to be questioned on screen: a Silent with stacked Strength makes somebody
 else's Blade Symphony row large. That is the rule working, not a bug to fix.
 
+## A card's name is not always `<ID>.title`
+
+Rows read a card's bare name from `TitleLocString`, and the game does not hold
+itself to that key: Dingy Dagger (0.113.0) picks `.title.dingy/.fine/.pristine`
+by upgrade tier and has no plain `.title` in any language. A missing key
+**throws** (`LocException`) rather than coming back empty, and the name is read
+in the prefix of every hit — so the card's play hung, and in co-op the throwing
+peer desynced. Every card name goes through `CardNames.Of`, which checks the key
+exists and falls back to the game's own `Title` minus its `+N`. Never read
+`TitleLocString` directly outside the harness.
+
+Non-English tables fall back to English, so only a key English lacks can throw.
+After a game update, sweep every model's title key against the English table
+(extract `localization/` from the `.pck`); on 0.113.1 Dingy Dagger was the only
+gap. Watch the classes that compute `Title` — the Temporary* powers name their
+origin model, monsters use `.name`.
+
 ## Checking a new game version
 
 When the game updates, `tools/capture-sts2.sh` grabs the new `sts2.dll`. Three
