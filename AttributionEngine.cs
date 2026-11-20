@@ -540,7 +540,7 @@ internal static class AttributionEngine
     /// <summary>
     /// Display name for a power: the class name with the "Power" suffix dropped (VulnerablePower -> Vulnerable).
     /// </summary>
-    private static string EffectName(AbstractModel modifier)
+    internal static string EffectName(AbstractModel modifier)
     {
         string name = modifier.GetType().Name;
         return name.EndsWith("Power", StringComparison.Ordinal) ? name[..^"Power".Length] : name;

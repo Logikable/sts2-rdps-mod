@@ -12,7 +12,9 @@ namespace RdpsMeter;
 /// dealt because a player had weakened it, and - as a negative - damage it dealt extra because a player had made it
 /// stronger.
 ///
-/// Three things a player can do to the attacker, all credited by the counterfactual the damage side uses:
+/// Three things a player can do to the attacker, all credited by the counterfactual the damage side uses - plus a
+/// fourth done to the target, a defensive power like Intangible, which the same replay removes and credits like a
+/// debuff:
 ///
 ///  - <b>Debuffs on the attacker</b> that the game's modifier list names - Weak is the case - are removed one at a time
 ///    and the hit re-run.
@@ -96,12 +98,22 @@ internal static class DebuffMitigation
         // power that *helps* the enemy is no mitigation, and excluding it from the combined counterfactual would eat
         // into what the real debuffs are credited. Strength is left to the passes around this one - its player shares
         // are the gifts, and its losses are not in the list at all.
+        static bool WornBy(AbstractModel modifier, Creature wearer)
+        {
+            return modifier is PowerModel p && ReferenceEquals(p.Owner, wearer);
+        }
+
         var debuffs = new List<(AbstractModel Mod, IReadOnlyList<(ulong NetId, string Effect, decimal Fraction)> Shares, decimal Raw)>();
         foreach (AbstractModel modifier in modifiers)
         {
+            // The attacker's debuffs, and - the same thing from the other side - a defensive power players put on
+            // whoever is being hit. Intangible is the case: it caps the hit at 1 in the damage pipeline's Cap stage,
+            // before block, so it is a modifier here exactly as Weak is, and the replay removes it the same way.
+            bool onAttacker = WornBy(modifier, dealer);
+            bool onTarget = WornBy(modifier, target) && (target.Player ?? target.PetOwner) != null;
             if (modifier is not PowerModel power
                 || power is StrengthPower
-                || power.Owner != dealer
+                || !(onAttacker || onTarget)
                 || AttributionEngine.NamedShares(power) is not { } shares)
             {
                 continue;

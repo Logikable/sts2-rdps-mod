@@ -35,6 +35,8 @@ internal static partial class SelfTest
         all &= await ModdedBurnScenario(dealer, enemy, applier2);
         all &= await ModdedPressurePointsScenario(ctx, dealer, enemy);
         all &= await ModdedHotPotScenario(ctx, dealer, enemy);
+        all &= await ModdedDefensivePostureScenario(ctx, dealer, enemy);
+        all &= await ModdedForgeArmorScenario(ctx, dealer, enemy);
         return all;
     }
 
@@ -129,6 +131,103 @@ internal static partial class SelfTest
         finally
         {
             dealer.Player!.RemoveRelicInternal(relic, silent: true);
+        }
+    }
+
+    /// <summary>
+    /// Hades Ancients' Defensive Posture zeroes enemy attack damage that gets past block - through the mod's own
+    /// IModifyHpLostAfterOstyFinal hook, run from its postfix on Hook.ModifyHpLost, which the game's dispatch never
+    /// sees. An unpowered hit goes through. The relic is set Active by hand, as entering a combat room would.
+    /// </summary>
+    private static async Task<bool> ModdedDefensivePostureScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        const string scenario = "Modded HP-loss hook (Defensive Posture)";
+        Type? type = AccessTools.TypeByName("HadesAncients.HadesAncientsCode.Athena.Relics.DefensivePosture");
+        if (type == null)
+        {
+            return Skipped(scenario, "Hades Ancients is not loaded");
+        }
+
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        var relic = (RelicModel)ModelDb.GetById<RelicModel>(ModelDb.GetId(type)).MutableClone();
+        dealer.Player!.AddRelicInternal(relic, -1, silent: true);
+        try
+        {
+            relic.Status = MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Active;
+            string name = relic.Title.GetFormattedText();
+            GD.Print($"[RdpsMeter] Self-test: Defensive Posture row will be named '{name}'");
+            CombatLedger l = CombatLedger.Current;
+
+            int hp0 = dealer.CurrentHp;
+            await HarnessDamage(ctx, new[] { dealer }, 7m, DamageProps.monsterMove, enemy, null, null);
+            int hp1 = dealer.CurrentHp;
+            decimal afterAttack = l.BlockedWith(you, name);
+
+            await HarnessDamage(ctx, new[] { dealer }, 3m, DamageProps.nonCardUnpowered, enemy, null, null);
+            int hp2 = dealer.CurrentHp;
+
+            return Report(scenario,
+                Expect("the attack cost no HP", hp1, hp0),
+                Expect("and its 7 are booked", afterAttack, 7m),
+                Expect("an unpowered hit goes through", hp1 - hp2, 3),
+                Expect("and books nothing", l.BlockedWith(you, name), 7m));
+        }
+        finally
+        {
+            dealer.Player!.RemoveRelicInternal(relic, silent: true);
+        }
+    }
+
+    /// <summary>
+    /// Hades Ancients' Forge Armor, block that does not expire, spent in the mod's IModifyHpLostBeforeOstyFinal hook.
+    /// 4 of it under a 6 hit: 4 booked, 2 to HP, and the power used up. Self-applied, so it is the wearer's own.
+    /// </summary>
+    private static async Task<bool> ModdedForgeArmorScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        const string scenario = "Modded HP-loss hook (Forge Armor)";
+        Type? type = AccessTools.TypeByName("HadesAncients.HadesAncientsCode.Hephaestus.Powers.ForgeArmorPower");
+        if (type == null)
+        {
+            return Skipped(scenario, "Hades Ancients is not loaded");
+        }
+
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        PowerModel armor = ModelDb.GetById<PowerModel>(ModelDb.GetId(type)).ToMutable();
+        await PowerCmd.Apply(ctx, armor, dealer, 4m, dealer, null);
+        PowerModel? worn = dealer.Powers.FirstOrDefault(p => p.GetType() == type);
+        try
+        {
+            string name = worn == null ? "" : AttributionEngine.EffectName(worn);
+            int hp0 = dealer.CurrentHp;
+            await HarnessDamage(ctx, new[] { dealer }, 6m, DamageProps.monsterMove, enemy, null, null);
+
+            CombatLedger l = CombatLedger.Current;
+            GD.Print($"[RdpsMeter] Self-test: Forge Armor row key '{name}' draws as '{Loc.PowerName(name)}', left {worn?.Amount}");
+            return Report(scenario,
+                Expect("the power was applied", worn != null ? 1 : 0, 1),
+                Expect("2 got through", hp0 - dealer.CurrentHp, 2),
+                Expect("the 4 it stopped are booked", l.BlockedWith(you, name), 4m),
+                Expect("the row draws under the power's own title", Loc.PowerName(name) == worn?.Title.GetFormattedText() ? 1 : 0, 1),
+                Expect("and the armor is spent", dealer.Powers.Any(p => p.GetType() == type && p.Amount > 0) ? 1 : 0, 0));
+        }
+        finally
+        {
+            if (dealer.Powers.FirstOrDefault(p => p.GetType() == type) is { } left)
+            {
+                await PowerCmd.Remove(left);
+            }
         }
     }
 

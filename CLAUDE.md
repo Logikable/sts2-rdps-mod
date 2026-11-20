@@ -412,18 +412,28 @@ there the potion is out of scope by the time block lands, here the game hands us
 the model. Don't copy the `PotionSource` dance into a path that was given the
 source.
 
-## Relics that shave HP loss
+## Relics and powers that shave HP loss
 
-Tungsten Rod (1 a hit), Hades Ancients' Hot Pot (3), Beating Remnant (a
-per-turn cap) act in `Hook.ModifyHpLost`, after block, so nothing else on the
-Blocked meter sees them. `HpLossReliefPatches` postfixes **every relic override**
-of the four `ModifyHpLost*` hooks, the game's and other mods', and books
-`trunc(in) - trunc(out)` under the relic's name when the HP is its own owner's.
-A shape, not a list — it reads the game's arithmetic back rather than copying
-it. Self-harm and a teammate's hit are left out. Applied with the late modded
-scan, since a mod's relics aren't loaded at init. Not covered: powers (Buffer,
-Intangible — the credit would belong to the applier), and Hades Ancients' own
-`IModifyHpLost…Final` interfaces (Defensive Posture, Forge Armor).
+Tungsten Rod (1 a hit), Buffer (the whole hit), Beating Remnant (a per-turn
+cap), and Hades Ancients' Hot Pot, Defensive Posture and Forge Armor act in
+`Hook.ModifyHpLost`, after block, so nothing else on the Blocked meter sees
+them. `HpLossReliefPatches` postfixes every method **named** `ModifyHpLost*`
+with the hook's signature on any relic or power, the game's and other mods', and
+books `trunc(in) - trunc(out)` when the HP is the wearer's own — a relic to its
+owner, a power to whoever applied it (`NamedShares`), else the wearer. A shape,
+not a list: it reads the arithmetic back rather than copying it. Self-harm and
+a teammate's hit are left out. Applied with the late modded scan.
+
+Matching the **name**, not the override, is the point: Hades Ancients runs its
+own `IModifyHpLost…Final` hooks from a postfix on `Hook.ModifyHpLost`, a
+dispatcher the meter never sees, and an override-only scan missed both of its
+models. Its methods follow the game's naming, so the name is what survives.
+
+**Intangible is two mechanisms.** It caps the hit at 1 in `ModifyDamage`'s Cap
+stage, before block, and that is where its value is — so `DebuffMitigation`
+also credits player-applied powers on the **target**, not only debuffs on the
+attacker, and the existing replay removes Intangible like Weak. Its HP-loss arm
+then sees 1 and changes nothing, so the two never overlap.
 
 ## Debuffs on the attacker
 

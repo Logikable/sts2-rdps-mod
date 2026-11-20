@@ -165,6 +165,8 @@ internal static partial class SelfTest
         all &= await StrangleScenario(context, dealer, enemy, applier2);
         all &= await HauntScenario(context, dealer, enemy);
         all &= await TungstenRodScenario(context, dealer, enemy);
+        all &= await BufferScenario(context, dealer, enemy, applier2);
+        all &= await IntangibleScenario(context, dealer, enemy);
 #if STS2_0_113
         all &= await DingyDaggerScenario(context, dealer, enemy);
         // 0.113.0's Fool and its event content. Before Doom, whose kill ends the harness's one-enemy combat - after that
@@ -1160,6 +1162,80 @@ internal static partial class SelfTest
         finally
         {
             dealer.Player!.RemoveRelicInternal(rod, silent: true);
+        }
+    }
+
+    /// <summary>
+    /// A teammate's Buffer on the dealer swallows an enemy hit whole, in the HP-loss stage after block. It is the
+    /// teammate's mitigation: on the dealer's Blocked meter, given by the teammate, and off the dealer's own bar.
+    /// </summary>
+    private static async Task<bool> BufferScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy, Creature applier2)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        await PowerCmd.Apply<BufferPower>(ctx, dealer, 1m, applier2, null);
+        try
+        {
+            string name = AttributionEngine.EffectName(dealer.GetPower<BufferPower>()!);
+            int hpBefore = dealer.CurrentHp;
+            await HarnessDamage(ctx, new[] { dealer }, 6m, DamageProps.monsterMove, enemy, null, null);
+
+            CombatLedger l = CombatLedger.Current;
+            GD.Print($"[RdpsMeter] Self-test: Buffer row key '{name}', booked {l.BlockedWith(you, name)}");
+            return Report("Buffer (teammate's, Blocked meter)",
+                Expect("the hit cost no HP", dealer.CurrentHp, hpBefore),
+                Expect("on the dealer's Blocked meter", l.BlockedWith(you, name), 6m),
+                Expect("given by the teammate", l.BlockGivenTo(2uL, name, you), 6m),
+                Expect("the teammate's bar", l.RBlockOf(2uL), 6m),
+                Expect("not the dealer's", l.RBlockOf(you), 0m));
+        }
+        finally
+        {
+            if (dealer.GetPower<BufferPower>() != null)
+            {
+                await PowerCmd.Remove<BufferPower>(dealer);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Intangible caps a hit at 1 in the damage pipeline's Cap stage, before block - a modifier, so the debuff replay
+    /// credits it. Its HP-loss arm then sees 1 and changes nothing, so the 9 is booked exactly once.
+    /// </summary>
+    private static async Task<bool> IntangibleScenario(NoOpChoiceContext ctx, Creature dealer, Creature enemy)
+    {
+        await Prep(dealer, enemy);
+        ulong you = dealer.Player!.NetId;
+        if (dealer.Player!.Osty is { IsAlive: true } osty)
+        {
+            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+        }
+
+        await PowerCmd.Apply<IntangiblePower>(ctx, dealer, 1m, dealer, null);
+        try
+        {
+            string name = AttributionEngine.EffectName(dealer.GetPower<IntangiblePower>()!);
+            int hpBefore = dealer.CurrentHp;
+            await HarnessDamage(ctx, new[] { dealer }, 10m, DamageProps.monsterMove, enemy, null, null);
+
+            CombatLedger l = CombatLedger.Current;
+            GD.Print($"[RdpsMeter] Self-test: Intangible row key '{name}', booked {l.BlockedWith(you, name)}");
+            return Report("Intangible (Blocked meter)",
+                Expect("the hit cost 1 HP", hpBefore - dealer.CurrentHp, 1),
+                Expect("the other 9 are booked", l.BlockedWith(you, name), 9m),
+                Expect("and only once", l.RBlockOf(you), 9m));
+        }
+        finally
+        {
+            if (dealer.GetPower<IntangiblePower>() != null)
+            {
+                await PowerCmd.Remove<IntangiblePower>(dealer);
+            }
         }
     }
 
