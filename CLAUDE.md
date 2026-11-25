@@ -903,6 +903,16 @@ skipped a patch still bound to the wrapper. That one at least failed loudly
 binary with `VERIFY_TARGETS=1` to print the exact signature each patch bound,
 which is the quickest way to read "is this still the overload the callers use".
 
+0.114.0 broke the funnel a third way: **the same method now runs twice per
+hit**. `CreatureCmd.GetDamageResults` works the whole hit out first, calling
+`DamageBlockInternal` / `LoseHpInternal` with `dryRun: true`, and
+`ApplyDamageResults` then calls them again for real. Card damage previews run the
+same dry pass with no hit behind it. Everything bound fine, and the Blocked meter
+silently doubled. Any patch that *books* on a funnel internal has to skip the dry
+call (`DryRun.Of(__args)`). The harness's block scenarios catch it, and 18 of
+them fail without the check. When a diff shows a method gaining a `dryRun` or
+`preview` flag, grep the patches for it.
+
 The verifier resolves the game assembly's own dependencies out of `lib/` by
 name, so when the game picks up a new one (0.110.0 added Sentry) the fix is to
 drop that dll in beside `sts2.dll` — it is gitignored like the rest. Without it
