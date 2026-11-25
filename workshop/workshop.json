@@ -2,7 +2,7 @@
   "title": "rDPS Meter",
   "description": null,
   "visibility": null,
-  "changeNote": "0.1.38 - Fixed Dingy Dagger being unplayable with the meter installed, which also desynced co-op: the meter crashed looking up the card's name. Its row now reads Dingy Dagger, Fine Dagger or Pristine Dagger by upgrade tier. The Blocked meter now counts HP that relics and powers stop after block: Tungsten Rod, Beating Remnant, Buffer and Intangible, plus Hades Ancients' Hot Pot, Defensive Posture and Forge Armor. A teammate's Buffer is credited to them. Builds and binds against v0.111.0, v0.111.1, v0.113.0 and v0.113.1.",
+  "changeNote": "0.1.39 - Support for game v0.114.0 (beta). On v0.114.0 the Blocked meter counted every point of block twice, and damage soaked by Osty and Wuppy was not counted at all, because the game now works each hit out once before applying it. Both fixed. No change on the main branch. Builds and binds against v0.111.0, v0.111.1, v0.113.0, v0.113.1 and v0.114.0.",
   "tags": null,
   "dependencies": null,
   "contentDescriptors": null
