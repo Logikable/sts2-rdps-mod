@@ -41,7 +41,7 @@ namespace RdpsMeter.Patches;
 internal static class PetRedirectPatch
 {
     [HarmonyPostfix]
-    private static void Postfix(Creature originalTarget, Creature __result)
+    private static void Postfix(Creature originalTarget, Creature __result, Creature? dealer)
     {
         // A redirect, and one onto this very player's own pet: DieForYouPower only ever diverts its owner's owner, but
         // reading that off the result rather than trusting the power keeps this true of any future pet that does the
@@ -49,6 +49,7 @@ internal static class PetRedirectPatch
         if (!ReferenceEquals(__result, originalTarget)
             && originalTarget.Player != null
             && ReferenceEquals(__result.PetOwner?.Creature, originalTarget)
+            && !PetAbsorption.IsPartyDealer(dealer)
             && CombatManager.Instance is { IsInProgress: true })
         {
             PetAbsorption.Expect(__result, originalTarget.Player);
@@ -85,12 +86,13 @@ internal static class PetPreBlockRedirectPatch
     }
 
     [HarmonyPostfix]
-    private static void Postfix(Creature originalTarget, Creature? __result)
+    private static void Postfix(Creature originalTarget, Creature? __result, Creature? dealer)
     {
         if (__result != null
             && !ReferenceEquals(__result, originalTarget)
             && originalTarget.Player != null
             && ReferenceEquals(__result.PetOwner?.Creature, originalTarget)
+            && !PetAbsorption.IsPartyDealer(dealer)
             && CombatManager.Instance is { IsInProgress: true })
         {
             PetAbsorption.Expect(__result, originalTarget.Player);
@@ -102,14 +104,39 @@ internal static class PetPreBlockRedirectPatch
 /// Where the pet's HP actually goes, and so where the absorbed amount is finally known. Every HP loss on every creature
 /// comes through here, which is why the expectation filed by <see cref="PetRedirectPatch"/> is what makes one of them a
 /// mitigation: without a pending redirect this is just a creature getting hurt.
+///
+/// 0.114.0 changed the method twice over: it returns an <c>HpLossResult</c> (<c>hpLost</c>) instead of a
+/// <c>DamageResult</c> (<c>UnblockedDamage</c>), and it gained a <c>dryRun</c> flag, because the funnel now works a hit
+/// out in a dry run before applying it. Both are read without naming the 0.114.0 type - it does not exist on the oldest
+/// supported build, so the source cannot mention it - and only the real call settles. The dry run comes first, so
+/// settling on it would book a hit that has not happened yet and then miss the real one.
 /// </summary>
 [HarmonyPatch(typeof(Creature), nameof(Creature.LoseHpInternal))]
 internal static class PetAbsorptionPatch
 {
+    private static FieldInfo? _hpLost;
+
     [HarmonyPostfix]
-    private static void Postfix(Creature __instance, DamageResult __result)
+    private static void Postfix(Creature __instance, object __result, object[] __args)
     {
-        PetAbsorption.Settle(__instance, __result);
+        if (DryRun.Of(__args))
+        {
+            return;
+        }
+
+        PetAbsorption.Settle(__instance, HpLost(__result));
+    }
+
+    /// <summary>The HP the creature really lost - overkill excluded on every version.</summary>
+    private static decimal HpLost(object result)
+    {
+        if (result is DamageResult damage)
+        {
+            return damage.UnblockedDamage;
+        }
+
+        _hpLost ??= AccessTools.Field(result.GetType(), "hpLost");
+        return _hpLost?.GetValue(result) is int hp ? hp : 0m;
     }
 }
 
@@ -140,7 +167,7 @@ internal static class PetAbsorption
         }
     }
 
-    public static void Settle(Creature pet, DamageResult result)
+    public static void Settle(Creature pet, decimal absorbed)
     {
         Player? saved;
         lock (Lock)
@@ -157,9 +184,8 @@ internal static class PetAbsorption
             }
         }
 
-        // UnblockedDamage is the HP the pet really had to give. Anything past that is OverkillDamage, which the funnel
-        // goes on to deal to the owner for real, so it mitigated nothing.
-        decimal absorbed = result.UnblockedDamage;
+        // The HP the pet really had to give. Anything past that is overkill, which the funnel goes on to deal to the
+        // owner for real, so it mitigated nothing.
         if (absorbed <= 0m)
         {
             return;
@@ -186,6 +212,17 @@ internal static class PetAbsorption
         }
 
         CombatLedger.RecordBlock(saved.NetId, strands);
+    }
+
+    /// <summary>
+    /// A hit by a player or a player's pet is never one this meter books as mitigation - the same line the HP-loss relief
+    /// draws. It matters more from 0.114.0: card damage previews now run both redirect hooks with the card's owner as
+    /// dealer and no hit behind them, and an expectation filed by a preview would sit in the queue until it paired with
+    /// an unrelated HP loss on the pet - an enemy sweep hitting it as a target in its own right, say.
+    /// </summary>
+    public static bool IsPartyDealer(Creature? dealer)
+    {
+        return dealer?.Player != null || dealer?.PetOwner != null;
     }
 
     public static void Clear()

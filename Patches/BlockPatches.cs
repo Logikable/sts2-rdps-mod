@@ -180,6 +180,11 @@ internal static class BlockGainedPatch
 /// Block being spent, which is the only moment the Blocked meter moves. The game takes block down by the truncated
 /// absorption (Block is a whole number), so that is what the pool is charged - the meter and the creature spend the
 /// same block. The block standing before the hit is read in the prefix because the postfix is too late to ask.
+///
+/// From 0.114.0 the funnel works a hit out in full before touching anything (<c>CreatureCmd.GetDamageResults</c>) and
+/// then applies it, so this method runs twice a hit: once with <c>dryRun</c> set, which spends nothing, and once for
+/// real. Only the real call is booked - counting both would double every point of block. The flag is read off the
+/// argument array because the parameter does not exist on older builds, where every call is real.
 /// </summary>
 [HarmonyPatch(typeof(Creature), nameof(Creature.DamageBlockInternal))]
 internal static class BlockSpentPatch
@@ -191,9 +196,12 @@ internal static class BlockSpentPatch
     }
 
     [HarmonyPostfix]
-    private static void Postfix(Creature __instance, int __state, decimal __result)
+    private static void Postfix(Creature __instance, int __state, decimal __result, object[] __args)
     {
-        if (__instance.Player == null || __result <= 0m || CombatManager.Instance is not { IsInProgress: true })
+        if (DryRun.Of(__args)
+            || __instance.Player == null
+            || __result <= 0m
+            || CombatManager.Instance is not { IsInProgress: true })
         {
             return;
         }
