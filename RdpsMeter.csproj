@@ -20,8 +20,13 @@
   <!-- The harness against 0.113.x, whose PlayerChoiceContext gained an abstract GameActionType the no-op context must
        override - a member that does not exist on earlier builds. Keyed off the reference's file name, so only the
        harness ever sees it. -->
-  <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.113'))">
+  <PropertyGroup Condition="'$(Harness)' == 'true' And ($(Sts2Ref.Contains('0.113')) Or $(Sts2Ref.Contains('0.114')))">
     <DefineConstants>$(DefineConstants);STS2_0_113</DefineConstants>
+  </PropertyGroup>
+  <!-- The harness against 0.114.x, where Creature.LoseHpInternal lost its ValueProp parameter. 0.114 carries all of
+       0.113's content, so it defines both. -->
+  <PropertyGroup Condition="'$(Harness)' == 'true' And $(Sts2Ref.Contains('0.114'))">
+    <DefineConstants>$(DefineConstants);STS2_0_114</DefineConstants>
   </PropertyGroup>
 
   <!-- Which game assembly the mod compiles against. A release is built against lib/sts2.dll and carries one DLL for

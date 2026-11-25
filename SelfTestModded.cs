@@ -102,7 +102,7 @@ internal static partial class SelfTest
         ulong you = dealer.Player!.NetId;
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         var relic = (RelicModel)ModelDb.GetById<RelicModel>(ModelDb.GetId(type)).MutableClone();
@@ -152,7 +152,7 @@ internal static partial class SelfTest
         ulong you = dealer.Player!.NetId;
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         var relic = (RelicModel)ModelDb.GetById<RelicModel>(ModelDb.GetId(type)).MutableClone();
@@ -201,7 +201,7 @@ internal static partial class SelfTest
         ulong you = dealer.Player!.NetId;
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         PowerModel armor = ModelDb.GetById<PowerModel>(ModelDb.GetId(type)).ToMutable();

@@ -1070,7 +1070,7 @@ internal static partial class SelfTest
         // assume nothing does. Straight to zero, as OstyReviveScenario does, so nothing is spent or booked.
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         MonsterModel monster = ModelDb.Monster<MegaCrit.Sts2.Core.Models.Monsters.Wuppy>().ToMutable();
@@ -1130,7 +1130,7 @@ internal static partial class SelfTest
         // A living Osty would take what gets past block, and the rod does not act on the pet.
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         var rod = (TungstenRod)ModelDb.Relic<TungstenRod>().MutableClone();
@@ -1175,7 +1175,7 @@ internal static partial class SelfTest
         ulong you = dealer.Player!.NetId;
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         await PowerCmd.Apply<BufferPower>(ctx, dealer, 1m, applier2, null);
@@ -1213,7 +1213,7 @@ internal static partial class SelfTest
         ulong you = dealer.Player!.NetId;
         if (dealer.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
 
         await PowerCmd.Apply<IntangiblePower>(ctx, dealer, 1m, dealer, null);
@@ -2281,7 +2281,7 @@ internal static partial class SelfTest
     {
         if (owner.Player!.Osty is { IsAlive: true } osty)
         {
-            osty.LoseHpInternal(osty.CurrentHp, DamageProps.card);
+            DrainHp(osty);
         }
     }
 
@@ -4245,6 +4245,19 @@ internal static partial class SelfTest
         IReadOnlyDictionary<ulong, decimal>? shares = PowerOwnership.Instance.Shares(power);
         string rendered = shares == null ? "none" : string.Join(", ", shares.Select(kv => $"{kv.Key}:{kv.Value:0.00}"));
         GD.Print($"[RdpsMeter] Self-test: {effect} ownership = {rendered} (amount={power.Amount})");
+    }
+
+    /// <summary>
+    /// Puts a creature straight to zero HP, spending nothing and booking nothing. 0.114.0 dropped LoseHpInternal's
+    /// ValueProp parameter, so the call differs by build.
+    /// </summary>
+    private static void DrainHp(Creature creature)
+    {
+#if STS2_0_114
+        creature.LoseHpInternal(creature.CurrentHp);
+#else
+        creature.LoseHpInternal(creature.CurrentHp, DamageProps.card);
+#endif
     }
 
     private static (string Label, decimal Actual, decimal Expected, bool Ok) Expect(string label, decimal actual, decimal expected)
